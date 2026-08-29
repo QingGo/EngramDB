@@ -35,7 +35,7 @@ def main() -> int:
     from tokenizers import Tokenizer
 
     t = Tokenizer.from_file(str(tok_dir / "tokenizer.json"))
-    books = sorted(corpus_dir.glob("*.txt"))
+    books = sorted(list(corpus_dir.glob("*.txt")) + list(corpus_dir.glob("wet/*.txt")))
 
     tokens = []
     for p in books:

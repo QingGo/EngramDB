@@ -8,3 +8,8 @@ description = "M0 probe bench harness (P1-P6)"
 [dependencies]
 engramdb-keygen = { path = "../engramdb-keygen" }
 engramdb-core = { path = "../engramdb-core" }
+engramdb-io = { path = "../engramdb-io" }
+
+[[bin]]
+name = "p4view"
+path = "src/bin/p4view.rs"
