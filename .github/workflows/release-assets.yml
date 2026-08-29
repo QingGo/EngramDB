@@ -1,0 +1,74 @@
+name: release-assets
+
+# GitHub Release 资产：推送 v* tag 即自动创建/更新 Release，
+# 附加 Rust 二进制（4 平台）与 Python 包（wheel+sdist）。无需 UI。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  rust-bin:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: ubuntu-24.04-arm
+            name: linux-aarch64
+          - os: macos-13
+            name: macos-x86_64
+          - os: macos-14
+            name: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build release binary
+        run: |
+          cargo build --release -p engramdb
+          cp target/release/engramdb "engramdb-${{ matrix.name }}"
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: engramdb-${{ matrix.name }}
+          path: engramdb-${{ matrix.name }}
+
+  python-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: astral-sh/setup-uv@v5
+      - name: build python package
+        run: |
+          cd python
+          uv build .
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: python/dist/*
+
+  release:
+    needs: [rust-bin, python-assets]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            assets/engramdb*
+            assets/engramdb_python*

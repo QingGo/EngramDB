@@ -1,6 +1,6 @@
 name: publish-pypi
 
-# PyPI Trusted Publishing（OIDC）：GitHub Release 发布事件触发，与 release.yml（crates.io）同步。
+# PyPI Trusted Publishing（OIDC）：推送 v* tag 即触发，无需 token、无需 UI。
 # PyPI 后台 Trusted Publisher 配置：
 #   Project         : engramdb-python
 #   Publisher       : GitHub
@@ -8,8 +8,8 @@ name: publish-pypi
 #   Workflow name   : publish.yml
 #   Environment name: pypi   (与下方 job environment 一致)
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.ref_name }}
       - uses: astral-sh/setup-uv@v5
       - name: build
         run: |
