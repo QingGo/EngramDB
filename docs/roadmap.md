@@ -90,3 +90,47 @@
 - **数据可追溯**：语料 manifest（来源/大小/许可证）、raw sha256 记录；`corpus_build.py` 加校验与环境敏感路由参数记录（删除前先备份采集命令）。
 - **合规文档**：单独 `docs/licenses.md` 简述：qwen-community-1.0（提取 PLE 权重与研究使用边界）、DeepSeek Apache-2.0 参照、`trace-commons` CC-BY-4.0（署名要求）、`semianalysis` Apache-2.0、语料三源许可一览。**发布任何产物前必须过此清单**。
 - **异常处置准则**（本轮教训制度化）：批量任务 3 分钟无进度即可疑→栈采样确诊→预期外 >5×则停用换法（如 numpy bincount→Rust HashMap 案例）；路由/环境变量错误用剂量探针先验证再全量。
+
+---
+
+## 6. 第二轮复盘（2026-08-30：发布闭环 + Phase 1/2）
+
+### 6.1 终极目标复核（不变，结构差异显化）
+
+北极星仍是"确定性记忆表（Engram/PLE）的磁盘优先基础设施——DuckDB 之于分析数据库"。
+本轮确认的**三层资产结构**（缺一不可）：
+1. **性能层**：存储/索引/预取（P1/P3/P4 证据在手）——最硬
+2. **绑定层**：crates.io 四 crate + PyPI `engramdb-python`(import=`engramdb`) + 四平台 Release 二进制 —— **本轮已闭环**（0.1.3 全链验证）
+3. **科学层**：P0-P4 + P2 统计的"断言-证据"库 + roadmap/design/session-log 同址——成立
+
+真正仍缺席的：**性能契约的端到端实机（CPU 50/100 tok/s、GPU ≤5%）** = 项目唯一的"概念验证缺口"。
+
+### 6.2 本轮新技术债
+
+| # | 债 | 处置 |
+|---|---|---|
+| N1 | **P4b 端到端 decode 未做**（性能契约悬空） | Phase 4 前置（当前最高优先级业务面） |
+| N2 | **Linux 无门禁**：io_uring 只有 TODO、GPU 路径不可测、429 之外的 release 验证都在 mac | 建议租借小 Linux 云主机（~30-50 元/月）或用户已有机器——**N2 解锁 N1/N3** |
+| N3 | **release 无 preflight 门禁**：bump.sh 提示"请跑 test"但流程靠自觉；应让发布前必须过 gate | release.yml 增加 `preflight` job（fmt/clippy/test）gate 发布 job（needs） |
+| N4 | crates.io token 为全权限长存（本地 + CI secret 双份） | 待 crates.io trusted publishing（OIDC）正式可用后降级：生成"仅本仓库"token；CI 用 OIDC 同 PyPI（Phase 3.5 实验） |
+| N5 | 文档一致性：design §9 里程碑未反映 Phase1/2 状态；probes/gate 规划搬迁 | 随 Phase 2b 收尾更新 |
+| N6 | PyPI 相似名是"妥协名"（engramdb-python），长期需向 PyPI 提相似名豁免申请拿回 `engramdb` | 0.2.0 发布窗口期提交申请（材料：repo + 发布日期） |
+
+### 6.3 借鉴增量（本轮）
+
+| 来源 | 借鉴 | 状态 |
+|---|---|---|
+| **PyPA trusted publishing** | 零-token、事件绑定 release | ✅ 已落地（publish.yml OIDC） |
+| **crates.io trusted publishing**（2025 后开放） | 与 PyPI 对称：cargo publish 走 OIDC 无需 token | ⏳ 确认细节（libs.rs/官方文档）并入 Phase 3.5 |
+| **版本/发布工程**（cargo ecosystem 惯例） | semver 纪律 patch/minor/major 不越级；preflight 门禁与发布独立 job；tag 永远指向发布 commit | ✅ bump.sh + N3 规划 |
+| 数据工程健康度 | **GHA 的 macOS 世代纪要**（runner 退役节奏）→ 产品发布矩阵也须设"平台生命周期" | ✅ macos-15-intel 矩阵已改；注释保留出处 |
+| 测量文化小补 | P3 教训再确认：**模拟器参数必须用真实统计校准**（agent workload stats 已是真分布） | Phase 3 re-calibrate |
+
+### 6.4 计划重排（v2.1，改动处加粗）
+
+- **P2b（近期本机）**：CLI 端到端（warm/bench-real 接 agent_workload_stats 真指令序列）+ **CLI 集成测试入门禁**；design §9 状态同步（N5）
+- **P2c（需决策）**：小 Linux 门禁环境（租/自有）→ 解锁 io_uring 后端实测（**N2 收敛点**）
+- **P3（视图）**：P4 自动化 gate + Store-P 真表构建器 + 槽位选型——按 P4 已定结论推进
+- **P4（M2 关键）**：PyO3 绑定 + engram-peft interop + **P4b 端到端 decode 实测（50/100 tok/s 曲线）**→ N1 收敛
+- **P4a 发布增强**：crates.io OIDC 实验（N4）、PyPI 相似名申请（N6）
+- P5/P6/P7 如前不变；每条出口 gate + 文档同步照旧
