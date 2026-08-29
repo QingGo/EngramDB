@@ -90,7 +90,7 @@ def quick(scale: int) -> None:
 
 def verify(quiet: bool = False) -> None:
     ok = True
-    for name in ("mock-qwen38-ple", "corpus-build", "p2-work"):
+    for name in ("mock-qwen38-ple", "corpus-build", "real-rows", "p2-work"):
         p = DATA / name
         if not p.exists():
             if not quiet:
@@ -109,6 +109,13 @@ def verify(quiet: bool = False) -> None:
             else:
                 ok = False
                 eprint("[verify] mock 表目录异常（缺 shard_000.bin / layout.json）")
+        elif name == "real-rows":
+            bins = [x for x in p.iterdir() if x.name.startswith("shard_") and x.suffix == ".bin"] if p.exists() else []
+            if len(bins) >= 128:
+                print(f"[verify] real-rows OK: {len(bins)} shards (真表, 约 {p.stat().st_size/1e9:.1f}G)")
+            elif p.exists():
+                ok = False
+                eprint(f"[verify] real-rows 只有 {len(bins)} 个分片（需 ≥128）")
         elif name == "corpus-build":
             mf = p / "manifest.json"
             raw = p / "raw"
