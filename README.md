@@ -30,7 +30,9 @@
 
 快速开始（开发期, 以 M0 探针为主）：
 ```bash
+python3 scripts/prep_env.py quick       # 任意环境（Win/Linux/macOS）1 分钟就绪：自检 + 合成 PLE 表
+python3 scripts/prep_env.py verify      # 校验产物
 cargo run -p engramdb-bench               # 探针（占位，M0）
-python3 scripts/extract_ple_spec.py       # 从真实分片提取规格 JSON
-python3 scripts/mock_table_gen.py         # 生成结构等价合成表
+python3 scripts/extract_ple_spec.py       # 从真实分片提取规格 JSON（需真权重）
+python3 scripts/mock_table_gen.py         # 生成结构等价合成表（prep_env quick 已含）
 ```
