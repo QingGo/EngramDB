@@ -5,7 +5,9 @@
 //! - badge 聚集：`badge = BPows` 行一组，按 4KB/2MB 对齐，行宽 row_bytes 固定
 //! - 直接寻址：rowid → (shard, badge_id, in_badge_row) 全部为整数除法一次
 
+pub mod count_index;
 pub mod layout;
 pub mod store;
 
+pub use count_index::CountIndex;
 pub use layout::{Layout, RowExtent};

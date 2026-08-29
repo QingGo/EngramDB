@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/engramdb-keygen",
+    "crates/engramdb-core",
+    "crates/engramdb-io",
+    "crates/engramdb-cli",
     "crates/engramdb-bench",
 ]
 
