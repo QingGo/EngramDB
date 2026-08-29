@@ -19,12 +19,36 @@ use engramdb_keygen::PleSpec;
 
 use engramdb_core::fnv64;
 
+mod workload;
+
+use workload::{gen_tokens, AgentStats, Mode};
+
 fn fnv(bytes: &[u8]) -> u64 {
     fnv64(bytes)
 }
 
 fn ple_layout() -> Layout {
     Layout::new(128, 2_500_012, 160, 1)
+}
+
+/// 按目录实际分片（shard_/badge_ 命名皆可）自适应布局；
+/// 非满 128 分片（mock 表 / 部分数据）也可运行。
+fn layout_for_dir(dir: &Path) -> Result<Layout, String> {
+    let base = ple_layout();
+    let mut n = 0u32;
+    for i in 0..base.shards {
+        if dir.join(format!("shard_{:03}.bin", i)).exists()
+            || dir.join(format!("badge_{:03}.bin", i)).exists()
+        {
+            n += 1;
+        } else {
+            break;
+        }
+    }
+    if n == 0 {
+        return Err(format!("目录 {dir:?} 中没有分片文件"));
+    }
+    Ok(Layout::new(n as u64, base.rows_per_shard, base.width, 1))
 }
 
 fn main() {
@@ -185,7 +209,7 @@ fn cmd_warm(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
 /// gather <badge_dir>：stdin 每行一个 rowid（升序更好），输出 fnv64 校验和（供对拍）。
 fn cmd_gather(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let dir = PathBuf::from(args.next().ok_or("需要 <badge_dir>")?);
-    let layout = ple_layout();
+    let layout = layout_for_dir(&dir)?;
     let batch = engramdb_io::batch::BadgeGather::open(&dir, &layout).map_err(io_err)?;
     let stdin = std::io::stdin();
     let mut keys = Vec::new();
@@ -208,7 +232,7 @@ fn cmd_gather(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 fn cmd_verify(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let dir = PathBuf::from(args.next().ok_or("需要 <badge_dir>")?);
     let input = PathBuf::from(args.next().ok_or("需要 <rowids.txt>")?);
-    let layout = ple_layout();
+    let layout = layout_for_dir(&dir)?;
     let batch = engramdb_io::batch::BadgeGather::open(&dir, &layout).map_err(io_err)?;
     let mut keys = Vec::new();
     let text = std::fs::read_to_string(&input).map_err(io_err)?;
@@ -229,45 +253,71 @@ fn cmd_verify(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     Ok(())
 }
 
-/// bench-real <badge_or_shard_dir>：真表口径随机 16 行/token 批取。
+/// bench-real <badge_dir> [--dist uniform|agent] [--stats probes/agent_workload_stats.json]
+/// [--reqs 64] [--cap-token 10000] [--iters 8] [--hot-hit 0.35] [--seed 1]
+/// 真表口径 16 行/token 批取。uniform = 全词表随机（对照）；agent =
+/// 真实流量分布（P2：热集 + 会话记忆 + 短尾），统计来自 probes/agent_workload_stats.json。
 fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let dir = PathBuf::from(args.next().ok_or("需要 <badge_dir>")?);
-    let spec = PleSpec::real();
-    let n_tokens = 4096usize;
-    let mut state: u64 = 0x1234_5678_9ABC_DEF0;
-    let mut tokens: Vec<u32> = Vec::with_capacity(n_tokens);
-    for _ in 0..n_tokens {
-        state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        tokens.push((state % 248_320) as u32);
+    let mut dist = "uniform".to_string();
+    let mut stats_path = PathBuf::from("probes/agent_workload_stats.json");
+    let mut reqs = 64usize;
+    let mut cap_token = 10_000u32;
+    let mut iters = 8usize;
+    let mut hot_hit = 0.35f64;
+    let mut seed = 1u64;
+    let mut rest = args;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--dist" => dist = rest.next().ok_or("dist 值")?,
+            "--stats" => stats_path = PathBuf::from(rest.next().ok_or("stats 路径")?),
+            "--reqs" => reqs = rest.next().ok_or("reqs")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--cap-token" => cap_token = rest.next().ok_or("cap")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--iters" => iters = rest.next().ok_or("iters")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--hot-hit" => hot_hit = rest.next().ok_or("hot")?.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?,
+            "--seed" => seed = rest.next().ok_or("seed")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            _ => return Err(format!("未知参数: {a}")),
+        }
     }
-    // 逐个生成 16 行/token（P1 口径：真 keygen rowid）
-    let mut rowids: Vec<u32> = Vec::with_capacity(n_tokens * 16);
-    for t in 0..n_tokens {
+    let stats = if dist == "agent" {
+        Some(AgentStats::load(&stats_path)?)
+    } else {
+        None
+    };
+    let mode = if dist == "agent" {
+        Mode::Agent(stats_path.clone(), hot_hit)
+    } else {
+        Mode::Uniform
+    };
+    let tokens = gen_tokens(&mode, stats.as_ref(), reqs, cap_token, seed)?;
+    if tokens.is_empty() {
+        return Err("空 token 序列".into());
+    }
+    let spec = PleSpec::real();
+    let mut rowids: Vec<u32> = Vec::with_capacity(tokens.len() * 16);
+    for t in 0..tokens.len() {
         let c = tokens[t];
         let triple = [tokens[t.saturating_sub(2)], tokens[t.saturating_sub(1)], c];
         let ids = spec.rowids_for_seq(&triple);
         rowids.extend_from_slice(&ids[0]);
     }
     let keys: Vec<u64> = rowids.iter().map(|&x| x as u64).collect();
-    // shape 为 [T,16]，摊成 batch 直接 gather（行独立）
     let threads: usize = 8;
-    let layout = ple_layout();
+    let layout = layout_for_dir(&dir)?;
     let batch = engramdb_io::batch::BadgeGather::open(&dir, &layout).map_err(io_err)?;
     let w = layout.width as usize;
     let mut out = vec![0u8; keys.len() * w];
     let t0 = std::time::Instant::now();
-    for _ in 0..8 {
+    for _ in 0..iters {
         batch.gather_pp(&keys, &mut out, threads).map_err(io_err)?;
         black_box(&out);
     }
-    let dt = t0.elapsed().as_secs_f64() / 8.0;
+    let dt = t0.elapsed().as_secs_f64() / iters as f64;
     let rows_per_s = keys.len() as f64 / dt;
     println!(
-        "rows/s={:.0}  keys/batch={}  badge-rows={} payload=KB/tok={:.1}",
+        "rows/s={:.0}  tokens={}  keys/batch={}  payload=KB/tok={:.1}",
         rows_per_s,
-        keys.len(),
+        tokens.len(),
         keys.len(),
         keys.len() * 160 / 1024 / (keys.len() / 16)
     );

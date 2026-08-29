@@ -79,7 +79,10 @@ impl<'a> BadgeGather<'a> {
         let n = layout.shards as usize;
         let mut files = Vec::with_capacity(n);
         for i in 0..n {
-            files.push(File::open(dir.join(format!("shard_{:03}.bin", i)))?);
+            let s = dir.join(format!("shard_{:03}.bin", i));
+            let b = dir.join(format!("badge_{:03}.bin", i));
+            let p = if s.exists() { s } else { b };
+            files.push(File::open(p)?);
         }
         Ok(Self {
             layout,
