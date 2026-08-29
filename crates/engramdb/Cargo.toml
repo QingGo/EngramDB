@@ -1,6 +1,6 @@
 [package]
 name = "engramdb"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Disk-first storage engine for Engram/PLE n-gram memory tables: build/index/warm/verify/inspect"
