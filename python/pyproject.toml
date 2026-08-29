@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "engramdb"
+name = "engramdb-python"
 version = "0.1.0"
 description = "Disk-first storage engine for Engram/PLE n-gram memory tables (Rust core, Python bindings landing in v0.2)"
 readme = "README.md"

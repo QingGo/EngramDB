@@ -1,8 +1,8 @@
-# EngramDB
+## EngramDB 的 Python 分发包
 
 Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
-> **v0.1.0 占位包**：Rust 核心（crates.io: `engramdb-keygen`/`engramdb-core`/`engramdb-io`/`engramdb`）与 PyO3 绑定正在开发中；本包于 0.1.0 仅占名 + 版本声明。完整 API / 文档随 0.2.0 发布。
+> **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。** v0.1.0 占位包：Rust 核心（crates.io: `engramdb-keygen`/`engramdb-core`/`engramdb-io`/`engramdb`）与 PyO3 绑定正在开发中；本包于 0.1.0 仅占名 + 版本声明。完整 API / 文档随 0.2.0 发布。
 
 ## 定位（一句话）
 
