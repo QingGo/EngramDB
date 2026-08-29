@@ -7,6 +7,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CRATES=(engramdb-keygen engramdb-core engramdb-io engramdb)
+
+# tag 与 manifest 版本一致性校验（本地/CI 均校验）
+if [[ -n "${RELEASE_TAG:-}" ]]; then
+  want="${RELEASE_TAG#v}"
+  for c in "${CRATES[@]}"; do
+    have=$(grep -m1 '^version = ' "crates/$c/Cargo.toml" | cut -d'"' -f2)
+    [[ "$have" == "$want" ]] || { echo "  mismatch: $c manifest v$have != tag $want"; exit 1; }
+  done
+  echo ">> tag $RELEASE_TAG matches all manifests"
+fi
+
 for c in "${CRATES[@]}"; do
   echo ">> cargo publish $c"
   cargo publish -p "$c" --registry crates-io

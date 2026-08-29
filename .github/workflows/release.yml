@@ -1,8 +1,11 @@
 name: release
 
+# crates.io 发布：GitHub Release 发布事件触发（网页点 "Publish release" 即自动发布）。
+# 发布前需要：scripts/bump.sh <版本>（bump + commit + tag），并配置 Actions secret：
+#   CARGO_REGISTRY_TOKEN = crates.io API token（Settings -> Secrets and variables -> Actions）
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -12,8 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
       - uses: dtolnay/rust-toolchain@stable
       - name: publish (ordered: keygen -> core -> io -> engramdb)
         run: bash scripts/release.sh
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
