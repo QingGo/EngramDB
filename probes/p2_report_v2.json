@@ -1,0 +1,59 @@
+{
+ "fineweb": {
+  "tokens": 30000000,
+  "n_bigrams": 4743579,
+  "n_trigrams": 15279008,
+  "zipf_bigram": 0.9467010273207899,
+  "zipf_trigram": 0.5125932400704933,
+  "cov50_pct_types_bigram": 0.875878740503742,
+  "cov80_pct_types_bigram": 13.551729611755176,
+  "flat_unique_pct": 24.845,
+  "tier_curve_top_rows": {
+   "100": 2.455,
+   "1000": 5.988,
+   "10000": 12.388,
+   "100000": 22.769,
+   "1000000": 38.791
+  },
+  "total_gets": 480000000,
+  "unique_rows": 119257645
+ },
+ "zh": {
+  "tokens": 30000000,
+  "n_bigrams": 8219329,
+  "n_trigrams": 20571702,
+  "zipf_bigram": 0.7966020696236625,
+  "zipf_trigram": 0.3762613078055696,
+  "cov50_pct_types_bigram": 3.067561841118661,
+  "cov80_pct_types_bigram": 30.09694586991225,
+  "flat_unique_pct": 32.649,
+  "tier_curve_top_rows": {
+   "100": 1.329,
+   "1000": 3.13,
+   "10000": 6.954,
+   "100000": 13.035,
+   "1000000": 24.114
+  },
+  "total_gets": 480000000,
+  "unique_rows": 156716743
+ },
+ "agent": {
+  "tokens": 11906751,
+  "n_bigrams": 25661,
+  "n_trigrams": 39205,
+  "zipf_bigram": 0.8280993562282836,
+  "zipf_trigram": 0.6913623280789257,
+  "cov50_pct_types_bigram": 0.0,
+  "cov80_pct_types_bigram": 0.0,
+  "flat_unique_pct": 0.272,
+  "tier_curve_top_rows": {
+   "100": 99.179,
+   "1000": 99.301,
+   "10000": 99.498,
+   "100000": 99.738,
+   "1000000": 100.0
+  },
+  "total_gets": 190508016,
+  "unique_rows": 518521
+ }
+}

@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "M0 probe bench harness (P1-P6)"
 
 [dependencies]
+serde_json = "1"
 engramdb-keygen = { path = "../engramdb-keygen" }
 engramdb-core = { path = "../engramdb-core" }
 engramdb-io = { path = "../engramdb-io" }
@@ -17,3 +18,7 @@ path = "src/bin/p4view.rs"
 [[bin]]
 name = "p3sim"
 path = "src/bin/p3sim.rs"
+
+[[bin]]
+name = "p2rowid"
+path = "src/bin/p2rowid.rs"

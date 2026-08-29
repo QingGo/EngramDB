@@ -118,37 +118,19 @@ def stats_domain(tokens_dir: Path, work: Path, domain: str):
 
 
 # ---------- T3：PLE rowid ----------
-def rowid_domain(tokens_dir: Path, work: Path, domain: str, mult, sizes):
+def rowid_domain(tokens_dir: Path, work: Path, domain: str, _mult, _sizes):
     out = work / "stats" / f"{domain}_rowid.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
         return json.loads(out.read_text())
-    counts = np.zeros(ROW_SPACE, dtype=np.uint32)
-    files = sorted(tokens_dir.glob("*.u32.npy"))
-    for f in files:
-        t = np.load(f, mmap_mode="r")
-        for i in range(0, len(t), 3_000_000):
-            part = t[i:i + 3_000_000].astype(np.int64)
-            ids = ple_rowids(part, mult, sizes).reshape(-1)
-            counts += np.bincount(ids.astype(np.int64), minlength=ROW_SPACE).astype(np.uint32)
-    nz = counts[counts > 0]
-    total_q = int(nz.sum())
-    top_idx = np.argpartition(counts, -1_000_000)[-1_000_000:]
-    top = np.sort(counts[top_idx])[::-1]
-    cum = np.cumsum(top)
-    tier = {}
-    for k in (100, 1_000, 10_000, 100_000, 1_000_000):
-        kk = min(k, len(top))
-        tier[str(k)] = round(float(cum[kk - 1]) / max(1, total_q) * 100, 3)
-    res = {
-        "unique_rows": int((counts > 0).sum()),
-        "total_gets": total_q,
-        "flat_unique_pct": round(int((counts > 0).sum()) / max(1, total_q) * 100, 2),
-        "tier_curve_top_rows": tier,
-    }
-    out.write_text(json.dumps(res))
-    print(f"  T3 [{domain}] unique={res['unique_rows']} flat-uniq={res['flat_unique_pct']}% tc={tier}", flush=True)
-    return res
+    import subprocess
+    r = subprocess.run(
+        ["cargo", "run", "-q", "--release", "-p", "engramdb-bench", "--bin", "p2rowid",
+         str(tokens_dir), str(out)],
+        capture_output=True, text=True, check=False, cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"p2rowid failed: {r.stderr[-600:]} / {r.stdout[-300:]}")
+    return json.loads(out.read_text())
 
 
 def main() -> int:
