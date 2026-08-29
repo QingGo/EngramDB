@@ -85,7 +85,7 @@ def quick(scale: int) -> None:
     print("\n[quick] 完成。之后可以：")
     print(f"  pytest/cargo test          # 单元 + 集成")
     print(f"  bash scripts/gate.sh       # 本机 gate（数据在时含 bench gate）")
-    print(f"  python3 scripts/prep_env.py ckpt-check {CKPT or MOCK}")
+    print(f"  python3 scripts/prep_env.py ckpt-check data/qwen38-ple-fp8")
 
 
 def verify(quiet: bool = False) -> None:
