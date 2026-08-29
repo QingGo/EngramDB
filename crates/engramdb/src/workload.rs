@@ -91,7 +91,13 @@ pub enum Mode {
 }
 
 /// 生成 token 序列（已按 token 划分；调用方按 P1 口径展开行）。
-pub fn gen_tokens(mode: &Mode, stats: Option<&AgentStats>, n_reqs: usize, cap_token: u32, seed: u64) -> Result<Vec<u32>, String> {
+pub fn gen_tokens(
+    mode: &Mode,
+    stats: Option<&AgentStats>,
+    n_reqs: usize,
+    cap_token: u32,
+    seed: u64,
+) -> Result<Vec<u32>, String> {
     let mut rng = Rng(seed);
     Ok(match mode {
         Mode::Uniform => {
@@ -106,8 +112,7 @@ pub fn gen_tokens(mode: &Mode, stats: Option<&AgentStats>, n_reqs: usize, cap_to
             let mut out = Vec::new();
             let mut hot: Vec<u32> = Vec::with_capacity(1 << 16);
             for _ in 0..n_reqs {
-                let n_tok = AgentStats::draw(&st.in_tokens, rng.frac(), 0.10)
-                    .min(cap_token);
+                let n_tok = AgentStats::draw(&st.in_tokens, rng.frac(), 0.10).min(cap_token);
                 for i in 0..n_tok {
                     if !hot.is_empty() && rng.frac() < *hot_hit {
                         let j = (rng.next() % hot.len().min(4096) as u64) as usize;

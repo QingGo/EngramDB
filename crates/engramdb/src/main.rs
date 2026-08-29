@@ -271,11 +271,41 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
         match a.as_str() {
             "--dist" => dist = rest.next().ok_or("dist 值")?,
             "--stats" => stats_path = PathBuf::from(rest.next().ok_or("stats 路径")?),
-            "--reqs" => reqs = rest.next().ok_or("reqs")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
-            "--cap-token" => cap_token = rest.next().ok_or("cap")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
-            "--iters" => iters = rest.next().ok_or("iters")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
-            "--hot-hit" => hot_hit = rest.next().ok_or("hot")?.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?,
-            "--seed" => seed = rest.next().ok_or("seed")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--reqs" => {
+                reqs = rest
+                    .next()
+                    .ok_or("reqs")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--cap-token" => {
+                cap_token = rest
+                    .next()
+                    .ok_or("cap")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--iters" => {
+                iters = rest
+                    .next()
+                    .ok_or("iters")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--hot-hit" => {
+                hot_hit = rest
+                    .next()
+                    .ok_or("hot")?
+                    .parse()
+                    .map_err(|e: std::num::ParseFloatError| e.to_string())?
+            }
+            "--seed" => {
+                seed = rest
+                    .next()
+                    .ok_or("seed")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
             _ => return Err(format!("未知参数: {a}")),
         }
     }

@@ -98,7 +98,11 @@ fn build_gather_verify_bench_chain() {
         }
     }
 
-    let o = run(&["build", raw.to_str().unwrap(), out.to_str().unwrap()], &tmp.0, None);
+    let o = run(
+        &["build", raw.to_str().unwrap(), out.to_str().unwrap()],
+        &tmp.0,
+        None,
+    );
     assert!(o.status.success(), "build: {}", stdout(&o));
     assert!(stdout(&o).contains("built"), "build stdout");
     let b = out.join("badge_000.bin");
@@ -109,7 +113,11 @@ fn build_gather_verify_bench_chain() {
     let mut rowids: Vec<u64> = (0..10).collect();
     rowids.extend([10, 11, 24, 30, 77]); // 24=边界, 30,77>25（超 badge 无行 → 视为下一 badge）
     let stdin: String = rowids.iter().map(|r| format!("{r}\n")).collect();
-    let o = run(&["gather", out.to_str().unwrap()], &tmp.0, Some(stdin.as_bytes()));
+    let o = run(
+        &["gather", out.to_str().unwrap()],
+        &tmp.0,
+        Some(stdin.as_bytes()),
+    );
     assert!(o.status.success(), "gather: {}", stdout(&o));
     let got: u64 = stdout(&o).trim().parse().unwrap();
     let exp = expected_fnv(&rowids);
@@ -118,18 +126,37 @@ fn build_gather_verify_bench_chain() {
     // verify（文件输入）
     let rowid_file = tmp.0.join("rowids.txt");
     std::fs::write(&rowid_file, stdin.clone()).unwrap();
-    let o = run(&["verify", out.to_str().unwrap(), rowid_file.to_str().unwrap()], &tmp.0, None);
+    let o = run(
+        &[
+            "verify",
+            out.to_str().unwrap(),
+            rowid_file.to_str().unwrap(),
+        ],
+        &tmp.0,
+        None,
+    );
     assert!(o.status.success(), "verify: {}", stdout(&o));
-    assert!(stdout(&o).contains(&format!("fnv={exp}")), "verify fnv 不匹配");
+    assert!(
+        stdout(&o).contains(&format!("fnv={exp}")),
+        "verify fnv 不匹配"
+    );
 
     // warm（tiny budget 冒烟）
-    let o = run(&["warm", out.to_str().unwrap(), "--budget", "0.000000001"], &tmp.0, None);
+    let o = run(
+        &["warm", out.to_str().unwrap(), "--budget", "0.000000001"],
+        &tmp.0,
+        None,
+    );
     assert!(o.status.success(), "warm: {}", stdout(&o));
     assert!(stdout(&o).contains("warmed"), "warm stdout");
 
     // bench-real agent 分布（真实 stats 文件路径从仓库 root 相对——集成测试 cwd=tmp，
     // 需要把 probes 路径绝对化：取仓库根。这里用 CARGO_MANIFEST_DIR 上一层/../.. 解出）
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
     let stats = repo.join("probes/agent_workload_stats.json");
     if stats.exists() {
         let o = run(
@@ -162,7 +189,11 @@ fn build_gather_verify_bench_chain() {
     }
     std::fs::write(&rb, &buf).unwrap();
     let idx = tmp.0.join("index");
-    let o = run(&["index", rb.to_str().unwrap(), idx.to_str().unwrap()], &tmp.0, None);
+    let o = run(
+        &["index", rb.to_str().unwrap(), idx.to_str().unwrap()],
+        &tmp.0,
+        None,
+    );
     assert!(o.status.success(), "index: {}", stdout(&o));
     assert!(idx.join("counts.bin").exists(), "counts.bin 缺失");
     let dump = std::fs::read_to_string(idx.join("counts.dump.txt")).unwrap();
