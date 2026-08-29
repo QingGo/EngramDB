@@ -39,6 +39,23 @@ impl PrefetchPlan {
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
+
+    /// 追加一个（shard, badge）到计划（流水线增量累积；重复由 settle 处理）。
+    pub fn entry(&mut self, shard: u64, badge: u64) {
+        self.shard_badges.entry(shard).or_default().push(badge);
+        self.n_badges += 1;
+    }
+
+    /// 结算：shard 内排序 + 去重 + 重算 n_badges（计划被消费前调用）。
+    pub fn settle(&mut self) {
+        let mut n = 0usize;
+        for v in self.shard_badges.values_mut() {
+            v.sort_unstable();
+            v.dedup();
+            n += v.len();
+        }
+        self.n_badges = n;
+    }
 }
 
 /// 读路径（pread 池化）：一次 `gather_plan` = 按 plan 拉取全部 badge 并组装 `[n,width]`。
@@ -206,6 +223,41 @@ impl<'a> BadgeGather<'a> {
         let _ = plan;
         Ok(())
     }
+    /// 按计划消费：`plan` 决定需要读的 badge 集合，本函数按键组读取一次完整 badge
+    /// 并回填 `out`（与 `keys` 顺序一致）。与 `gather_planned` 的差异：计划预先生成
+    /// （由 StreamingPlanner/外部预取服务器），这里只做"计划 -> 数据"。
+    pub fn gather_plan(
+        &self,
+        keys: &[u64],
+        plan: &PrefetchPlan,
+        out: &mut [u8],
+    ) -> std::io::Result<()> {
+        let rb = self.layout.row_bytes as usize;
+        let w = self.layout.width as usize;
+        let mut groups: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
+        for (i, &k) in keys.iter().enumerate() {
+            let (s, b, _) = self.layout.locate(k);
+            if plan.badges(s).contains(&b) {
+                groups.entry((s, b)).or_default().push(i);
+            } else {
+                // 计划外的 key：退化为直接行读（防御；正常流式路径不会出现）
+                let mut tmp = vec![0u8; rb];
+                self.files[s as usize].read_exact_at(&mut tmp, k * rb as u64)?;
+                out[i * w..(i + 1) * w].copy_from_slice(&tmp);
+            }
+        }
+        for (&(s, b), idxs) in &groups {
+            let mut buf = vec![0u8; self.layout.badge_bytes() as usize];
+            let off = b * self.layout.badge_bytes();
+            self.files[s as usize].read_exact_at(&mut buf, off)?;
+            for &i in idxs {
+                let (_, _, in_badge) = self.layout.locate(keys[i]);
+                let src = in_badge as usize * rb;
+                out[i * w..(i + 1) * w].copy_from_slice(&buf[src..src + w]);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -219,5 +271,30 @@ mod tests {
         let keys = vec![9999, 0, 5, 9999, 250, 250];
         let p = PrefetchPlan::build(&keys, &layout);
         assert_eq!(p.badges(0), &[0, 10, 399]);
+    }
+
+    #[test]
+    fn gather_plan_end_to_end() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("engramdb-gather-plan-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 单分片 100 行 × 8 字节（u64 值 = rowid）；文件填满完整 badge（512 行 × 8B = 4096B）
+        let layout = Layout::new(1, 100, 8, 1);
+        let mut f = std::fs::File::create(dir.join("shard_000.bin")).unwrap();
+        for i in 0..512u64 {
+            f.write_all(&i.to_le_bytes()).unwrap();
+        }
+        drop(f);
+        let bg = BadgeGather::open(&dir, &layout).unwrap();
+        let keys = vec![3u64, 77, 3, 99, 60];
+        let plan = PrefetchPlan::build(&keys, &layout);
+        let mut out = vec![0u8; keys.len() * 8];
+        bg.gather_plan(&keys, &plan, &mut out).unwrap();
+        for (j, &want) in keys.iter().enumerate() {
+            let got = u64::from_le_bytes(out[j * 8..(j + 1) * 8].try_into().unwrap());
+            assert_eq!(got, want, "rowid {want} at out[{j}]");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

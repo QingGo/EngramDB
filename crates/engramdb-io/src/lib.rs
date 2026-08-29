@@ -4,7 +4,9 @@
 //! 多线程池化；T3 NVMe 专用 io_uring 后端留 M1.5（Linux）替换 `pread` 后端，接口不变。
 
 pub mod batch;
+pub mod planner;
 pub mod tiers;
 
 pub use batch::{BadgeGather, PrefetchPlan};
+pub use planner::StreamingPlanner;
 pub use tiers::TierManager;
