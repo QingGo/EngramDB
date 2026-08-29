@@ -130,3 +130,82 @@
 - 工具链：rustup stable 1.98（minimal / TUNA 镜像）+ cargo sparse TUNA；uv 0.8.17 + tuna index；pyenv 3.13.2（仅作宿主）。
 - 权重资产：PLE 相关 33 个 safetensors（53GB）→ `data/qwen38-ple-fp8`；128 行文件（51GB）→ `data/real-rows`（软链外盘）；tokenizer 4 件 12.8MB；语料 build 目录 `data/corpus-build/`（raw 5.8GB + text 450MB）。
 - 仓库：`~/code/EngramDB`（git，首提交 `9a4c1c1` 起共 9 个 commit；远程未配置——占名与 GitHub 发布待办）。
+
+---
+
+# Session 2 复盘（2026-08-29 深夜 ~ 30 日：发布闭环 + Phase 1/2）
+
+## 1. 尝试 → 结果（36 项快照）
+
+### 文档与复盘体系（本次确立）
+| # | 尝试 | 结果 |
+|---|---|---|
+| S2-1 | design.md §7 换成实测基线（P1/P4/P3/P2 数字）+ Zipf 断言 4 处修正 | ✅ commit `9a6898b`（含 roadmap/session-log/README 索引） |
+| S2-2 | 终极目标重解 + 13 项技术债 + 借鉴矩阵 + Phase 0-7 门禁 | ✅ `docs/roadmap.md`（战略篇正式化） |
+| S2-3 | 第二轮复盘（发布语境）→ roadmap §6 | ✅ commit `9077903`（本轮结束后） |
+
+### Phase 1：工程收敛 + 发布通道
+| # | 尝试 | 结果 | 坑 → 处理 |
+|---|---|---|---|
+| S2-4 | crate 改名 `engramdb-cli`→`engramdb`（git mv）+ bench publish=false | ✅ 全体构建绿灯 | — |
+| S2-5 | clippy -D warnings 全清 | ✅ 顺手修掉 keygen 迭代器 zip（我优化时一度引入语义错→立即回退为 zip 映射，后经全量测试验证） | 教训：clippy 自动修会破坏语义；每次自动修复后必须审 diff + 跑测试 |
+| S2-6 | LICENSE(Apache-2.0) + docs/licenses.md（权重/语料边界成文）+ config.toml 迁移 | ✅ | — |
+| S2-7 | CI ci.yml（ubuntu+macos 矩阵）+ scripts/gate.sh（fmt+clippy+test） | ✅ 全绿；本地 `~/.cargo/config` 弃用警告也顺手清掉 | — |
+| S2-8 | **crates.io 占名**（keygen→core→io→engramdb） | ✅ **4/4 成功**（429 限流后补发主名） | 坑 ①：tuna replace-with 让 `cargo login`/`publish` 拒绝（疑"非 remote 源"）：`--registry crates-io` + 临时 mv config.toml 绕开，后内嵌 release.sh（trap 自动恢复）；坑 ②：keywords 限制 5 个、categories 需已支持 slug（两次 400）；坑 ③：新 crate 速率限制 429（提示窗口时间）；坑 ④：crates.io API curl 需 User-Agent（403） |
+| S2-9 | **PyPI 占名** | ⚠️ `engramdb` 被相似名规则拒（现有 `engram` 0.1.0a1 → 名字太像） | 决策：发布 **`engramdb-python`**（import 名保持 `engramdb`；候选 pyengramdb 作退路）；0.1.0 wheel+sdist 已上架；相似名豁免申请排 0.2 窗口（N6） |
+| S2-10 | GitHub 仓库建立（用户 QingGo/EngramDB）+ SSH 推送 + repository 字段 | ✅ | sed `a` 语法 mac 坑 → python 修改 |
+| S2-11 | **可信发布链**：publish.yml 先 token 版→用户配 Trusted Publisher→改 OIDC（environment `pypi` 绑定） | ✅ 全事件断言 | PyPI 表单字段 = Project `engramdb-python` / Workflow `publish.yml` / Env `pypi`（必须与 job environment 完全一致否则 401） |
+| S2-12 | bump.sh 版本化（0.1.1 练习）→ 发现 release.yml 触发陷阱 | ⚠️→✅ 改 `on: release: published`（UI 才触发）→ 用户发现 push tag 期间 publish-pypi 先跑（当时它监听 push tags 而 release.yml 监听 release 事件 → 双语义不一致） | 统一：三个工作流全部 `push: tags: v*`（单一触发源=打 tag 即全发） |
+| S2-13 | **YAML 解析失败**（release.yml line 21） | ✅ 根因：step `name:` 内含 `key: value` 样式（"ordered: keygen -> …"）被 GHA 解析当嵌套键 → 换成无冒号措辞 | 教训：workflow step name 永远别放 `x: y` 形态文本 |
+| S2-14 | v0.1.2 全链验证 | ⚠️ release+publish-pypi 双绿；**assets 卡死**：macos-13 runner 已退役（用户提示） | 官方核实：macos-13 退役 2025-12-04；x86_64 唯一公共=macos-15-intel（到 2027-08）；arm=macos-15；改矩阵 + workflow_dispatch |
+| S2-15 | 修正后想手动重跑 v0.1.2 | ❌ tag 快照无 dispatch → 改打 **0.1.3**（patch 修 CI 属标准语义） | 教训：**workflow 文件属于 tag 快照**——修完 CI 不重打 tag 不影响旧 tag |
+| S2-16 | 0.1.3 全链（crates+PyPI+assets+自动 Release 创建+4 平台二进制） | ✅ 用户确认跑完 | —— |
+| S2-17 | 发布 CI 处理本地镜像替换：release.sh 自动 trap 绕开 config.toml | ✅ | —— |
+
+### Phase 2：存储真身（部分）
+| # | 尝试 | 结果 | 教训 |
+|---|---|---|---|
+| S2-18 | `StreamingPlanner`（badge 粒度滑窗：token 流→增量 PrefetchPlan，窗口复用/弹出重发） | ✅ 3 单测 + `gather_plan` + 端到端回填测试（5 tests 全绿） | 三个测试语义错积累：①相邻行同 badge（不是"每行一 badge"）；②**同一个 plan 实例会累计**（每次 advance 应消费新计划）；③文件须填满 badge 尺寸（read_exact EOF） |
+| S2-19 | 中途"测试假失败"排查（left=16 之谜） | ✅ 结论：**不是二进制缓存 bug，是断言对象看错**（fail 在第二条 `n_badges` 断言）+ 独立/全量差异假象 | 教训：测试失败先读**全部**断言行号再归因，别先怀疑工具链 |
+| S2-20 | fnv64 提到 core（公共 API + 标准向量单测） | ✅ CLI 委托，verify 语义不变 | —— |
+| S2-21 | **IoBackend trait**（Preadv 默认 + open_with_backend） | ✅ 7 tests 绿，gate 全绿 | 决策：**io_uring 不可验证不进主干**（无 Linux 机）→ 留 TODO（M2 门禁）；最初草写的 urring 后端 API 用法错误且无法本机测 → 直接删除，写文档化 TODO 而非保留雷 |
+
+## 2. 坑清单（Session 2 新收）
+
+1. tuna `[source] replace-with` 副作用：cargo login / publish 拒绝；tuna index 同步延迟致依赖解析失败 → 发布窗口内绕开（release.sh 已自动）
+2. crates.io 发布校验：keywords ≤5；categories slug 有限；429 限流（含明确解锁时间）；API 403 需 UA
+3. GHA YAML：step name 内 `<t: v>` 结构 = 解析错误
+4. GHA runner 生命周期：macos-13 已退役（无限排队长），macos-14 2026-11 退役，x86_64 至 2027-08 → 发布矩阵反映现实
+5. workflow 文件 = tag/ref 快照（dispatch 与修复都无法作用于旧 tag——要么 force tag 要么等下一版本）
+6. PyPI：相似名（en gram）；classifier 未知；dist 残留 + zsh 通配符 "no matches found"（build 前 rm dist）
+7. 资产同名覆盖（4 平台同名 engramdb）→ 平台后缀命名；merge-multiple 展平会影响 glob
+8. PrefetchPlan 累计语义（测试层面的认知坑）
+9. Badge row 语义：同分片相邻行共享 badge——planner/performance 设计均以"行簇"为单元，不是行
+
+## 3. 已完成（Session 2 里程碑 → git）
+
+| 内容 | commit |
+|---|---|
+| 文档三件套（design §7 / roadmap / session-log v1）+ README 索引 | 9a6898b |
+| Phase 1 收敛（crates 改名/gate/CI/LICENSE/licenses.md/publish metadata） | 22a1819；bfc00ca |
+| crates.io 4 名占名 | 7e4dbae 前序（发布批次） |
+| PyPI engramdb-python 0.1.0（相似名规避 + publish.yml v1） | 7e4dbae |
+| OIDC trusted publishing + 全链 single-tag（release/publish/assets） | 22a1819→后 5a1 行（`ci: single-tag` 等） |
+| bump.sh + 发布流程（0.1.1/0.1.2/0.1.3 验证） | 0f93177 路线 |
+| 0.1.3 全链成功（crates 4 + PyPI + Release 4 平台资产） | 用户确认 |
+| Phase 2：StreamingPlanner/gather_plan/fnv64/IoBackend | 80b78aa；bfc00ca |
+| 第二轮复盘 roadmap §6 + session-log §Session2 | 本文件 |
+
+## 4. 新发现的问题（按严重度 → 处置）
+
+1. N1 性能契约端到端悬空（P4b 不做 50/100 tok/s 只是估算）→ 需 P4
+2. N2 无 Linux 门禁（io_uring 停摆、GPU 不可测）→ P2c 租机决策（~30-50 元/月）
+3. N3 release 无 preflight（test 靠自觉）→ release 前加 preflight job/本地检查
+4. N4 crates.io token 粗粒度+双存 → OIDC 化（crates.io trusted publishing）Phase 3.5
+5. N5 design §9 里程碑与 probes 未同步 → 随 P2b 更新
+6. N6 PyPI 相似名豁免 → 0.2 窗口提交
+7. 数据面无新问题（P2 数据结论：hot-set 仅 agent 型负载成立）
+
+## 5. 计划（v2.1，详见 roadmap §6.4）
+
+P2b CLI 端到端（warm/bench-real 接 agent 真指令序列 + 集成测试入门禁 + N3 preflight）→ P2c Linux 门禁（决策点）→ P3 Store-P 视图构建 + P4 自动门 → P4 PyO3+en gram-peft interop + **P4b 端到端 decode 曲线** → P5/P6/P7 照旧。全部出口 = gate + 文档同步。
