@@ -1,26 +1,31 @@
 name: publish-pypi
 
-# PyPI 分发：tag v* 触发（与 release.yml 的 crates 发布并行）。
-# 密钥：仓库 Settings -> Secrets and variables -> Actions -> PYPI_TOKEN
-# （PyPI 官方建议：pypi.org Account settings -> API tokens 创建，
-#   仅勾选传输项目，避免全账号权限进 CI）。
+# PyPI Trusted Publishing（OIDC）：tag v* 触发，无需任何 API token。
+# PyPI 后台 Trusted Publisher 配置：
+#   Project         : engramdb-python
+#   Publisher       : GitHub
+#   Repository      : QingGo/EngramDB
+#   Workflow name   : publish.yml
+#   Environment name: pypi   (与下方 job environment 一致)
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   pypi:
+    environment: pypi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: build & publish
+      - name: build
         run: |
           cd python
           uv build .
-          uv publish dist/*
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
