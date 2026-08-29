@@ -1,0 +1,99 @@
+{
+  "model": "Qwen/Qwen3.8-Flash-Next-FP8",
+  "arch": "qwen4_exp_text",
+  "ngram_size": 3,
+  "ngram_vocab_size_base": 20000000,
+  "heads_per_ngram": 8,
+  "ple_embed_dim": 2560,
+  "ple_layer_ids": [
+    2
+  ],
+  "split_ngram_parts": 128,
+  "make_ngram_vocab_size_divisible_by": 128,
+  "ple_conv_kernel_size": 4,
+  "hidden_size": 2560,
+  "hc_count": 4,
+  "vocab_size": 248320,
+  "layer_multipliers_i64": [
+    23703573157769,
+    20109073645365,
+    8052911324071
+  ],
+  "shard_rows": 2500012,
+  "shard_width": 160,
+  "shard_dtype": "F8_E4M3",
+  "total_rows": 82500396,
+  "nsides": {
+    "ple_tensors": 138,
+    "ngram_shard_tensors": 33,
+    "ple_file_count": 33,
+    "shard_files": [
+      "model-00005-of-00131.safetensors",
+      "model-00006-of-00131.safetensors",
+      "model-00007-of-00131.safetensors",
+      "model-00008-of-00131.safetensors",
+      "model-00009-of-00131.safetensors",
+      "model-00010-of-00131.safetensors",
+      "model-00011-of-00131.safetensors",
+      "model-00012-of-00131.safetensors",
+      "model-00013-of-00131.safetensors",
+      "model-00014-of-00131.safetensors",
+      "model-00015-of-00131.safetensors",
+      "model-00016-of-00131.safetensors",
+      "model-00017-of-00131.safetensors",
+      "model-00018-of-00131.safetensors",
+      "model-00019-of-00131.safetensors",
+      "model-00020-of-00131.safetensors",
+      "model-00021-of-00131.safetensors",
+      "model-00022-of-00131.safetensors",
+      "model-00023-of-00131.safetensors",
+      "model-00024-of-00131.safetensors",
+      "model-00025-of-00131.safetensors",
+      "model-00026-of-00131.safetensors",
+      "model-00027-of-00131.safetensors",
+      "model-00028-of-00131.safetensors",
+      "model-00029-of-00131.safetensors",
+      "model-00030-of-00131.safetensors",
+      "model-00031-of-00131.safetensors",
+      "model-00032-of-00131.safetensors",
+      "model-00033-of-00131.safetensors",
+      "model-00034-of-00131.safetensors",
+      "model-00035-of-00131.safetensors",
+      "model-00036-of-00131.safetensors",
+      "model-00037-of-00131.safetensors"
+    ]
+  },
+  "projection_shape": {
+    "key_proj.weight": {
+      "dtype": "BF16",
+      "shape": [
+        10240,
+        2560
+      ]
+    },
+    "norm_key.weight": {
+      "dtype": "BF16",
+      "shape": [
+        10240
+      ]
+    },
+    "norm_query.weight": {
+      "dtype": "BF16",
+      "shape": [
+        10240
+      ]
+    },
+    "norm_conv.weight": {
+      "dtype": "BF16",
+      "shape": [
+        10240
+      ]
+    },
+    "ple_embedding.ngram_embedding.weight_scale": {
+      "dtype": "BF16",
+      "shape": [
+        1
+      ]
+    }
+  }
+}

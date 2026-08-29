@@ -1,0 +1,28 @@
+# Rust / build
+/target
+/target/
+**/target/
+Cargo.lock
+
+# External weights (symlinked from external SSD, never committed)
+/data/
+/data
+
+# Probe / bench outputs
+/probes/out*/
+*.csv
+probe-report*.md
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# mac
+.DS_Store
+
+# logs
+*.log
+/download.log
