@@ -2,9 +2,14 @@ name: release-assets
 
 # GitHub Release 资产：推送 v* tag 即自动创建/更新 Release，
 # 附加 Rust 二进制（4 平台）与 Python 包（wheel+sdist）。无需 UI。
+# runner 世代说明（2026-08 校验官方 runner-images 状态）：
+#   macos-13 已于 2025-12 退役；macos-14 将于 2026-11 退役；
+#   x86_64 macOS 唯一公共选择 = macos-15-intel（2027-08 退役后 GHA 无 Intel Mac）；
+#   arm64 建议 macos-15+/macos-latest；ubuntu arm 公共 = ubuntu-24.04-arm。
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:  # 调试/补跑用：Actions 页手动选择 tag 重跑
 
 permissions:
   contents: write
@@ -19,9 +24,9 @@ jobs:
             name: linux-x86_64
           - os: ubuntu-24.04-arm
             name: linux-aarch64
-          - os: macos-13
+          - os: macos-15-intel
             name: macos-x86_64
-          - os: macos-14
+          - os: macos-15
             name: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
