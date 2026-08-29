@@ -1,9 +1,13 @@
 # EngramDB
 
-> **消歧声明**：GitHub 上另有几个同名 "EngramDB" 项目，均为通用 Agent 记忆/语义检索库
-> （记忆节点、HNSW、向量相似度、coding-agent 备忘等）。本项目与它们无关——EngramDB
-> 特指 **DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的磁盘优先存储引擎**。
-> 定位一句话：*为确定性哈希寻址的 n-gram 嵌入表提供数据库级存储、索引与负载优化*。
+> **消歧声明**：GitHub 上另有多个同名 "EngramDB" 项目，均为通用 Agent 记忆/语义检索类产品，
+> 与"DeepSeek Engram"无关。已完成清点（2026-08-29）：
+> - Agent 记忆类：`nkkko/nibzard`（MemoryNode 向量图时间库）、`ioteverythin`（SQL-native event-sourced 记忆，PyPI badge 未生效）、`andrewmooney`（MCP 服务器）、`egeapak`（coding agent 项目级备忘，磁盘文件）——语义相似搜索/备忘，非确定性查表
+> - 检索类：`sxtj`（纯 Rust 嵌入向量库，HNSW+BM25+TUI）、`pyalwin`（法律 multi-hop 混合检索，DuckDB）
+> - 其他类：`SohenDev/engramdb-visualization`（Grafana fork 改名）、`sn0wfree`（分析型单文件数据库 .hdb）
+> 本项目与它们无关——**EngramDB = DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的磁盘优先存储引擎**：
+> *为确定性哈希寻址的 n-gram 嵌入表提供数据库级存储、索引与负载优化*。
+> 登记现状：crates.io / PyPI `engramdb` 均未被占用（审计当日）——应尽早发布占名。
 
 磁盘优先的 Engram / PLE（n-gram 记忆表）存储引擎（Rust，DuckDB 风格：嵌入式 + 可选服务化）。
 
