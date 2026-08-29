@@ -8,6 +8,16 @@ cd "$(dirname "$0")/.."
 
 CRATES=(engramdb-keygen engramdb-core engramdb-io engramdb)
 
+# 本地发布时绕开 registry 替换源（镜像 index 未同步会解析失败；发布后自动恢复）
+CONFIG="$HOME/.cargo/config.toml"
+MOVED=""
+disarm() { if [[ -n "$MOVED" ]]; then mv "$HOME/.cargo/config.toml.publish-tmp" "$CONFIG"; echo ">> registry replace source restored"; fi }
+trap disarm EXIT
+if [[ -f "$CONFIG" ]] && grep -q "replace-with" "$CONFIG"; then
+  mv "$CONFIG" "$HOME/.cargo/config.toml.publish-tmp"; MOVED=1
+  echo ">> 临时绕开本地 registry 替换源（$CONFIG -> publish-tmp）"
+fi
+
 # tag 与 manifest 版本一致性校验（本地/CI 均校验）
 if [[ -n "${RELEASE_TAG:-}" ]]; then
   want="${RELEASE_TAG#v}"
