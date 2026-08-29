@@ -18,7 +18,7 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
       - uses: dtolnay/rust-toolchain@stable
-      - name: publish (ordered: keygen -> core -> io -> engramdb)
+      - name: publish (keygen then core then io then engramdb)
         run: bash scripts/release.sh
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
