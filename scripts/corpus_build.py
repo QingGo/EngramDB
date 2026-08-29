@@ -219,23 +219,27 @@ def parse_agent(p: Path):
         return
     import pyarrow.parquet as pq
     out = TXT / "agent"; out.mkdir(parents=True, exist_ok=True)
-    # 分 harness 组织
-    import hashlib
     cap = 66_000_000
-    written, per = 0, {}
-    t = pq.ParquetFile(p).read()
-    rows = t.num_rows
-    for i in range(rows):
-        row = t.slice(i, 1)
-        harness = row.column("harness")[0].as_py() or "other"
-        messages = row.column("messages")[0].as_py()
-        if messages is None:
-            messages = row.column("trace")[0].as_py() if "trace" in t.column_names else None
-        text = flatten_messages(messages)
-        if not text or len(text) < 300:
+    written = 0
+    per = {}
+    table = pq.read_table(str(p), columns=["harness", "messages", "trace", "file_path"])
+    for row in table.to_pylist():
+        harness = row.get("harness") or "other"
+        msgs = row.get("messages") or row.get("trace") or []
+        if isinstance(msgs, str):
+            msgs = [msgs]
+        # 保留原始结构：每条 element 是 JSON 字符串（可能为引号包裹对象）
+        parts = []
+        for m in msgs:
+            s = m if isinstance(m, str) else (json.dumps(m, ensure_ascii=False) if m is not None else "")
+            if s:
+                parts.append(s)
+        text = "\n".join(parts)
+        if len(text) < 300:
             continue
         f = per.setdefault(harness, open(out / f"{harness}.txt", "w", encoding="utf-8", errors="ignore"))
-        f.write(text); f.write("\n\n--- session ---\n\n")
+        f.write(text)
+        f.write("\n\n--- session / end ---\n\n")
         written += len(text)
         if written >= cap:
             break
@@ -291,24 +295,27 @@ def parse_cctraces(p: Path):
             stats["sessions"] += 1
             for r in obj.get("requests", []):
                 stats["requests"] += 1
-                stats["in_tokens"].append(r.get("in", 0))
-                stats["out_tokens"].append(r.get("out", 0))
-                if r.get("ttft") is not None:
-                    stats["ttft"].append(r["ttft"])
-                if r.get("api_time") is not None:
-                    stats["api_time"].append(r["api_time"])
-                if r.get("think_time") is not None:
-                    stats["think_time"].append(r["think_time"])
-                stats["blocks_per_request"].append(len(r.get("hash_ids", [])))
+                for field, key in (("in_tokens", "in"), ("out_tokens", "out"), ("ttft", "ttft"),
+                                   ("api_time", "api_time"), ("think_time", "think_time"),
+                                   ("blocks_per_request", "hash_ids")):
+                    v = r.get(key)
+                    if field == "blocks_per_request":
+                        stats[field].append(len(v) if isinstance(v, list) else 0)
+                    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                        stats[field].append(v)
                 stats["models"][r.get("model", "?")] = stats["models"].get(r.get("model", "?"), 0) + 1
-    agg = {k: (v if isinstance(v, int) else {"n": len(v),
-            "mean": round(sum(x for x in v if x is not None) / max(1, len([x for x in v if x is not None])), 2),
-            "p50": rounded_quantile(v, 0.5), "p95": rounded_quantile(v, 0.95),
-            "max": max(v) if v else None}) for k, v in stats.items() if k not in ("models",) or True}
-    out = {"sessions": agg["sessions"], "requests": agg["requests"],
-           "in_tokens": agg["in_tokens"], "out_tokens": agg["out_tokens"],
-           "ttft": agg["ttft"], "api_time": agg["api_time"], "think_time": agg["think_time"],
-           "blocks_per_request": agg["blocks_per_request"], "models": stats["models"]}
+    def q(xs, p):
+        xs = sorted(xs)
+        if not xs:
+            return None
+        return round(xs[min(int(p * (len(xs) - 1)), len(xs) - 1)], 3)
+
+    out = {"sessions": stats["sessions"], "requests": stats["requests"], "models": stats["models"]}
+    for k, v in stats.items():
+        if k in ("sessions", "requests", "models"):
+            continue
+        out[k] = {"n": len(v), "mean": round(sum(v) / len(v), 3) if v else None,
+                  "p50": q(v, 0.5), "p95": q(v, 0.95), "max": max(v) if v else None}
     PROBES.mkdir(exist_ok=True)
     (PROBES / "agent_workload_stats.json").write_text(json.dumps(out, indent=1))
     log.info("agent workload stats: %d sessions / %d requests", out["sessions"], out["requests"])

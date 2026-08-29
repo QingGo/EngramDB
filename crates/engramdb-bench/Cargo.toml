@@ -13,3 +13,7 @@ engramdb-io = { path = "../engramdb-io" }
 [[bin]]
 name = "p4view"
 path = "src/bin/p4view.rs"
+
+[[bin]]
+name = "p3sim"
+path = "src/bin/p3sim.rs"
