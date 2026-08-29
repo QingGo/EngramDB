@@ -23,7 +23,10 @@ impl CountIndex {
                 break;
             }
             if n != 8 {
-                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "partial rowid"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "partial rowid",
+                ));
             }
             let rowid = u64::from_le_bytes(buf);
             *counts.entry(rowid).or_insert(0) += 1;

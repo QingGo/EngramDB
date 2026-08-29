@@ -19,7 +19,9 @@ const VIEW_RECORD: u64 = 4096; // 4KB 对齐槽位（2560 数据 + pad），保�
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let Some(cmd) = args.next() else { return; };
+    let Some(cmd) = args.next() else {
+        return;
+    };
     let out = match cmd.as_str() {
         "gen" => cmd_gen(args),
         "bench" => cmd_bench(args),
@@ -40,7 +42,11 @@ fn lay() -> Layout {
 
 fn cmd_gen(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
-    let n: usize = rest.next().ok_or("n_grams")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let n: usize = rest
+        .next()
+        .ok_or("n_grams")?
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     let view_out = PathBuf::from(rest.next().ok_or("view.bin")?);
     let keys_out = PathBuf::from(rest.next().ok_or("rowids.txt")?);
 
@@ -56,11 +62,17 @@ fn cmd_gen(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let mut view = File::create(&view_out).map_err(|e| e.to_string())?;
     let mut rowids = Vec::with_capacity(n * 16);
     for _ in 0..n {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let a = (rng_state % 248_320) as u32;
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let b = (rng_state % 248_320) as u32;
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let c = (rng_state % 248_320) as u32;
         let ids = spec.rowids_for_seq(&[a, b, c]);
         for &r in &ids[0] {
@@ -68,7 +80,9 @@ fn cmd_gen(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         }
     }
     let mut out = vec![0u8; rowids.len() * 160];
-    batch.gather_pp(&rowids, &mut out, 8).map_err(|e| e.to_string())?;
+    batch
+        .gather_pp(&rowids, &mut out, 8)
+        .map_err(|e| e.to_string())?;
     let mut slot = vec![0u8; VIEW_RECORD as usize];
     for (i, key) in rowids.chunks(16).enumerate() {
         let _ = key;
@@ -90,12 +104,16 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let batch = BadgeGather::open(&rows_dir, &layout).map_err(|e| e.to_string())?;
 
     let mut keys = Vec::new();
-    for line in BufReader::new(std::fs::File::open(&keys_file).map_err(|e| e.to_string())?).lines() {
-        if let Ok(l) = line {
-            let l = l.trim();
-            if !l.is_empty() {
-                keys.push(l.parse::<u64>().map_err(|e: std::num::ParseIntError| e.to_string())?);
-            }
+    for l in BufReader::new(std::fs::File::open(&keys_file).map_err(|e| e.to_string())?)
+        .lines()
+        .map_while(Result::ok)
+    {
+        let l = l.trim();
+        if !l.is_empty() {
+            keys.push(
+                l.parse::<u64>()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
+            );
         }
     }
     let n_grams = keys.len() / 16;
@@ -104,19 +122,23 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     // ---- A: 16 行 scatter ----
     let mut out_a = vec![0u8; keys.len() * w];
     let t0 = std::time::Instant::now();
-    batch.gather_pp(&keys, &mut out_a, 8).map_err(|e| e.to_string())?;
-    let dt_a = t0.elapsed();
+    batch
+        .gather_pp(&keys, &mut out_a, 8)
+        .map_err(|e| e.to_string())?;
+    let _dt_a = t0.elapsed();
     let pages_a = unique_pages(&keys, &layout);
     println!("A unique 4KiB pages: {} (rows {})", pages_a, keys.len());
 
     // ---- B: view 单记录读 ----
     let vf = std::fs::File::open(&view_file).map_err(|e| e.to_string())?;
-    let mut out_b = vec![0u8; n_grams * VIEW_RECORD as usize];
+    let _out_b = vec![0u8; n_grams * VIEW_RECORD as usize];
     // 预生成记录访问序（相同随机序）
     let mut g_state: u64 = 0xCAFE_BEEF_0F1E_2D3C;
     let mut order: Vec<u64> = Vec::with_capacity(n_grams);
     for _ in 0..n_grams {
-        g_state = g_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        g_state = g_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         order.push(g_state % n_grams as u64);
     }
     let view_ref = &vf;
@@ -147,7 +169,9 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let dt_b2 = run_par(8);
     report("B :view rec(8t,warm)", n_grams as u64 * 16, dt_b2);
     let t3 = std::time::Instant::now();
-    batch.gather_pp(&keys, &mut out_a, 8).map_err(|e| e.to_string())?;
+    batch
+        .gather_pp(&keys, &mut out_a, 8)
+        .map_err(|e| e.to_string())?;
     let dt_a2 = t3.elapsed();
     report("A :16-row scatter(warm)", keys.len() as u64, dt_a2);
 
@@ -156,8 +180,10 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let ra_b = n_grams as u64 * 4096;
     println!(
         "byte amplification: A {:.2}x ({} pages x 4KiB), B {:.2}x ({} rec x 4KiB slot)",
-        ra_a as f64 / ba as f64, pages_a,
-        ra_b as f64 / ba as f64, n_grams
+        ra_a as f64 / ba as f64,
+        pages_a,
+        ra_b as f64 / ba as f64,
+        n_grams
     );
     Ok(())
 }

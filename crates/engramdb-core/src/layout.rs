@@ -6,21 +6,31 @@ pub struct Layout {
     pub shards: u64,
     pub rows_per_shard: u64,
     pub width: u64,
-    pub row_bytes: u64,     // width * elem_bytes
-    pub badge_rows: u64,    // 每个 badge 的行数（用户可调，对齐 4KB 优先）
+    pub row_bytes: u64,  // width * elem_bytes
+    pub badge_rows: u64, // 每个 badge 的行数（用户可调，对齐 4KB 优先）
 }
 
 impl Layout {
     pub fn new(shards: u64, rows_per_shard: u64, width: u64, elem_bytes: u64) -> Self {
         let row_bytes = width * elem_bytes;
         let badge_rows = aligned_badge_rows(row_bytes, 4096);
-        Self { shards, rows_per_shard, width, row_bytes, badge_rows }
+        Self {
+            shards,
+            rows_per_shard,
+            width,
+            row_bytes,
+            badge_rows,
+        }
     }
 
-    pub fn total_rows(&self) -> u64 { self.shards * self.rows_per_shard }
+    pub fn total_rows(&self) -> u64 {
+        self.shards * self.rows_per_shard
+    }
 
     /// badge 字节数（4KB 对齐推荐）
-    pub fn badge_bytes(&self) -> u64 { self.badge_rows * self.row_bytes }
+    pub fn badge_bytes(&self) -> u64 {
+        self.badge_rows * self.row_bytes
+    }
 
     /// rowid → (shard_id, badge_id, in_badge_row)
     pub fn locate(&self, rowid: u64) -> (u64, u64, u64) {
@@ -39,8 +49,7 @@ impl Layout {
 
 /// 行宽 -> 尽量使 badge ≥ 4KB 且行数整除性佳的 badge_rows。
 pub fn aligned_badge_rows(row_bytes: u64, min_bytes: u64) -> u64 {
-    let per = (min_bytes / row_bytes.max(1)).max(1);
-    per
+    (min_bytes / row_bytes.max(1)).max(1)
 }
 
 /// 行范围（为批量连续读服务）

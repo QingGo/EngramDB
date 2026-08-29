@@ -11,11 +11,7 @@
 //!
 //! 本 crate 无 IO 依赖，纯函数，`golden.json`（scripts/ref_ple_hash.py 生成）做 P0 对拍。
 
-const PLE_MULTIPLIERS: [u64; 3] = [
-    23_703_573_157_769,
-    20_109_073_645_365,
-    8_052_911_324_071,
-];
+const PLE_MULTIPLIERS: [u64; 3] = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071];
 
 pub const PLE_EOS: u32 = 248_044;
 pub const PLE_NGRAM_SIZE: usize = 3;
@@ -32,9 +28,9 @@ pub struct PleSpec {
     pub multipliers: [u64; 3],
     pub prime_sizes: Vec<u64>,
     pub head_offsets: Vec<u64>,
-    pub divisors: Vec<u64>,      // 每头素数（与 prime_sizes 相同，语义分离用）
-    pub total: u64,              // Σ素数
-    pub padded: u64,             // ceil(total/128)*128 = 320,001,536
+    pub divisors: Vec<u64>, // 每头素数（与 prime_sizes 相同，语义分离用）
+    pub total: u64,         // Σ素数
+    pub padded: u64,        // ceil(total/128)*128 = 320,001,536
     pub rows_per_shard: u64,
     pub shards: u64,
     pub eos: u32,
@@ -62,7 +58,11 @@ impl PleSpec {
         let padded = round_up(total, PLE_DIVISOR);
         let rows_per_shard = PLE_ROWS_PER_SHARD;
         let shards = PLE_SHARDS;
-        assert_eq!(rows_per_shard * shards, padded, "P0: 分片网格与 padded 表必须闭合");
+        assert_eq!(
+            rows_per_shard * shards,
+            padded,
+            "P0: 分片网格与 padded 表必须闭合"
+        );
         assert_eq!(padded, 320_001_536);
         Self {
             multipliers: PLE_MULTIPLIERS,
@@ -104,9 +104,13 @@ impl PleSpec {
             let mut row = [0u32; PLE_HEADS];
             for (ngram_order, shift_range) in [(2, 0usize), (3, PLE_HEADS_PER_NGRAM)] {
                 let mut mixed = (shifted[0][pos] as u64).wrapping_mul(self.multipliers[0]);
-                for k in 1..ngram_order {
-                    mixed ^= (shifted[k][pos] as u64)
-                        .wrapping_mul(self.multipliers[k]);
+                for (shifted_row, m) in shifted
+                    .iter()
+                    .take(ngram_order)
+                    .skip(1)
+                    .zip(self.multipliers.iter().skip(1))
+                {
+                    mixed ^= (shifted_row[pos] as u64).wrapping_mul(*m);
                 }
                 for h in 0..PLE_HEADS_PER_NGRAM {
                     let gi = (ngram_order - 2) * PLE_HEADS_PER_NGRAM + h; // 全局头序号 0..16
@@ -159,12 +163,12 @@ fn is_prime(v: u64) -> bool {
     if v < 2 {
         return false;
     }
-    if v % 2 == 0 {
+    if v.is_multiple_of(2) {
         return v == 2;
     }
     let mut d = 3u64;
     while d * d <= v {
-        if v % d == 0 {
+        if v.is_multiple_of(d) {
             return false;
         }
         d += 2;
@@ -186,7 +190,7 @@ pub fn nth_prime_after(start: u64, count: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+
     use std::path::PathBuf;
 
     #[test]
@@ -214,7 +218,13 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|r| r.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect())
+            .map(|r| {
+                r.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().unwrap() as u32)
+                    .collect()
+            })
             .collect();
         let got = s.rowids_for_seq(&tokens);
         assert_eq!(got.len(), expect.len());
@@ -223,7 +233,9 @@ mod tests {
             if gv != *ev && i < 4 {
                 eprintln!(
                     "[debug mismatch] pos={i} hashes that differ: {:?}",
-                    gv.iter().zip(ev.iter()).enumerate()
+                    gv.iter()
+                        .zip(ev.iter())
+                        .enumerate()
                         .filter(|(_, (a, b))| a != b)
                         .collect::<Vec<_>>()
                 );

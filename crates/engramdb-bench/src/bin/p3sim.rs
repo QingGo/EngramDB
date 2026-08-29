@@ -68,7 +68,9 @@ fn simulate(mode: &str, tokens: usize, cache_mb: u64) -> SimResult {
     let cache_pages = ((cache_mb * 1024 * 1024) / PAGE).max(1) as usize;
     let mut state: u64 = 0x1234_5678_9ABC_DEF0;
     let mut rng = move || {
-        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         state
     };
     let doc_lines = 20_000u64;

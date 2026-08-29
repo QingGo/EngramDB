@@ -84,14 +84,14 @@
 |---|---|---|
 | Q1 P0 结构/哈希闭证 | 官方实现提取、素数/偏移/乘子数值闭证（320,001,536 闭合）、Rust keygen+golden | `refs/`、`crates/engramdb-keygen`、`tests/golden.json` |
 | 真实权重资产化 | config.json（modelscope API）、33 safetensors、128×[2,500,012,160] F8 行提取（`data/real-rows` 软链外盘） | `data/qwen38-ple-fp8`、`scripts/extract_ple_*` |
-| M1 存储核心 | badge 布局、I2 频率索引、`gather_pp`（页对齐+分片并行）、CLI build/index/warm/verify、真表基准 | `engramdb-core`/`engramdb-io`/`engramdb-cli`、P1 基准 |
+| M1 存储核心 | badge 布局、I2 频率索引、`gather_pp`（页对齐+分片并行）、CLI build/index/warm/verify、真表基准 | `engramdb-core`/`engramdb-io`/`engramdb`、P1 基准 |
 | Q2 P4 物化视图证据 | 16 行 scatter vs 视图的 5× 与 12.5× 带宽差；结论：视图路线 | `p4view`、`probes/p4_view_notes.md` |
 | Q3 P3 页级 LRU 模型 | local/uniform 两档曲线 | `p3sim` |
 | Q4 P2 v3 高质语料统计 | UV 依赖、阶段化/并行/续跑、Rust T3 进度条；三域 zipf/热集/唯一行实测+**Zipf 假设修正** | `pyproject.toml`、`p2rowid`、`probes/p2_report_v2.json`、`agent_workload_stats.json`（949 会话/136K 请求真实统计） |
 | Q5 外部生态调研 | vLLM/SGLang/llama.cpp/NeMo 全部现状+数据；8 个同名项目清点；DB/向量库借鉴 | `design.md §5`、README 消歧 |
 | Q6 文档体系 | design.md（§7 实证化+修正项）、engram-specs.md（结构证据链）、roadmap.md（战略+深度债），本 session-log | `docs/*` |
 
-当前唯一硬性未达门禁：**P6（LMDB/RocksDB/DuckDB 横向对照）未执行**（因优先完成真表/视图/语料证据链；已列后续）。
+当前唯一硬性未达门禁：**P6（LMDB/RocksDB/DuckDB 横向对照）未执行（因优先完成真表/视图/语料证据链；已列后续）。
 
 ---
 
@@ -105,13 +105,13 @@
 6. **同名生态竞争/占名窗口**：crates.io & PyPI `engramdb` 当前空闲（ioteverythin 的 badge 未实际发布）→ 尽快注册。
 7. **许可证未成文**：qwen-community-1.0 提取/嫁接边界未写 → `docs/licenses.md` 待建。
 8. **下载/解析工具债**：corpus_build（探速噪声、无 sha256）、wet 脚本废弃标识、manifest 缺 provenance。
-9. **探针/产品命名混乱**：`engramdb-cli` 含 bench-real；`engramdb-bench` 含 4 个 bin；→ 统一布局。
+9. **探针/产品命名混乱**：原 engramdb-cli 已改名 engramdb；`engramdb-bench` 含 4 个 probe bin（publish=false）；→ 统一布局。
 
 ---
 
 ## 5. 计划要完成的部分（见 roadmap.md §4 详表）
 
-- **Phase 1（下一步）**：crates.io/PyPI 占名；CI/baseline-gate 骨架；bin 布局收敛（`engramdb` 主 CLI vs `engramdb-bench`）。
+- **Phase 1（已完成 2026-08-29 深夜）**：crate 于 `engramdb`（原 engramdb-cli）；`engramdb-bench` publish=false；`git mv` + clippy/fmt 全清（含 1 处潜在 bug：multiplicand 乘子 zip） + 双 OS GitHub Actions + 本地 `scripts/gate.sh` 全绿；LICENSE(Apache-2.0) + docs/licenses.md（Qwen Community 1.0 边界成文）+ cargo config.toml 迁移；发布准备经 `cargo package --list` 确认，**待用户 crates.io/PyPI token 占名**（顺序 keygen→core→io→engramdb）。
 - **Phase 2（M1.5-A）**：io_uring 后端 + Linux 门禁复测；PrefetchPlanner→ring→ordered-gather 单链化；bitwise 入 cargo test。
 - **Phase 3（M1.5-B）**：Store-P 真表视图构建器（槽位选型 4KB-pad vs 2560B）；P4 自动化 gate。
 - **Phase 4（M2）**：PyO3 `engramdb` 包 + engram-peft interop + qwen adapter + **P4b 端到端 decode 模拟**（50/100 tok/s 实测化）。

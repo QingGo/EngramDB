@@ -21,6 +21,8 @@
 - `docs/engram-specs.md` —— Engram/PLE 结构规格与证据链
 - `docs/roadmap.md` —— 战略路线图：终极目标 / 技术债 / 借鉴矩阵 / Phase 计划 / 稳定性机制
 - `docs/session-log.md` —— 首个开发 session 完整复盘（尝试-坑-完成-新问题-计划）
+- `docs/licenses.md` —— 许可与合规边界（模型权重/语料统计分发规则）
+- `scripts/gate.sh` —— 本地门禁（fmt + clippy -D warnings + test）
 
 权重数据（不入库）：真实 FP8 checkpoint 分片软链到 `data/qwen38-ple-fp8`
 （外接 SSD：`/Volumes/My Passport/qwen38-ple`，约 53GB，ModelScope `Qwen/Qwen3.8-Flash-Next-FP8` 的 PLE 相关分片）。

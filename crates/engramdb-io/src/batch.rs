@@ -27,11 +27,17 @@ impl PrefetchPlan {
             v.dedup();
         }
         let n_badges = shard_badges.values().map(|v| v.len()).sum();
-        Self { shard_badges, n_badges }
+        Self {
+            shard_badges,
+            n_badges,
+        }
     }
 
     pub fn badges(&self, shard: u64) -> &[u64] {
-        self.shard_badges.get(&shard).map(|v| v.as_slice()).unwrap_or(&[])
+        self.shard_badges
+            .get(&shard)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -56,7 +62,12 @@ impl<'a> BadgeGather<'a> {
     }
 
     /// 多线程 gather：`keys`/`out` 按 chunk 分片并行（各线程独立 badge 缓冲区）。
-    pub fn gather_parallel(&self, keys: &[u64], out: &mut [u8], threads: usize) -> std::io::Result<()> {
+    pub fn gather_parallel(
+        &self,
+        keys: &[u64],
+        out: &mut [u8],
+        threads: usize,
+    ) -> std::io::Result<()> {
         if threads <= 1 || keys.len() <= 1024 {
             return self.gather_naive(keys, out);
         }
@@ -157,7 +168,6 @@ impl<'a> BadgeGather<'a> {
             }
         });
 
-        let w = w;
         for (idxs, rows) in results {
             for (j, &oi) in idxs.iter().enumerate() {
                 let slice = &rows[j * w..(j + 1) * w];

@@ -379,7 +379,7 @@ EngramDB/
 │  │   └─ backend-preadv/         # macOS: preadv + kqueue; F_NOCACHE 平衡
 │  ├─ engramdb-keygen/            # DeepSeek-demo 与 Qwen-ple 两套 keygen 的 Rust 实现（+对拍 golden）
 │  ├─ engramdb-bindings/          # PyO3 → 包名 `engramdb`（训练器/engram-peft 用）
-│  ├─ engramdb-cli/               # engramdb init|build|index|prefetch|warm|serve|probe|inspect|stats
+│  ├─ engramdb/               # engramdb init|build|index|prefetch|warm|serve|probe|inspect|stats
 │  └─ engramdb-bench/             # criterion 探针（P1-P6）
 ├─ examples/                      # interop_engram_peft.py / qwen_ple_adapter.py
 ├─ scripts/                       # 参考实现 python 对拍（P0b）/ 数据制备

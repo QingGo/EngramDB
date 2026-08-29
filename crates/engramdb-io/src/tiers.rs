@@ -18,7 +18,11 @@ impl TierManager {
     /// 从 count 索引构建热集（仅取 top `$budget/row_bytes` 行）。
     /// 输入语义：`row_costs` = (rowid, count)。为保持 M1 小而正确，
     /// 这里接 "count-dump" 文件：行 {rowid} {count}（步进）。
-    pub fn from_counts_dump(path: &Path, budget_bytes: u64, row_bytes: u64) -> std::io::Result<Self> {
+    pub fn from_counts_dump(
+        path: &Path,
+        budget_bytes: u64,
+        row_bytes: u64,
+    ) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
         let mut heap: BinaryHeap<(u64, u64)> = BinaryHeap::new();
         for line in text.lines() {
@@ -41,7 +45,10 @@ impl TierManager {
             }
         }
         hot_rows.sort_unstable();
-        Ok(Self { hot_rows, ram_budget_bytes: budget_bytes })
+        Ok(Self {
+            hot_rows,
+            ram_budget_bytes: budget_bytes,
+        })
     }
 
     pub fn is_hot(&self, rowid: u64) -> bool {

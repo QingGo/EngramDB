@@ -34,7 +34,13 @@ fn main() {
     };
     let mock_rows = 8 * 156_251u64;
     let keys: Vec<u64> = (0..batch)
-        .map(|_| if next() & 1 == 0 { next() % mock_rows } else { next() % spec.padded as u64 % mock_rows })
+        .map(|_| {
+            if next() & 1 == 0 {
+                next() % mock_rows
+            } else {
+                next() % spec.padded % mock_rows
+            }
+        })
         .collect();
 
     let layout = Layout::new(8, 156_251, 160, 1);
@@ -68,13 +74,11 @@ fn main() {
     println!("  batch p50     = {:?}  p95 = {:?}", p50, p95);
     println!(
         "  badge overhead = {:.3}x  ({} bytes/badge vs {:.0}B payload/batch)",
-        amplification,
-        badge_bytes,
-        payload_bytes as f64
+        amplification, badge_bytes, payload_bytes as f64
     );
 }
 
-fn percentile(xs: &mut Vec<std::time::Duration>, p: f64) -> std::time::Duration {
+fn percentile(xs: &mut [std::time::Duration], p: f64) -> std::time::Duration {
     xs.sort();
     let idx = (((xs.len() - 1) as f64) * p).round() as usize;
     xs[idx]

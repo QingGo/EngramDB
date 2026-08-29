@@ -24,9 +24,11 @@ fn read_tokens(path: &PathBuf) -> Vec<u32> {
         u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]) as usize
     };
     idx += if major == 1 { 2 } else { 4 };
-    let header = std::str::from_utf8(&data[idx..idx + hlen]).unwrap();
+    let _header = std::str::from_utf8(&data[idx..idx + hlen]).unwrap();
     let raw = data[idx + hlen..].to_vec();
-    raw.chunks_exact(4)
+    raw.as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }
@@ -43,7 +45,8 @@ fn header_n(path: &PathBuf) -> usize {
         let header = std::str::from_utf8(&data[idx..idx + l]).unwrap();
         shape_n(header)
     } else {
-        let l = u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]) as usize;
+        let l =
+            u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]) as usize;
         idx += 4;
         let header = std::str::from_utf8(&data[idx..idx + l]).unwrap();
         shape_n(header)
@@ -62,8 +65,14 @@ fn shape_n(header: &str) -> usize {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let dir = PathBuf::from(args.next().unwrap_or_else(|| "data/p2-work/tokens/fineweb".into()));
-    let out = PathBuf::from(args.next().unwrap_or_else(|| "data/p2-work/stats/fineweb_rowid.json".into()));
+    let dir = PathBuf::from(
+        args.next()
+            .unwrap_or_else(|| "data/p2-work/tokens/fineweb".into()),
+    );
+    let out = PathBuf::from(
+        args.next()
+            .unwrap_or_else(|| "data/p2-work/stats/fineweb_rowid.json".into()),
+    );
 
     let spec = PleSpec::real();
     let files: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -72,7 +81,7 @@ fn main() {
         .map(|e| e.path())
         .filter(|p| p.extension().map(|x| x == "npy").unwrap_or(false))
         .collect();
-    let total_tokens: usize = files.iter().map(|f| header_n(f)).sum();
+    let total_tokens: usize = files.iter().map(header_n).sum();
 
     let mut counts: HashMap<u32, u32> = HashMap::new();
     let mut total_gets: u64 = 0;
@@ -123,7 +132,10 @@ fn main() {
     ] {
         let lim = limit.min(vals.len());
         let c: u64 = vals[..lim].iter().map(|&v| v as u64).sum();
-        tier.insert(k.to_string(), serde_json::json!(round3(c as f64 / total_gets as f64 * 100.0)));
+        tier.insert(
+            k.to_string(),
+            serde_json::json!(round3(c as f64 / total_gets as f64 * 100.0)),
+        );
     }
     let res = serde_json::json!({
         "unique_rows": counts.len(),
@@ -132,7 +144,11 @@ fn main() {
         "tier_curve_top_rows": serde_json::Value::Object(tier),
     });
     std::fs::write(&out, serde_json::to_string_pretty(&res).unwrap()).ok();
-    println!("\n[p2rowid] done in {:.1}s -> {}", t0.elapsed().as_secs_f64(), out.display());
+    println!(
+        "\n[p2rowid] done in {:.1}s -> {}",
+        t0.elapsed().as_secs_f64(),
+        out.display()
+    );
 }
 
 fn round3(x: f64) -> f64 {

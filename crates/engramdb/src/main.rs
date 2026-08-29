@@ -7,10 +7,10 @@
 //! - verify    用 Python 参考脚本给同一批 rowid 求 fnv，与本端对拍（bit-exact）
 //! - bench-real 真表 P1 微基准（keygen rowid 流）
 //!
-//! 用法见 `engramdb-cli --help`。
+//! 用法见 `engramdb --help`。
 
 use std::fs::File;
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use engramdb_core::count_index::CountIndex;
@@ -36,10 +36,10 @@ fn ple_layout() -> Layout {
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
-        println!("usage: engramdb-cli <build|index|gather|verify|bench-real|warm> [args...]");
+        println!("usage: engramdb <build|index|gather|verify|bench-real|warm> [args...]");
         return;
     };
-    let mut rest = args;
+    let rest = args;
     let out = match cmd.as_str() {
         "build" => cmd_build(rest),
         "index" => cmd_index(rest),
@@ -61,7 +61,6 @@ fn cmd_build(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let dst = PathBuf::from(args.next().ok_or("需要 <out_dir>")?);
     let layout = ple_layout();
     std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
-    let rb = layout.row_bytes as usize;
 
     // 逐分片：行连续 → 切 badge → 每分片写一个 badged 文件
     for shard in 0..layout.shards {
@@ -71,7 +70,6 @@ fn cmd_build(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         }
         let mut f = File::open(&sp).map_err(io_err)?;
         let mut out = File::create(dst.join(format!("badge_{:03}.bin", shard))).map_err(io_err)?;
-        let row_bytes = rb;
         let badge_bytes = layout.badge_bytes() as usize;
         let mut badge = vec![0u8; badge_bytes];
         loop {
@@ -101,9 +99,15 @@ fn cmd_build(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     "badge_bytes": layout.badge_bytes(), "total_rows": layout.total_rows() },
         "source": src.to_string_lossy(),
     });
-    std::fs::write(dst.join("manifest.json"), serde_json::to_vec_pretty(&manifest).unwrap())
-        .map_err(io_err)?;
-    println!("built {dst:?}  ({} shards × {} rows × {})", layout.shards, layout.rows_per_shard, layout.width);
+    std::fs::write(
+        dst.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .map_err(io_err)?;
+    println!(
+        "built {dst:?}  ({} shards × {} rows × {})",
+        layout.shards, layout.rows_per_shard, layout.width
+    );
     Ok(())
 }
 
@@ -116,7 +120,8 @@ fn cmd_index(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let f = File::open(&src).map_err(io_err)?;
     let idx = CountIndex::build_from_bin_stream(std::io::BufReader::new(f)).map_err(io_err)?;
     idx.write_bin(&dst.join("counts.bin")).map_err(io_err)?;
-    idx.write_dump(&dst.join("counts.dump.txt")).map_err(io_err)?;
+    idx.write_dump(&dst.join("counts.dump.txt"))
+        .map_err(io_err)?;
     println!("indexed {} unique rows -> {dst:?}", idx.iter().count());
     Ok(())
 }
@@ -128,7 +133,11 @@ fn cmd_warm(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let mut rest2 = rest;
     while let Some(arg) = rest2.next() {
         if arg == "--budget" {
-            budget_gb = rest2.next().ok_or("budget 值")?.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+            budget_gb = rest2
+                .next()
+                .ok_or("budget 值")?
+                .parse()
+                .map_err(|e: std::num::ParseFloatError| e.to_string())?;
         }
     }
     let layout = ple_layout();
@@ -144,7 +153,7 @@ fn cmd_warm(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
             }
             let mut f = File::open(&p2).map_err(io_err)?;
             let mut probe = 0u8;
-            let mut gone = 0u64;
+            let _gone = 0u64;
             while warmed < budget {
                 let mut buf = [0u8; 1 << 20];
                 let n = std::io::Read::read(&mut f, &mut buf).map_err(io_err)?;
@@ -152,7 +161,8 @@ fn cmd_warm(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
                     break;
                 }
                 warmed += n as u64;
-                gone += n as u64;
+                let gone = warmed;
+                let _ = gone;
                 probe = buf[0];
             }
             let _ = probe;
@@ -246,7 +256,7 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
         let ids = spec.rowids_for_seq(&triple);
         rowids.extend_from_slice(&ids[0]);
     }
-    let mut keys: Vec<u64> = rowids.iter().map(|&x| x as u64).collect();
+    let keys: Vec<u64> = rowids.iter().map(|&x| x as u64).collect();
     // shape 为 [T,16]，摊成 batch 直接 gather（行独立）
     let threads: usize = 8;
     let layout = ple_layout();
@@ -260,8 +270,13 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
     }
     let dt = t0.elapsed().as_secs_f64() / 8.0;
     let rows_per_s = keys.len() as f64 / dt;
-    println!("rows/s={:.0}  keys/batch={}  badge-rows={} payload=KB/tok={:.1}",
-             rows_per_s, keys.len(), keys.len(), keys.len() * 160 / 1024 / (keys.len() / 16));
+    println!(
+        "rows/s={:.0}  keys/batch={}  badge-rows={} payload=KB/tok={:.1}",
+        rows_per_s,
+        keys.len(),
+        keys.len(),
+        keys.len() * 160 / 1024 / (keys.len() / 16)
+    );
     Ok(())
 }
 
