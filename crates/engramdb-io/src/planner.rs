@@ -92,10 +92,9 @@ mod tests {
     fn window_eviction_republish() {
         let l = lay();
         let mut sp = StreamingPlanner::new(4);
-        let mut plan = PrefetchPlan::default();
         // 推进 6 个互不相同的 token（各 2 行且不同 badge，窗口预算 4 badge）
         for t in 0..6 {
-            plan = PrefetchPlan::default();
+            let mut plan = PrefetchPlan::default();
             let rows: Vec<u64> = vec![t * 1000, (t + 30) * 1000];
             let n = sp.advance(&rows, &l, &mut plan);
             // 窗口=4：前两 token 会被挤出 -> 后续每 token 仍 2 新 badge

@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 
+use crate::backend::{default_backend, IoBackend};
 use engramdb_core::layout::Layout;
 
 /// 预取计划：按分片分组的 badge 块列表（每 shard 内部升序，供顺序预读/合并）。
@@ -62,16 +62,30 @@ impl PrefetchPlan {
 pub struct BadgeGather<'a> {
     pub layout: &'a Layout,
     files: Vec<File>,
+    backend: Box<dyn IoBackend>,
 }
 
 impl<'a> BadgeGather<'a> {
     pub fn open(dir: &Path, layout: &'a Layout) -> std::io::Result<Self> {
+        Self::open_with_backend(dir, layout, default_backend())
+    }
+
+    /// 可注入后端（测试/基准：Preadv；未来 Linux：io_uring）。
+    pub fn open_with_backend(
+        dir: &Path,
+        layout: &'a Layout,
+        backend: Box<dyn IoBackend>,
+    ) -> std::io::Result<Self> {
         let n = layout.shards as usize;
         let mut files = Vec::with_capacity(n);
         for i in 0..n {
             files.push(File::open(dir.join(format!("shard_{:03}.bin", i)))?);
         }
-        Ok(Self { layout, files })
+        Ok(Self {
+            layout,
+            files,
+            backend,
+        })
     }
 
     pub fn into_files(self) -> Vec<File> {
@@ -110,7 +124,8 @@ impl<'a> BadgeGather<'a> {
             let (shard, badge, in_badge) = self.layout.locate(k);
             if last != Some((shard, badge)) {
                 let off = badge * self.layout.badge_bytes();
-                self.files[shard as usize].read_exact_at(&mut badge_buf, off)?;
+                self.backend
+                    .read_exact_at(&self.files[shard as usize], &mut badge_buf, off)?;
                 last = Some((shard, badge));
             }
             let src = in_badge as usize * rb;
@@ -158,7 +173,10 @@ impl<'a> BadgeGather<'a> {
                             let page_id = byte_off & !(PAGE - 1);
                             if last_page != Some(page_id) {
                                 let want = (PAGE + rb as u64) as usize;
-                                let n = f.read_at(&mut page[..want], page_id).unwrap_or(0);
+                                let n = self
+                                    .backend
+                                    .read_at(f, &mut page[..want], page_id)
+                                    .unwrap_or(0);
                                 let _ = n;
                                 last_page = Some(page_id);
                             }
@@ -167,7 +185,7 @@ impl<'a> BadgeGather<'a> {
                                 out_rows.extend_from_slice(&page[in_page..in_page + rb]);
                             } else {
                                 let mut tmp = vec![0u8; rb];
-                                let _ = f.read_exact_at(&mut tmp, byte_off);
+                                let _ = self.backend.read_exact_at(f, &mut tmp, byte_off);
                                 out_rows.extend_from_slice(&tmp);
                             }
                             out_idxs.push(oi);
@@ -211,7 +229,9 @@ impl<'a> BadgeGather<'a> {
             let buf = cache.entry((s, b)).or_insert_with(|| {
                 let mut buf = vec![0u8; self.layout.badge_bytes() as usize];
                 let off = b * self.layout.badge_bytes();
-                let _ = self.files[s as usize].read_exact_at(&mut buf, off);
+                let _ = self
+                    .backend
+                    .read_exact_at(&self.files[s as usize], &mut buf, off);
                 buf
             });
             for &i in idxs {
@@ -242,14 +262,16 @@ impl<'a> BadgeGather<'a> {
             } else {
                 // 计划外的 key：退化为直接行读（防御；正常流式路径不会出现）
                 let mut tmp = vec![0u8; rb];
-                self.files[s as usize].read_exact_at(&mut tmp, k * rb as u64)?;
+                self.backend
+                    .read_exact_at(&self.files[s as usize], &mut tmp, k * rb as u64)?;
                 out[i * w..(i + 1) * w].copy_from_slice(&tmp);
             }
         }
         for (&(s, b), idxs) in &groups {
             let mut buf = vec![0u8; self.layout.badge_bytes() as usize];
             let off = b * self.layout.badge_bytes();
-            self.files[s as usize].read_exact_at(&mut buf, off)?;
+            self.backend
+                .read_exact_at(&self.files[s as usize], &mut buf, off)?;
             for &i in idxs {
                 let (_, _, in_badge) = self.layout.locate(keys[i]);
                 let src = in_badge as usize * rb;

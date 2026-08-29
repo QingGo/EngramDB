@@ -17,16 +17,10 @@ use engramdb_core::count_index::CountIndex;
 use engramdb_core::layout::Layout;
 use engramdb_keygen::PleSpec;
 
-const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV_PRIME: u64 = 0x100000001b3;
+use engramdb_core::fnv64;
 
 fn fnv(bytes: &[u8]) -> u64 {
-    let mut h = FNV_OFFSET;
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-    h
+    fnv64(bytes)
 }
 
 fn ple_layout() -> Layout {
