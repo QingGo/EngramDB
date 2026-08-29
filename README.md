@@ -1,5 +1,10 @@
 # EngramDB
 
+> **消歧声明**：GitHub 上另有几个同名 "EngramDB" 项目，均为通用 Agent 记忆/语义检索库
+> （记忆节点、HNSW、向量相似度、coding-agent 备忘等）。本项目与它们无关——EngramDB
+> 特指 **DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的磁盘优先存储引擎**。
+> 定位一句话：*为确定性哈希寻址的 n-gram 嵌入表提供数据库级存储、索引与负载优化*。
+
 磁盘优先的 Engram / PLE（n-gram 记忆表）存储引擎（Rust，DuckDB 风格：嵌入式 + 可选服务化）。
 
 - 面向：DeepSeek **Engram**（arXiv 2601.07372）与 **Qwen3.8-Flash-Next PLE**（51.2B 参数 n-gram 表）的静态记忆表。
