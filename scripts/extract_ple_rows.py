@@ -44,6 +44,8 @@ def main() -> int:
         assert (rows, width) == (2_500_012, 160), (i, rows, width)
         nbytes = end - start
         out = dst / f"shard_{i:03d}.bin"
+        if out.exists() and out.stat().st_size == nbytes:
+            continue  # resume
         with open(fpath, "rb") as f:
             f.seek(data_start + start)
             with open(out, "wb") as g:

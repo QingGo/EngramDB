@@ -248,13 +248,14 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
     }
     let mut keys: Vec<u64> = rowids.iter().map(|&x| x as u64).collect();
     // shape 为 [T,16]，摊成 batch 直接 gather（行独立）
+    let threads: usize = 8;
     let layout = ple_layout();
     let batch = engramdb_io::batch::BadgeGather::open(&dir, &layout).map_err(io_err)?;
     let w = layout.width as usize;
     let mut out = vec![0u8; keys.len() * w];
     let t0 = std::time::Instant::now();
     for _ in 0..8 {
-        batch.gather_planned(&keys, &mut out).map_err(io_err)?;
+        batch.gather_pp(&keys, &mut out, threads).map_err(io_err)?;
         black_box(&out);
     }
     let dt = t0.elapsed().as_secs_f64() / 8.0;

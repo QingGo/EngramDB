@@ -91,6 +91,82 @@ impl<'a> BadgeGather<'a> {
         Ok(())
     }
 
+    /// 页对齐专用读路径：按 shard 分线程，shard 内按键升序聚页（4KiB 对齐，每页只读一次），
+    /// 行跨页边界时补读该行尾部。各线程只写自己的采集缓冲，主线程回填 out（无共享 &mut）。
+    pub fn gather_pp(&self, keys: &[u64], out: &mut [u8], threads: usize) -> std::io::Result<()> {
+        const PAGE: u64 = 4096;
+        let w = self.layout.width as usize;
+        let rb = self.layout.row_bytes as usize;
+        let mut groups: HashMap<u64, Vec<(u64, usize)>> = HashMap::new();
+        for (i, &k) in keys.iter().enumerate() {
+            let (shard, _, _) = self.layout.locate(k);
+            groups.entry(shard).or_default().push((k, i));
+        }
+        let mut tasks: Vec<(u64, Vec<(u64, usize)>)> = groups.into_iter().collect();
+        tasks.sort_unstable_by_key(|&(s, _)| s);
+
+        // 各任务独立产出 (idxs 升序, rows 扁平)
+        let nt = threads.max(1).min(tasks.len());
+        let chunk = tasks.len().div_ceil(nt);
+        let mut results: Vec<(Vec<usize>, Vec<u8>)> = Vec::new();
+
+        std::thread::scope(|s| {
+            let mut handles = Vec::new();
+            let mut task_iter = tasks.into_iter();
+            while task_iter.len() > 0 {
+                let t: Vec<(u64, Vec<(u64, usize)>)> = task_iter.by_ref().take(chunk).collect();
+                handles.push(s.spawn(move || {
+                    let mut out_rows: Vec<u8> = Vec::new();
+                    let mut out_idxs: Vec<usize> = Vec::new();
+                    for (shard, mut pairs) in t {
+                        pairs.sort_unstable();
+                        let f = &self.files[shard as usize];
+                        let mut last_page: Option<u64> = None;
+                        let mut page = vec![0u8; (PAGE + 2 * (rb as u64)) as usize];
+                        let mut prev_key: Option<u64> = None;
+                        for (k, oi) in pairs {
+                            let (_, _, in_b) = self.layout.locate(k);
+                            let byte_off = k * rb as u64;
+                            let page_id = byte_off & !(PAGE - 1);
+                            if last_page != Some(page_id) {
+                                let want = (PAGE + rb as u64) as usize;
+                                let n = f.read_at(&mut page[..want], page_id).unwrap_or(0);
+                                let _ = n;
+                                last_page = Some(page_id);
+                            }
+                            let in_page = (byte_off - page_id) as usize;
+                            if in_page + rb <= PAGE as usize {
+                                out_rows.extend_from_slice(&page[in_page..in_page + rb]);
+                            } else {
+                                let mut tmp = vec![0u8; rb];
+                                let _ = f.read_exact_at(&mut tmp, byte_off);
+                                out_rows.extend_from_slice(&tmp);
+                            }
+                            out_idxs.push(oi);
+                            let _ = (in_b, prev_key);
+                            prev_key = Some(k);
+                        }
+                    }
+                    (out_idxs, out_rows)
+                }));
+            }
+            for h in handles {
+                if let Ok(r) = h.join() {
+                    results.push(r);
+                }
+            }
+        });
+
+        let w = w;
+        for (idxs, rows) in results {
+            for (j, &oi) in idxs.iter().enumerate() {
+                let slice = &rows[j * w..(j + 1) * w];
+                out[oi * w..(oi + 1) * w].copy_from_slice(slice);
+            }
+        }
+        Ok(())
+    }
+
     /// 有序批式读：对同一 badge 的 keys 组内合并读（按 plan 的排序），
     /// 期望预取服务器将 plan 先落地 —— 本实现直接做"计划->读取"。
     pub fn gather_planned(&self, keys: &[u64], out: &mut [u8]) -> std::io::Result<()> {
