@@ -17,8 +17,10 @@
 - 形态：`engramdb` CLI / Rust lib / Python 绑定（PyO3，包名 `engramdb`）/ 服务化（Arrow IPC，M4）。
 
 文档：
-- `docs/design.md` —— 技术设计与开发方案（架构/负载/指标/里程碑/风险/ADR）
+- `docs/design.md` —— 技术设计与开发方案（架构/负载/实测基线§7/里程碑/风险/ADR）
 - `docs/engram-specs.md` —— Engram/PLE 结构规格与证据链
+- `docs/roadmap.md` —— 战略路线图：终极目标 / 技术债 / 借鉴矩阵 / Phase 计划 / 稳定性机制
+- `docs/session-log.md` —— 首个开发 session 完整复盘（尝试-坑-完成-新问题-计划）
 
 权重数据（不入库）：真实 FP8 checkpoint 分片软链到 `data/qwen38-ple-fp8`
 （外接 SSD：`/Volumes/My Passport/qwen38-ple`，约 53GB，ModelScope `Qwen/Qwen3.8-Flash-Next-FP8` 的 PLE 相关分片）。
