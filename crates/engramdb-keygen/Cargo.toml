@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Qwen PLE / DeepSeek Engram n-gram deterministic key generation (rowid) in Rust"
+repository = "https://github.com/QingGo/EngramDB"
 
 [dependencies]
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "EngramDB IO layer: badge batch reader, tier manager, prefetch planner (io_uring/preadv later)"
+repository = "https://github.com/QingGo/EngramDB"
 
 [dependencies]
 engramdb-core = { path = "../engramdb-core", version = "0.1.0" }

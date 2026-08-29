@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "EngramDB core: badge layout, direct-addressed row store, batch gather primitives (no IO backend)"
+repository = "https://github.com/QingGo/EngramDB"
 
 [dependencies]
