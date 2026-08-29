@@ -21,3 +21,25 @@
 - A 唯一页 1,252,642（1.6M 行, 0.78 页/行）；A warm 1.52s；B 8t warm 0.306s；B 1t cold 2.998s。
 - 复现：`cargo run -q --release -p engramdb-bench --bin p4view -- gen data/real-rows 100000 data/real-rows/p4view.bin /tmp/p4_keys.txt`
   `cargo run -q --release -p engramdb-bench --bin p4view -- bench data/real-rows data/real-rows/p4view.bin /tmp/p4_keys.txt`
+
+## P4 v2（2026-08-30：真表全口径 + 槽位选型实测）
+
+**槽位选型（200K grams @2560B 记录）**：
+| slot | 构建秒 | B 8t 等效行/s | MB/s | 字节放大 |
+|---|---|---|---|---|
+| 4096（4KB 对齐） | 3.0s | 0.97M | 155.9 | 1.60x |
+| **2560（紧凑，无 pad）** | 2.6s | **4.50M** | **719.6** | **1.00x** |
+
+→ **槽位选型定案：2560B 紧凑槽**（无 pad，每记录 1 次随机读 = 恰好 2560B 有效载荷；
+4KB 对齐反而因为 62% 槽浪费 + 读放大 1.6x,吞吐低 4.6 倍）。P4 工程版视图像索 = compact slot + high IOPS 并发（8t）。
+
+**全表映射**（外推，非实测）：320,001,536 行真表 → 20,000,096 grams × 2560B ≈ **51GB 视图**；
+构建 = 1.25TB 散读（0.78 页/行 × 320M）+ 51GB 顺序写 ≈ 30-50 分钟单次（离线一次性）。
+
+**门禁固化**（gate.sh bench gate）：真表存在 → 自动 build 20K grams 2560B 视图 → bench
+→ 判据 ampl_B ≤ 1.05 且 B8t ≥ 2×A8t（机器无关的结构收益判据）。首次自动结果：
+B8t=17.9M, A8t=1.34M, ampl_B=1.00 → PASS。基线 CSV: `probes/baseline_view.csv`。
+
+**P4 判定升级**：视图路径（compact slot）"5x 吞吐 + 12x 省带宽"结论维持；实测从 4KB 槽
+("1.60x" 放大) 修正为 compact 槽的 1.00x——**放大口径改用实际读取字节数**（P4 v1 的
+1.60x 是"视图/原数据比"，v2 起"磁盘读取/有效载荷"）。
