@@ -447,3 +447,95 @@
 1. **先测量，后优化**：任何“快/慢”结论必须落在可复现脚本和 CSV，不接受单次 run 口述。
 2. **收敛到 Rust 核心**：Python 只做薄 adapter/演示；服务、Arrow、manifest、多表逐步由 Rust 承担。
 3. **版本和功能同源**：重大功能必须进入正式 tag，避免 master 与已发布版本长期分叉。
+
+## 12. 第八轮复盘（2026-08-30 后段：真实 Qwen3.5-0.8B E2E + Rust 服务化深化 + v0.2.6）
+
+### 12.1 终极目标再确认
+
+终极目标不变：
+
+> 让 Engram/PLE 这类“确定性哈希 n-gram 记忆表”成为任何小模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+本轮的进展是：从 toy model 走向真实 0.8B 模型；从“功能 hook 可用”走向“真实端到端性能首锚点”；从 Python 服务原型走向 Rust 侧可校验、可二进制的服务雏形。
+
+### 12.2 本轮实际完成
+
+| 项 | 状态 |
+|---|---|
+| v0.2.5 真实 wheel 验证 | ✅ |
+| v0.2.6 发布 | ✅ PyPI + GitHub Release |
+| Rust `tables` / `serve` / `check` | ✅ |
+| Rust 二进制 length-prefix 服务 | ✅ |
+| Rust `view_read` | ✅ |
+| CPU tiny decode A/B | ✅ |
+| 真实 Qwen3.5-0.8B CPU decode A/B | ✅ 首批 |
+| 真实模型软链与 WSL 复制 | ✅ `data/Qwen3.5-0.8B`（gitignore） |
+
+### 12.3 本轮新技术债（V25 起）
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V25 | 真实 Qwen3.5 A/B 使用稀疏零值 store，不是真 PLE 表，也不是 bit-exact | 只能测“磁盘读取路径性能”，不能证明功能等价 | 用真实权重填充 store，或构建真实 PLE 表，增加 bit-exact 对照 |
+| V26 | 真实模型 CPU A/B 噪声很大（几轮 memory 2.1–4.0、disk raw 2.4–3.9、LRU 1.5–3.7） | 不能形成可信回归阈值 | 固定 seed/输入、增加序列长度、多次取中位数、落 CSV 基线 |
+| V27 | Rust serve 仍无 Arrow IPC、Unix socket、认证、限流、连接池、线程安全句柄、性能门禁 | 服务面只是雏形 | 按 v0.3 产品化继续收敛 |
+| V28 | 真实模型在外部盘，WSL 副本在 `/mnt/c`，无自动化准备命令 | 换机器后复现成本高 | 写 `scripts/prep_real_model.sh`，自动软链/复制/校验文件完整 |
+| V29 | 0.8B 真实模型仍未在 vLLM/SGLang serving 中验证 | 仍是 transformers 直跑，不是真实服务引擎 A/B | 尝试 vLLM/SGLang 加载 Qwen3.5-0.8B，或 llama.cpp 替代 |
+| V30 | 未做真实 PLE 属性注入（当前 patch 的是普通 input embedding，不是 PLE 层） | 性能代表“磁盘 embedding 替换”，不是完整 PLE 语义 | 下一步从模型 config/权重中定位真实 PLE 表 |
+| V31 | 真实模型太大，不能进 CI；CI 仍只有合成/极小模型 | 持续回归缺少真实负载 | 固定小规模真实性采样 + 独立 nightly/手动基准 job |
+| V32 | v0.2.6 tag 后 master 又加入 view_read、真实模型脚本 | 版本再次领先发布线 | 定期把 master 收编进 v0.2.7，避免长期分叉 |
+
+### 12.4 借鉴矩阵（第八轮增量）
+
+| 来源 | 借鉴 | 不冲突原因 |
+|---|---|---|
+| **HuggingFace Transformers** | 模型目录/配置加载、架构注册、`from_pretrained` 复现 | 我们不做模型格式，只借“标准模型路径”做真实负载 |
+| **vLLM / SGLang** | engine + adapter、PagedAttention、batching | 我们不复制推理内核；只提供存储后端/薄替换 |
+| **llama.cpp** | 单二进制、GGUF、CPU/GPU 部署、基准文化 | 只取部署和测量方法论 |
+| **DuckDB / SQLite** | 目录即库、manifest、integrity check、每线程资源 | 不取查询引擎/关系模型 |
+| **Redis / Memcached** | LRU/TTL、连接管理、协议版本化 | 不取通用 KV 语义 |
+| **DiskANN** | 冷数据顺序化、滑窗、热集分层 | 不取 ANN 图结构 |
+| **MLPerf / fio** | 固定输入、判定阈值、CSV、cache-mode | 只用于性能门禁与实验口径 |
+| **GitHub Actions / PyPA** | 版本 tag、preflight、artifact 管理、Trusted Publishing | 用于发布与回归，不改变产品设计 |
+
+### 12.5 下一阶段开发计划
+
+1. **可信性能基线（最高优先）**
+   - 固定 seed、固定输入序列、固定 token 数；
+   - `reps>=5`，输出中位数 + p90；
+   - 生成 `probes/qwen35_cpu_baseline.csv`、`probes/cpu_tiny_baseline.csv`；
+   - 设置门禁：raw 不得比 memory 慢超过 X%，LRU 不得慢超过 Y%。
+
+2. **真实数据面**
+   - 把稀疏 store 改为真实权重填充 store；
+   - 增加 bit-exact 对照：memory output == disk output；
+   - 从 Qwen3.5 权重中定位真实 PLE/Engram 表属性。
+
+3. **Rust 服务产品化**
+   - Unix socket；
+   - Arrow IPC（或至少零拷贝 raw path）；
+   - 每线程 store 句柄/连接池；
+   - 认证/限流；
+   - embedded vs server 性能门禁 ≤2%。
+
+4. **真实服务引擎**
+   - vLLM/SGLang/llama.cpp 加载 Qwen3.5-0.8B；
+   - 用 EngramDB 替换 PLE 数据面；
+   - 做 serving 级 A/B，目标 ≤5%。
+
+5. **冷读与调度**
+   - 大表冷态顺序/随机复测；
+   - 自适应顺序流；
+   - Tier / 预取打通。
+
+6. **发布与维护**
+   - v0.2.7 收编当前 master；
+   - 真实模型准备脚本；
+   - 保持“数据不进 git，只进代码/脚本/基线”。
+
+### 12.6 稳定前进原则（第八轮强化）
+
+1. **真实数据优先于玩偶数据**：能上真实模型/真实 PLE 就上真实，但必须同时保留可复现小规模 CI。
+2. **性能数字必须可回归**：没有固定输入、中位数、CSV 和阈值的数字，只算“观察”，不算“结论”。
+3. **Rust 为核，Python 为薄壳**：服务、协议、校验、存储 API 逐步下沉到 Rust。
+4. **版本和功能同源**：每次真实功能合并后，尽快收编进下一个版本，避免 master 无限领先。
+5. **薄接入，不修改上游**：所有引擎适配保持 plugin/patch 形式，避免 fork。
