@@ -17,6 +17,7 @@
 - 形态：`engramdb` CLI / Rust lib / Python 绑定（PyO3，包名 `engramdb`）/ 服务化（Arrow IPC，M4）。
 
 文档：
+- `docs/linux-setup.md` —— **全新 Linux/WSL 环境零到一**（rustup/镜像/MTU/mock 验证/真表接入/探针复现/口径）
 - `docs/design.md` —— 技术设计与开发方案（架构/负载/实测基线§7/里程碑/风险/ADR）
 - `docs/engram-specs.md` —— Engram/PLE 结构规格与证据链
 - `docs/roadmap.md` —— 战略路线图：终极目标 / 技术债 / 借鉴矩阵 / Phase 计划 / 稳定性机制

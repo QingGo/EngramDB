@@ -381,12 +381,39 @@ fn cmd_prep(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let mut it = args.drain(..);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--dist" => { dist = true; dist_name = it.next().ok_or("dist 值")?; }
+            "--dist" => {
+                dist = true;
+                dist_name = it.next().ok_or("dist 值")?;
+            }
             "--stats" => stats_path = PathBuf::from(it.next().ok_or("stats 路径")?),
-            "--reqs" => reqs = it.next().ok_or("reqs")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
-            "--cap-token" => cap_token = it.next().ok_or("cap")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
-            "--hot-hit" => hot_hit = it.next().ok_or("hot")?.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?,
-            "--seed" => seed = it.next().ok_or("seed")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--reqs" => {
+                reqs = it
+                    .next()
+                    .ok_or("reqs")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--cap-token" => {
+                cap_token = it
+                    .next()
+                    .ok_or("cap")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--hot-hit" => {
+                hot_hit = it
+                    .next()
+                    .ok_or("hot")?
+                    .parse()
+                    .map_err(|e: std::num::ParseFloatError| e.to_string())?
+            }
+            "--seed" => {
+                seed = it
+                    .next()
+                    .ok_or("seed")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
             _ => pos.push(PathBuf::from(a)),
         }
     }
@@ -405,20 +432,35 @@ fn cmd_prep(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let out_keys = pos.pop().ok_or("缺少 <out_keys.txt>")?;
     let mut tokens_src = tokens_src.take();
     let tokens: Vec<u32> = if dist {
-        let stats = if dist_name == "agent" { Some(AgentStats::load(&stats_path)?) } else { None };
-        let mode = if dist_name == "agent" { Mode::Agent(stats_path.clone(), hot_hit) } else { Mode::Uniform };
+        let stats = if dist_name == "agent" {
+            Some(AgentStats::load(&stats_path)?)
+        } else {
+            None
+        };
+        let mode = if dist_name == "agent" {
+            Mode::Agent(stats_path.clone(), hot_hit)
+        } else {
+            Mode::Uniform
+        };
         let t = gen_tokens(&mode, stats.as_ref(), reqs, cap_token, seed)?;
-        if t.is_empty() { return Err("空 token 序列".into()); }
+        if t.is_empty() {
+            return Err("空 token 序列".into());
+        }
         t
     } else {
         let src = tokens_src.ok_or("缺少 token 源或 --dist")?;
         read_tokens_npy(&src)?
     };
     let spec = PleSpec::real();
-    let mut w = std::io::BufWriter::new(std::fs::File::create(&out_keys).map_err(|e| e.to_string())?);
+    let mut w =
+        std::io::BufWriter::new(std::fs::File::create(&out_keys).map_err(|e| e.to_string())?);
     use std::io::Write as _;
     for t in 0..tokens.len() {
-        let triple = [tokens[t.saturating_sub(2)], tokens[t.saturating_sub(1)], tokens[t]];
+        let triple = [
+            tokens[t.saturating_sub(2)],
+            tokens[t.saturating_sub(1)],
+            tokens[t],
+        ];
         let ids = spec.rowids_for_seq(&triple);
         for &r in &ids[0] {
             writeln!(w, "{}", r as u64).map_err(|e| e.to_string())?;
@@ -454,7 +496,12 @@ fn read_tokens_npy(path: &Path) -> Result<Vec<u32>, String> {
     if raw.len() % 4 != 0 {
         return Err("npy 数据非 u32 对齐".into());
     }
-    Ok(raw.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    Ok(raw
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
 }
 
 fn black_box<T>(x: &T) {
