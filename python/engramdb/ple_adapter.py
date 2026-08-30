@@ -78,6 +78,34 @@ def padded_vocab_size() -> int:
     return (total + PLE_DIVISOR - 1) // PLE_DIVISOR * PLE_DIVISOR
 
 
+def disk_ple_from_discovery(
+    store: Any,
+    info: dict[str, Any],
+    layer_multipliers: list[int] | None = None,
+    scale: float = 1.0,
+    cache_size: int = 4096,
+) -> "DiskPleNGramEmbedding":
+    """Build a disk PLE adapter from metadata returned by ``discover_ple``.
+
+    This is the automatic path: feed in the output of
+    ``engramdb.ple_discovery.discover_ple(model_dir)`` and it derives the
+    embedding width and number of n-gram heads from the real model config.
+    """
+    from .ple_discovery import discover_ple  # noqa: F401  (kept for discoverability)
+
+    if not info:
+        raise ValueError("PLE discovery returned no PLE metadata")
+    ngram_heads = (int(info["ngram_size"]) - 1) * int(info["heads_per_ngram"])
+    return DiskPleNGramEmbedding(
+        store=store,
+        embedding_dim=int(info["ple_embed_dim"]),
+        num_heads=ngram_heads,
+        layer_multipliers=layer_multipliers,
+        scale=scale,
+        cache_size=cache_size,
+    )
+
+
 def _shift_right_ignore_eos(hist: list[int], shift: int, eos: int) -> list[int]:
     if shift == 0:
         return hist
