@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
-VERSION="${ENGRAMDB_VERSION:-0.2.2}"
+VERSION="-e"
 
 "$PYTHON" -m pip install --upgrade "engramdb-python==${VERSION}"
 "$PYTHON" scripts/python_wheel_smoke.py

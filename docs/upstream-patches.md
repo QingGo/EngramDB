@@ -121,7 +121,7 @@ These remain for real vLLM integration and hardware A/B testing.
 
 ## 3. Linux real-machine verification
 
-The 0.2.2 PyPI wheel includes the SGLang/vLLM adapter modules. On a Linux box
+The 0.2.4 PyPI wheel includes the SGLang/vLLM adapter modules. On a Linux box
 (WSL or Raspberry Pi) run:
 
 ```bash
@@ -129,7 +129,7 @@ The 0.2.2 PyPI wheel includes the SGLang/vLLM adapter modules. On a Linux box
 bash scripts/linux_verify.sh
 
 # Option B: no repo clone:
-python3 -m pip install --upgrade engramdb-python==0.2.2
+python3 -m pip install --upgrade engramdb-python==0.2.4
 curl -sL https://raw.githubusercontent.com/QingGo/EngramDB/master/scripts/python_wheel_smoke.py \
   -o /tmp/engramdb_smoke.py
 python3 /tmp/engramdb_smoke.py

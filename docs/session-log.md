@@ -434,3 +434,39 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 2. 把 SGLang / vLLM 原型接到真实仓库做功能验证。
 3. 目标硬件真实 PLE 端到端。
 
+
+---
+
+# Session 7 复盘（2026-08-30 后段：发布修复 + 无源码引擎接入 + README/roadmap 重写）
+
+## 1. 目标
+
+- 修复 GitHub Release assets 重复上传问题。
+- 把 SGLang/vLLM 接入变成“不改源码，启动前执行 hook”的形态。
+- 重写 README：使用方式、架构、性能指标、优化策略。
+- 系统性更新 roadmap：终极目标、技术债、借鉴矩阵、开发计划。
+
+## 2. 尝试 → 结果
+
+| # | 尝试 | 结果 |
+|---|---|---|
+| S7-1 | 定位 release-assets 失败根因 | ✅ 文件 glob 重叠，Python 包被上传两次 |
+| S7-2 | 修复 glob 并改用 maturin manylinux 构建 | ✅ v0.2.3 release-assets 成功 |
+| S7-3 | 增加 `patch_model_class_ple` / `install_vllm_ple` | ✅ 类级 hook，构造 LLM 前 patch |
+| S7-4 | 增加 `install_sglang_ple` | ✅ 类级 hook，启动 SGLang 前 patch |
+| S7-5 | 重写 README | ✅ 310 行，含性能/优化/用法/架构 |
+| S7-6 | roadmap 新增第五轮复盘 | ✅ 记录 V1-V6 技术债和下一阶段计划 |
+
+## 3. 当前状态
+
+- v0.2.4 已打 tag 并推送，PyPI 发布中。
+- 适配层不需要改 vLLM/SGLang 源码，只需要用户启动前执行 hook。
+- 仍缺：真实 WSL/树莓派运行结果、真实模型类验证、端到端性能曲线。
+
+## 4. 下一步
+
+1. WSL / 树莓派运行 `scripts/linux_verify.sh`。
+2. 选真实 vLLM/SGLang 模型类验证 `install_vllm_ple` / `install_sglang_ple`。
+3. 完成 PLE 端到端性能验收。
+4. 实现顺序化视图/访问序调度。
+

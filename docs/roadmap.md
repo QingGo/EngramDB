@@ -231,3 +231,49 @@
 6. 在目标硬件跑真实 PLE 端到端。
 7. 性能优化放在端到端验证之后。
 
+
+---
+
+## 9. 第五轮复盘（2026-08-30 后段：发布工程 + 无源码引擎适配 + README 重写）
+
+### 9.1 本轮目标与结果
+
+- 目标：把 `PageReader` / `PleDiskGather` / SGLang / vLLM 适配层变成可安装、可验证、文档化的产品面。
+- 结果：
+  - v0.2.1：5 平台 PyPI wheel、Python CI smoke、Linux `IoUringPageReader`。
+  - v0.2.2：`engramdb.sglang` / `engramdb.vllm_plugin` 适配原型。
+  - v0.2.3：修复 GitHub Release 资产重复上传问题。
+  - v0.2.4：增加“不改源码”的类级 PLE patch hook（`install_vllm_ple` / `install_sglang_ple`）。
+  - README 重写：使用方式、架构、性能指标、有用/无用优化策略、文档导航。
+
+### 9.2 本轮发现的新技术债
+
+| # | 债 | 现状 | 处置 |
+|---|---|---|---|
+| V1 | 没有在真实 Linux/WSL/树莓派上跑适配层 | 只有 GitHub Actions Ubuntu CI 通过 | 用户机器上跑 `scripts/linux_verify.sh`，或提供 SSH 访问 |
+| V2 | 没有在真实 vLLM/SGLang 模型类上验证 hook | 只知道类名/属性名约定 | 选一个具体模型（Qwen3.8-Flash / Gemma4 等）做真实实例验证 |
+| V3 | 模型类名/属性名需要用户手动传入 | 缺少自动发现或配置化 | 增加按模型名/配置映射表，或提供 entry-point 注册 |
+| V4 | 端到端性能契约仍未闭环 | 存储面已达标，应用面缺 | WSL+GPU/CPU 实机 PLE decode 曲线 |
+| V5 | 发布工程仍偏人工 | 已修 release-assets，但需要更完整的 preflight/回滚 | 后续接入自动 release 检查 + release notes 资产完整性断言 |
+| V6 | 顺序化视图/访问序调度未实现 | 全表随机 88.7MB/s vs 顺序 930MB/s | 下一轮关键性能杠杆 |
+
+### 9.3 借鉴增量
+
+| 来源 | 借鉴 | 如何不冲突 |
+|---|---|---|
+| vLLM/SGLang 的“引擎内融合” | 引擎负责计算与 GPU/CUDA graph；我们只提供存储/PLE 数据面 | 分工：他们管融合，我们管布局/预取/视图 |
+| 社区 runtime 插件的“启动前 hook”模式 | 通过类 patch / entry-point 实现零源码接入 | 不侵入上游代码，只在用户启动脚本中执行 |
+| PyPA / GitHub Actions 发布工程 | trusted publishing、矩阵构建、glob 不重叠、资产完整性 | 对标常规发布纪律，不改变产品语义 |
+| DuckDB 的“目录即库、嵌入式、manifest” | 拿来作为形态契约 | 我们不抄列式执行引擎，只抄被嵌入性和目录形态 |
+| llama.cpp TENSOR_READ_LAZY | 大 tensor 才 lazy，小模型避免退化 | 我们由存储层主动预取，不依赖引擎懒加载 |
+| SGLang PR #36567 / vLLM PR #54070 | io_uring、页对齐、cgroup、MADV_RANDOM | 已有适配层和调研，待真实环境 A/B |
+
+### 9.4 下一阶段计划（v0.3 修正版）
+
+1. **真实 Linux 验证**：WSL / 树莓派跑 `scripts/linux_verify.sh`。
+2. **真实引擎接入**：选一个明确模型，把 `install_vllm_ple` / `install_sglang_ple` 接到真实 vLLM/SGLang 实例，功能一致 + 性能 A/B。
+3. **端到端性能**：CPU 小模型 PLE decode ≥50 tok/s，或 GPU A/B ≤5%。
+4. **顺序化视图 / 访问序调度**：把 88.7MB/s 随机路径提升到数百 MB/s 量级。
+5. **存储产品化**：多表、manifest 完整性、服务化/Arrow IPC、CLI 收敛。
+6. **发布自动化加固**：release-assets 资产断言、全平台 wheel 自动验证、版本/文档同步检查。
+

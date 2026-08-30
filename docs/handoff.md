@@ -53,6 +53,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   `PageReader` / `PleDiskGather` / Linux `IoUringPageReader` 和多平台 PyPI wheel 矩阵；
   ✅ v0.2.2 已发布，额外包含 `engramdb.sglang` / `engramdb.vllm_plugin` 适配原型；
   ✅ v0.2.3 已发布，修复 release-assets 重复上传问题，GitHub Release 含 4 平台二进制 + Python 包；
+  ✅ v0.2.4 已发布，包含“不改源码”的类级 PLE patch hook（`install_vllm_ple` / `install_sglang_ple`）；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
@@ -60,8 +61,10 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   `DiskMultiHeadEmbedding` 和真实 `EngramLayer` 前向均通过；
   **TinyLlama + engram-peft + EngramDB 磁盘版完整文本生成已跑通**（Python 3.12 + torch 2.2.2）。
   已新增 `engramdb.PageReader`（SGLang 兼容）、`engramdb.vllm.PleDiskGather`（vLLM 方向）、
-  Linux `IoUringPageReader`（io_uring batch）、`engramdb.sglang`、`engramdb.vllm_plugin`。
+  Linux `IoUringPageReader`（io_uring batch）、`engramdb.sglang`、`engramdb.vllm_plugin`；
+  支持 `install_vllm_ple` / `install_sglang_ple` 类级 patch，用户可不改引擎源码。
   多平台 PyPI wheel：Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64；CI 含 Python 安装冒烟。
+  README 已重写为完整用户入口（用法/架构/性能/优化策略）。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

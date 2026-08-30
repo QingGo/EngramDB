@@ -51,10 +51,53 @@ pages = reader.read_pages([fd0, fd1], [offset0, offset1])
 
 ## 引擎适配层
 
-- `engramdb.sglang.SGLangPageReader`：与 SGLang `IoUringReader.read_pages(fds, offsets)`
-  同形的适配器，Linux 优先用 `IoUringPageReader`。
-- `engramdb.vllm_plugin.DiskPleEmbedding` / `patch_named_embedding`：用 EngramDB
-  替代模型中 PLE 表的 `nn.Embedding`，内部走 `PleDiskGather` 去重+批量读+展开。
+目标是 **不改 vLLM / SGLang 源码**，启动前执行一小段 hook 即可把 PLE 表切到 EngramDB。
+
+### vLLM
+
+```python
+from engramdb import Store
+from engramdb.vllm_plugin import install_vllm_ple
+
+store = Store("/path/to/engram-rows", shards=..., rows_per_shard=..., width=...)
+
+install_vllm_ple(
+    Qwen3_8FlashNextNGramEmbedding,   # 实际运行的 vLLM 模型类
+    store=store,
+    attr_name="embed_tokens_per_layer",
+    embedding_dim=hidden_size_per_layer_input,
+)
+
+from vllm import LLM
+llm = LLM(model="...", ...)
+```
+
+如果已经构造好模型实例，可以用：
+
+```python
+from engramdb.vllm_plugin import patch_named_embedding
+patch_named_embedding(model, "embed_tokens_per_layer", store=store, embedding_dim=...)
+```
+
+### SGLang
+
+```python
+from engramdb.sglang import install_sglang_ple
+
+install_sglang_ple(
+    Gemma4Model,                      # 实际运行的 SGLang 模型类
+    store=store,
+    attr_name="embed_tokens_per_layer",
+    embedding_dim=hidden_size_per_layer_input,
+)
+```
+
+低层 reader 替换：
+
+```python
+from engramdb.sglang import install_sglang_io_uring_reader
+install_sglang_io_uring_reader()
+```
 
 ## engram-peft 集成
 
