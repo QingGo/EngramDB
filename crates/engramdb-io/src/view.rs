@@ -313,10 +313,8 @@ pub fn lat_view(
     }
     let order = rand_order(n, 0xFEED_BEEF_0D0F_1E2C);
     let view_ref = &vf;
-    #[cfg(target_os = "linux")]
-    let cold = cold;
     #[cfg(not(target_os = "linux"))]
-    let _cold = cold;
+    let _ = cold;
     let per_thread = |tid: usize| -> Vec<u32> {
         let mut buf = vec![0u8; slot_bytes as usize];
         let mut out = Vec::new();

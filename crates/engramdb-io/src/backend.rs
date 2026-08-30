@@ -44,7 +44,8 @@ pub struct UringBackend;
 
 #[cfg(target_os = "linux")]
 thread_local! {
-    static URING: std::cell::RefCell<Option<io_uring::IoUring>> = std::cell::RefCell::new(None);
+    static URING: std::cell::RefCell<Option<io_uring::IoUring>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(target_os = "linux")]
@@ -65,7 +66,7 @@ fn submit_uring_read(f: &std::fs::File, buf: &mut [u8], off: u64) -> io::Result<
             buf.len() as u32,
         )
         .offset(off);
-        let sqe = unsafe { sqe.build().user_data(0) };
+        let sqe = sqe.build().user_data(0);
         unsafe {
             ring.submission()
                 .push(&sqe)
@@ -142,7 +143,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("t.bin");
-        std::fs::write(&p, (0u8..512).collect::<Vec<u8>>()).unwrap();
+        std::fs::write(&p, (0usize..512).map(|i| i as u8).collect::<Vec<u8>>()).unwrap();
         let f = std::fs::File::open(&p).unwrap();
         let b = UringBackend;
         let mut buf = [0u8; 4];
