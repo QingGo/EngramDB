@@ -2,6 +2,7 @@
 # EngramDB 引擎接入调研与实施路径
 
 > 状态：调研稿，用于指导后续 vLLM / SGLang / llama.cpp 接入实现。
+> 具体的补丁草图见 `docs/upstream-patches.md`。
 
 ## 1. 我们的对外接入面
 
