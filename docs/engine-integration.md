@@ -91,6 +91,9 @@
   - 行 id 去重、排序、线程池让 page fault 重叠
   - 持久 pinned staging buffer + async H2D
   - decode 小批量（≤512 unique rows）跳过线程池
+- 我们的对应实现：
+  - `engramdb.vllm.PleDiskGather` 已提供 dedup + EngramDB 批量 fetch + expansion
+  - 可作为 vLLM mmap patch 的 gather 层替代
 - 坑：
   - CPU gather + H2D 不能直接进 CUDA graph；必须注册为 **splitting op** 并用 `PIECEWISE` capture
   - 自定义 op 必须在 `__init__` 注册，不能在 `forward_impl` 里注册
