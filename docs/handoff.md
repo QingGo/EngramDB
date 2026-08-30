@@ -48,14 +48,15 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   - 延迟：视图单记录 p50=0.75~5μs、p99=1.4~12μs（存储层比 10ms/token 低 3 个量级）
   - **io_uring 性能面定案**：per-call 0.97×、batch 0.94× vs preadv —— 保留作语义实现，
     默认 = preadv；不要在性能面再花时间（除非介质=网络盘/cgroup 受限环境）
-- **发布链**：v0.1.3 已验证；4 crate crates.io + PyPI（engramdb-python）+ GitHub Release
-  4 平台预编；三个 workflow 均带 preflight；版本只走 scripts/bump.sh（patch）
+- **发布链**：v0.2.0 已发布 crates.io 四 crate + PyPI（engramdb-python，
+  abi3 manylinux wheel + sdist）；GitHub Release 4 平台二进制；版本只走 scripts/bump.sh。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
-- **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 已构建并优先使用，ctypes C-ABI 作回退；
+- **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 已发布并优先使用，ctypes C-ABI 作回退；
   `DiskMultiHeadEmbedding` 和真实 `EngramLayer` 前向均通过；
   **TinyLlama + engram-peft + EngramDB 磁盘版完整文本生成已跑通**（Python 3.12 + torch 2.2.2）。
-  正式 maturin 发布链仍待补。
+  已新增 `engramdb.PageReader`（SGLang 兼容）和 `engramdb.vllm.PleDiskGather`（vLLM 方向）。
+  多平台 Python wheel 矩阵待补。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

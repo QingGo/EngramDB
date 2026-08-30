@@ -184,3 +184,48 @@
 - **口径纪律**：吞吐/延迟/放大每个探针带环境注明（页缓存态、设备、并发）——基线 CSV 与 notes 已示范
 - **可重建性**：一切不常驻仓库的资产（视图/行表/keys）都有明确重建命令；产物带 manifest（参数+耗时+校验）
 - **门禁先行**：功能完成 + gate 绿 + 文档同步（每 milestone 三件套收口）
+
+---
+
+## 8. 第四轮复盘（2026-08-30：v0.2.0 发布 + Python/引擎接入面）
+
+### 8.1 本轮目标与结果
+
+- 目标：从“存储性能验证”转向“可发布、可集成的产品面”。
+- 结果：
+  - PyPI `engramdb-python 0.2.0` 发布成功（abi3 manylinux wheel + sdist）。
+  - crates.io 四 crate `0.2.0` 发布成功。
+  - engram-peft 磁盘集成进入 `engramdb.integrations`。
+  - SGLang 兼容 `engramdb.PageReader.read_pages(fds, offsets)`。
+  - vLLM 方向 `engramdb.vllm.PleDiskGather`。
+
+### 8.2 本轮新增技术债
+
+| # | 债 | 现状 | 处置 |
+|---|---|---|---|
+| R1 | PyPI 只发布 Linux x86_64 wheel | 0.2.0 仅 manylinux x86_64 + sdist | 下一版增加 Linux aarch64 / macOS / Windows wheel 矩阵 |
+| R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | 实现 `IoUringPageReader`，复用 `UringBatchBackend` |
+| R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | 发 0.2.1 |
+| R4 | 无 Python CI smoke test | 仅在本地验证 | CI 增加 wheel 安装 + import + Store/PageReader 冒烟 |
+| R5 | 没有真正接入 vLLM / SGLang 仓库 | 只有适配层和调研 | 下一阶段做上游 patch / 插件原型 |
+| R6 | 没有目标硬件端到端性能数据 | Intel Mac PyTorch 测试已暂停 | 用用户自维护 wheel / Windows/WSL + 真实 PLE 表验证 |
+
+### 8.3 借鉴增量（本轮）
+
+| 来源 | 借鉴 | 落地 |
+|---|---|---|
+| SGLang PR #36567 | Rust + PyO3 io_uring reader API、页对齐、有界提交 | `PageReader` 接口对齐，下一步补 io_uring 实现 |
+| vLLM blazux patch | dedup、pinned staging、async H2D、CUDA graph splitting、PREWARM | `PleDiskGather` 已落地 dedup/fetch，GPU 侧待接 |
+| llama.cpp TENSOR_READ_LAZY | 大 tensor 才 lazy，小模型避免性能退化 | 运维策略：不要无脑磁盘化 |
+| vLLM PR #54070 | file-backed mmap、cgroup 限容、MADV_RANDOM、first boot sidecar | 部署文档/缓存策略参考 |
+
+### 8.4 v0.3 计划
+
+1. 发 `0.2.1`：PageReader / PleDiskGather / 多平台 wheel。
+2. 增加 Python CI smoke。
+3. 实现 `IoUringPageReader`（Linux）。
+4. 准备 SGLang 替换 patch。
+5. 准备 vLLM 插件原型。
+6. 在目标硬件跑真实 PLE 端到端。
+7. 性能优化放在端到端验证之后。
+

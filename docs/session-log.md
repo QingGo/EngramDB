@@ -307,3 +307,85 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 - 下一步：在用户自维护的 Intel Mac PyTorch wheel / 真实 PLE 表上做性能与规模验证；
   之后接 vLLM/SGLang/llama.cpp 的兼容层。
 
+
+---
+
+# Session 5 复盘（2026-08-30 后半段：v0.2.0 发布 + PyPI 上线 + vLLM/SGLang 接入面）
+
+## 1. 本轮目标
+
+- 把 PyO3 扩展用 maturin 正式接入 `engramdb-python`，完成可安装的 wheel/sdist。
+- 发布 v0.2.0 到 PyPI 与 crates.io。
+- 发布后继续做 vLLM / SGLang 接入面，而不是只停留在调研。
+
+## 2. 尝试 → 结果
+
+| # | 尝试 | 结果 | 备注 |
+|---|---|---|---|
+| S5-1 | maturin 打包 `engramdb-pyo3` | ✅ 构建出 abi3 wheel | `cp310-abi3` 支持 Python 3.10+ |
+| S5-2 | Python 包优先 PyO3、ctypes 回退 | ✅ 修复 wheel 内无 C ABI 时 import 崩溃 | ctypes 回退仍不适合纯 wheel 场景，主路径是 PyO3 |
+| S5-3 | `uv build` 发布 PyPI | ⚠️ 构建成功，上传失败 | `uv build` 默认 `--compatibility off`，Linux wheel 不是 manylinux |
+| S5-4 | `auditwheel repair` 转 manylinux2014 | ❌ 报 too-recent versioned symbols | 新 glibc 编译产物不能修成老 manylinux |
+| S5-5 | `maturin[zig]` + `--zig` 构建 manylinux2014 | ✅ 成功 | PyPI 上传成功，`0.2.0` 正式上线 |
+| S5-6 | crates.io v0.2.0 发布 | ✅ 成功 | 四个 crate 均发布成功 |
+| S5-7 | SGLang 兼容 `PageReader.read_pages(fds, offsets)` | ✅ 实现并测试 | 接口对齐 SGLang `IoUringReader.read_pages` |
+| S5-8 | vLLM 方向 `PleDiskGather` | ✅ 实现并测试 | dedup + 批量 fetch + expansion |
+| S5-9 | 引擎接入调研补充 | ✅ 更新 `docs/engine-integration.md` | 含 vLLM/SGLang/llama.cpp 实现细节和坑 |
+
+## 3. 坑
+
+1. **PyPI 拒绝普通 `linux_x86_64` wheel**
+   - `uv build` 会以 `--compatibility off` 构建，产生非 manylinux wheel。
+   - 修复：`maturin[zig]` + `--compatibility manylinux2014 --zig`。
+
+2. **auditwheel 无法修复“too-recent versioned symbols”**
+   - 在新 glibc runner 上编译的 wheel 不能降级修复到 manylinux2014。
+   - 必须用 zig 交叉构建，或使用更老的 manylinux 构建环境。
+
+3. **PyPI publish workflow 的临时触发策略**
+   - 为了完成发布，临时加了 master push 触发。
+   - 发布成功后已移除，只保留 `v*` tag 和 `workflow_dispatch`。
+
+4. **ctypes 回退在 wheel 中不完整**
+   - wheel 内没有 `libengramdb_c`，如果 PyO3 丢失则回退不可用。
+   - 当前接受：发布形态只依赖 PyO3。
+
+5. **Sandbox 不能写 engram-peft / vLLM / SGLang 仓库**
+   - 因此只能把适配代码放在 EngramDB 包内，等待后续在上游仓库落地。
+
+## 4. 已完成
+
+- `engramdb-python` 0.2.0 发布到 PyPI：
+  - `cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl`
+  - `sdist`
+- crates.io 四 crate `0.2.0` 发布。
+- `engramdb.PageReader`：
+  - `read_pages(fds, offsets)`
+  - 目前 pread 实现。
+- `engramdb.vllm.PleDiskGather`：
+  - dedup + batch fetch + expand。
+- `docs/engine-integration.md` 扩展。
+
+## 5. 新发现问题
+
+- PyPI 目前只有 Linux x86_64 wheel，缺：
+  - Linux aarch64
+  - macOS x86_64 / arm64
+  - Windows
+- `PageReader` 是 pread，不是 io_uring / batch。
+- `PageReader` / `PleDiskGather` 是在 `0.2.0` 之后新增，尚未发布。
+- 没有 Python CI smoke test。
+- 没有真实 vLLM / SGLang 仓库集成。
+- 没有在目标硬件上验证真实 PLE 表性能。
+
+## 6. 计划
+
+1. 发 `0.2.1`，包含 `PageReader` 和 `PleDiskGather`。
+2. 增加多平台 wheel 构建矩阵。
+3. 增加 Python 安装后 smoke test 到 CI。
+4. 实现 `IoUringPageReader`，复用 `engramdb-io::UringBatchBackend`。
+5. 准备 SGLang 替换 patch。
+6. 准备 vLLM 插件原型。
+7. 在用户自维护 torch wheel / Windows/WSL + 真实 PLE 表上做端到端性能验证。
+8. 视验证结果再优化访问序 / 预取 / 缓存 / 异步 H2D。
+
