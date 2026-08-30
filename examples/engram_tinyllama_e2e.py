@@ -6,15 +6,14 @@ This is a real end-to-end smoke: load a cached TinyLlama model, inject an
 Engram layer whose MultiHeadEmbedding is backed by an EngramDB Store, run a
 forward pass (and optionally a few generated tokens).
 
-Run with the prepared Python 3.10 environment:
-    KMP_DUPLICATE_LIB_OK=TRUE \
-    PYTHONPATH=<local_torch>:python:<engram-peft/src> \
+Run with the prepared Python 3.12 environment:
+    PYTHONPATH=.:python:<engram-peft/src> \
     python examples/engram_tinyllama_e2e.py
 
-Note: during the local sandbox session this draft was blocked by a segfault
-in the locally built PyTorch 2.9.1a0 wheel when running the full TinyLlama
-forward. The logic is the intended full-model E2E and should be re-run with a
-stable torch build.
+Verified locally with Python 3.12 + stable torch 2.2.2 (plus the small
+RMSNorm fallback in this script).  It loads TinyLlama from the local HF cache,
+injects an Engram layer backed by EngramDB, runs a forward pass, and generates
+a short continuation.
 """
 
 from __future__ import annotations
@@ -71,7 +70,7 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
         low_cpu_mem_usage=True,
         local_files_only=True,
     )

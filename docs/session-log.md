@@ -279,7 +279,7 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 | S4-4 | Python `engramdb.Store` / `View` ctypes 包装 | ✅ Store fetch 与 View read 冒烟通过 | 返回 bytes，Python 侧自行转 torch |
 | S4-5 | `examples/interop_engram_peft.py` 磁盘版 `DiskMultiHeadEmbedding` | ✅ self_check 通过 | 输出与直接查表逐元素一致 |
 | S4-6 | 真实 `EngramLayer` forward（Python 3.10 + torch 2.9 本地轮 + engram-peft 源码） | ✅ `engram_layer_check` 通过 | 磁盘版 MultiHeadEmbedding 已进入真实 Engram 层前向路径 |
-| S4-7 | 尝试 TinyLlama 全模型 E2E | ⚠️ 被本地 torch 2.9.1a0 wheel 的 base forward segfault 阻断 | 脚本已留 `examples/engram_tinyllama_e2e.py`，待稳定 torch 后复跑 |
+| S4-7 | TinyLlama 全模型 E2E（Python 3.12 + torch 2.2.2 + RMSNorm fallback） | ✅ 磁盘版 Engram 层完成 forward，并生成短文本 | `examples/engram_tinyllama_e2e.py` 已跑通 |
 | S4-8 | PyO3 原生扩展 `engramdb-pyo3` | ✅ 构建并 import 成功；Python 包优先加载 PyO3，ctypes 作回退 | 使用 `/tmp/cargo-home` + RUSTFLAGS dynamic_lookup 绕过本机 cargo 缓存写入限制 |
 
 ## 3. 坑 / 环境注意
@@ -301,7 +301,8 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 
 ## 5. 下一步
 
-- 已跑通 `EngramLayer` 前向；下一步是加载一个小型 base model（如 TinyLlama），
-  通过 `get_engram_model` + 磁盘版 `MultiHeadEmbedding` 跑真实文本生成。
-- 之后再把 C ABI 升级为正式 PyO3 发布链，并接 vLLM/SGLang/llama.cpp 的兼容层。
+- ✅ 已跑通 TinyLlama + engram-peft + EngramDB 磁盘版 `MultiHeadEmbedding` 的完整文本生成。
+- ✅ PyO3 原生扩展已构建并成为 Python 包首选后端，ctypes 保留回退。
+- 下一步：在用户自维护的 Intel Mac PyTorch wheel / 真实 PLE 表上做性能与规模验证；
+  之后接 vLLM/SGLang/llama.cpp 的兼容层。
 
