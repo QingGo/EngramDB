@@ -206,7 +206,7 @@
 | # | 债 | 现状 | 处置 |
 |---|---|---|---|
 | R1 | PyPI 只发布 Linux x86_64 wheel | 0.2.0 仅 manylinux x86_64 + sdist | ✅ 0.2.1 已增加 Linux aarch64 / macOS x86_64+arm64 / Windows wheel 矩阵 |
-| R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | ✅ 0.2.1 已实现 Linux `IoUringPageReader`（io_uring batch）；待 Linux 实机验证 |
+| R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | ✅ 0.2.1 已实现 Linux `IoUringPageReader`（io_uring batch）；已通过树莓派 + WSL2 实机 smoke（Session 8） |
 | R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | ✅ 0.2.1 已包含 PageReader / PleDiskGather / IoUringPageReader |
 | R4 | 无 Python CI smoke test | 仅在本地验证 | ✅ CI 新增 wheel 安装 + Store/PageReader/PleDiskGather 冒烟 |
 | R5 | 没有真正接入 vLLM / SGLang 仓库 | 已有 `SGLangPageReader` 和 `vllm_plugin` 原型 | 下一步做上游 patch / 真实引擎内验证 |
@@ -250,7 +250,7 @@
 
 | # | 债 | 现状 | 处置 |
 |---|---|---|---|
-| V1 | 没有在真实 Linux/WSL/树莓派上跑适配层 | 只有 GitHub Actions Ubuntu CI 通过 | 用户机器上跑 `scripts/linux_verify.sh`，或提供 SSH 访问 |
+| V1 | ~~没有在真实 Linux/WSL/树莓派上跑适配层~~ | ✅ 已关闭：树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel smoke | 已由 Session 8 验证，保留为发布前回归项 |
 | V2 | 没有在真实 vLLM/SGLang 模型类上验证 hook | 只知道类名/属性名约定 | 选一个具体模型（Qwen3.8-Flash / Gemma4 等）做真实实例验证 |
 | V3 | 模型类名/属性名需要用户手动传入 | 缺少自动发现或配置化 | 增加按模型名/配置映射表，或提供 entry-point 注册 |
 | V4 | 端到端性能契约仍未闭环 | 存储面已达标，应用面缺 | WSL+GPU/CPU 实机 PLE decode 曲线 |
@@ -270,7 +270,7 @@
 
 ### 9.4 下一阶段计划（v0.3 修正版）
 
-1. **真实 Linux 验证**：WSL / 树莓派跑 `scripts/linux_verify.sh`。
+1. ✅ **真实 Linux 验证**：已完成（Session 8），树莓派 aarch64 + WSL2 x86_64 均通过 v0.2.4 wheel smoke。
 2. **真实引擎接入**：选一个明确模型，把 `install_vllm_ple` / `install_sglang_ple` 接到真实 vLLM/SGLang 实例，功能一致 + 性能 A/B。
 3. **端到端性能**：CPU 小模型 PLE decode ≥50 tok/s，或 GPU A/B ≤5%。
 4. **顺序化视图 / 访问序调度**：把 88.7MB/s 随机路径提升到数百 MB/s 量级。

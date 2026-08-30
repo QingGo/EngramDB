@@ -304,7 +304,8 @@ EngramDB/
 
 当前最重要缺口：
 
-1. 在 WSL / 树莓派 / 消费级 GPU 上跑真实 PLE 端到端；
-2. 把 SGLang/vLLM 适配层接到真实模型类做功能与性能验证；
-3. 完成顺序化视图/预取调度，兑现全表随机 88.7MB/s → 数百 MB/s 的潜在提升；
-4. 服务化与多表形态。
+1. 在真实 vLLM/SGLang 模型类上验证 `install_vllm_ple` / `install_sglang_ple`，并完成 PLE 端到端 tok/s 验收；
+2. 完成顺序化视图/预取调度，兑现全表随机 88.7MB/s → 数百 MB/s 的潜在提升；
+3. 服务化与多表形态。
+
+> 已闭环：树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel 完整冒烟（`PageReader` / `IoUringPageReader` / `SGLangPageReader` / `PleDiskGather` / `vllm_plugin`）。

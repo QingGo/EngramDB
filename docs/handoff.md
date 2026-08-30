@@ -56,7 +56,8 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   ✅ v0.2.4 已发布，包含“不改源码”的类级 PLE patch hook（`install_vllm_ple` / `install_sglang_ple`）；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
-  WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
+  WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）；
+  **真实 Linux 实机验证已闭环**：树莓派 aarch64 + WSL2 Ubuntu x86_64 均安装 v0.2.4 wheel 并跑通完整 smoke（Session 8）。
 - **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 已发布并优先使用，ctypes C-ABI 作回退；
   `DiskMultiHeadEmbedding` 和真实 `EngramLayer` 前向均通过；
   **TinyLlama + engram-peft + EngramDB 磁盘版完整文本生成已跑通**（Python 3.12 + torch 2.2.2）。

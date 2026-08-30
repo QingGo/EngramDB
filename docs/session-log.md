@@ -470,3 +470,38 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 3. 完成 PLE 端到端性能验收。
 4. 实现顺序化视图/访问序调度。
 
+
+# Session 8 复盘（2026-08-30 后段：真实 Linux 实机验证闭环）
+
+## 1. 目标
+
+用户配置好免密 SSH 后，把 v0.2.4 的 PyPI wheel 放到真实的 Linux 环境运行完整 smoke：
+树莓派（aarch64）和 Windows WSL2（x86_64）。
+
+## 2. 尝试 → 结果
+
+| # | 尝试 | 结果 |
+|---|---|---|
+| S8-1 | SSH 至树莓派 `makapi`（aarch64 / Debian / Python 3.13.5） | ✅ 免密登录成功 |
+| S8-2 | 树莓派创建 venv 并安装 `engramdb-python==0.2.4` | ✅ 成功（来自 PyPI + piwheels） |
+| S8-3 | 树莓派运行 `scripts/python_wheel_smoke.py` | ✅ 全绿：`vllm_plugin` OK、`PageReader` OK、`IoUringPageReader` OK、`SGLangPageReader` OK、`Store + PleDiskGather` OK |
+| S8-4 | SSH 至 Windows（tailscale）并进入 WSL2 Ubuntu x86_64 | ✅ 免密登录成功，WSL 为 Linux 6.18 + Python 3.12 |
+| S8-5 | WSL 使用 `uv` 创建 venv 并安装 `engramdb-python==0.2.4` | ✅ 成功（WSL 无 pip，改用 `/home/zeng/.local/bin/uv`） |
+| S8-6 | WSL 运行 `scripts/python_wheel_smoke.py` | ✅ 全绿，与树莓派一致 |
+
+## 3. 当前状态
+
+- 技术债 **V1 已关闭**：真实 Linux 实机验证通过，不再只是 GitHub Actions CI。
+- 已验证平台：
+  - 树莓派 aarch64（Debian / Python 3.13）
+  - WSL2 Ubuntu x86_64（Linux 6.18 / Python 3.12 via uv）
+- 尚未覆盖：
+  - 真实 vLLM / SGLang 模型类验证（V2）
+  - 端到端 PLE decode 性能契约（V4）
+  - GPU 路径
+
+## 4. 下一步
+
+1. 选一个真实模型类，在 WSL 中验证 `install_vllm_ple` / `install_sglang_ple`。
+2. 在 WSL/GPU 上完成端到端 PLE 性能 A/B。
+3. 顺序化视图/访问序调度。
