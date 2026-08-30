@@ -209,3 +209,51 @@
 ## 5. 计划（v2.1，详见 roadmap §6.4）
 
 P2b CLI 端到端（warm/bench-real 接 agent 真指令序列 + 集成测试入门禁 + N3 preflight）→ P2c Linux 门禁（决策点）→ P3 Store-P 视图构建 + P4 自动门 → P4 PyO3+en gram-peft interop + **P4b 端到端 decode 曲线** → P5/P6/P7 照旧。全部出口 = gate + 文档同步。
+
+---
+
+# Session 3 复盘（2026-08-30 全天：Phase2b 收锥 + P4 视图/延迟深化）
+
+## 1. 尝试 → 结果（本轮要点）
+
+| # | 尝试 | 结果 | 教训 |
+|---|---|---|---|
+| S3-1 | **prep_env.py** 跨平台环境准备（quick/verify/ckpt-check/full-eval） | ✅ README 第一屏；mock/corpus/real-rows 校验三态 | 实测 mock 表是 uint8 非 f16（规格重读）；verify 不该把不确定当失败 |
+| S3-2 | **真表接入修复**（data/real-rows symlink → qwen38-rows SSD） | ✅ 128 分片 48G 直接可跑；gather/verify 真表 fnv 一致；bench-real agent 1.09M rows/s | **之前"断链"= 空目录 + 无脚本引导**——资产链每环要可验证 |
+| S3-3 | bench-real 真实负载化（--dist agent + stats） | ✅ agent 3.94M vs uniform 2.67M rows/s（mock 表） | 真表 agent 1.09M（真分布下热集效应转真实） |
+| S3-4 | CLI e2e 集成测试（进程级 build→gather→verify→warm→bench→index） | ✅ 1 集成测试入 gate；修 BadgeGather badge_ 命名 fallback + layout_for_dir | 测试数据"行≠值"边界断言错误 3 次（110 行 3 badge 才对准）；**"旧二进制"假失败教训**再次验证：先看全部断言断言行 |
+| S3-5 | **N3 preflight**（三 workflow 发布前置 fmt/clippy/test） | ✅ release.yml / publish.yml / release-assets.yml needs 完成 | —— |
+| S3-6 | **P4 v2 视图构建器**（--slot 4096/2560 选型 + manifest） | ✅ 槽位定案 **2560B 紧凑**（4.50M vs 0.97M 行/s，放大 1.00 vs 1.60） | 4KB 对齐槽 = 每 IO 62% 浪费 ⇒ "对齐"要按真实 payload 定，不是无脑 4KB |
+| S3-7 | **全表视图 51.2GB 构建** | ✅ 22.0 分钟流式（500K/chunk，RSS 395MB）；**中途 SSD 掉载 → 挂载后完好** | 掉载二次教训：产物/keys 别放 /tmp（keys 被清）；长 IO 要有 md5/重建命令（T3） |
+| S3-8 | **全表规模效应** | 冷随机 8t = 554K 行/s（88.7 MB/s）；**顺序 930MB/s**（dd） ⇒ **顺序序 = 10x 杠杆**（未兑现） | 页缓存下"冷"不可复现——macOS 语义内省（T2） |
+| S3-9 | **延迟首测（lat 探针）** | warm p50=0.75-5.2μs / p99=1.4-12.3μs；max 有 2-4ms 罕见簇（事件不当验收） | **B 场景存储延迟兑现：p99 12μs ≪ 10ms/token (低 3 个量级)**；分位数四元组即够（p50/p95/p99/max） |
+| S3-10 | gate bench 自动化 + 固定输入（view-keys-20k / baseline_view.csv） | ✅ 判据 ampl≤1.05 且 B8t≥2×A8t → PASS（17.9M vs 1.34M） | gate 内联解析 bug（AMP 从已过滤 OUT 取 → 空）修掉；教训：**断言变量要可溯源** |
+| S3-11 | 第三轮复盘（roadmap §7 / 本节） | ✅ T1-T7 债档 + v2.2 计划 | —— |
+
+## 2. 本轮坑清单（新增 6 条）
+
+1. **macOS 页缓存假冷**：SSD 上"冷"档永远半温（已有读过的部分）→ 绝对冷要 O_DIRECT（Linux/M2）
+2. **SSD 掉载**（USB 掉盘）：长 IO 期间掉载 → 重挂载数据完好；但构建会话中断可复现性差（T3）
+3. **/tmp 被清**:macOS 定期清理 /tmp（长 session 后 keys 文件消失）→ 产物/中间文件落 SSD/仓库
+4. **zsh `===` 展开陷阱**（`echo ===` 触发词命令展开）——shell 小坑，记录避免
+5. **目标二进制过期**（改了 p4view 没重建 release → gate 用旧版 FAIL）→ gate.bin 前先确认二进制存在；建议 gate 提 `cargo build --release`前置或提示
+6. **grep 自匹配**（`grep "[p]4view"` 在 zsh -c 命令串内部又匹配到） 见 ps 检查曾误报进程存活 —— 用 pgrep -f 注意自匹配
+
+## 3. 已完成（Session 3 里程碑 → git）
+
+核心：`prep_env`（quick 就绪）/ 真表修复 / bench-real agent / CLI e2e / N3 preflight / P4 v2+v3+v4（构建器+全表+延迟）/ gate 自动化 / 三复评（roadmap §7）
+（commits：267d71e→580f03c→266040a（prep/readme）、5e0dc7e→7481eea（CLI e2e/preflight）、fcc68a8（p4 v2 gate）、eab8a31（全表 v3）、29ec400（lat v4）、s3rd-roadmap §7 段）
+
+## 4. 新发现问题（按严重度）
+
+- T1 视图构建仅在探针（产品面未成型）→ 第一优先级（P4 前端）
+- T2 绝对冷无数据（Linux M2）
+- T3 SSD 资产完整性/断点（下一次构建即验）
+- T4 全表 A/B 未证（抽样即可）
+- T5 max 事件待归因（Linux 再测）
+- T6 多表缺位（表目录化）
+- T7 探针统一（随 T1）
+
+## 5. 计划（v2.2，详见 roadmap §7.4）
+
+P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据量确认）→ P2b 收尾 → P4b（Linux/GPU 决策门）→ P5 v0（DataLoader）→ T3-T6 插缝。
