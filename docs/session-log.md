@@ -1159,3 +1159,41 @@ GATE PASS: decode baseline thresholds satisfied
   - Phase 0–5 开发计划与退出标准
   - 五条稳定前进纪律
 
+
+# Session 20 增补：真实 PLE Store 位级验证 + 修复多分片 gather 偏移 bug
+
+## 1. 新脚本
+
+- `scripts/real_ple_bit_exact.py`：
+  - 直接对 `data/real-rows` 的 128 个真实 PLE 分片抽样 rowid；
+  - 将原始文件逐行读取与 `engramdb.Store.fetch()` 返回字节做 SHA-256 对照。
+
+## 2. 发现的严重 bug
+
+在跑真实 PLE 验证时发现：
+
+- `BadgeGather::gather_pp` 使用全局 `rowid * row_bytes` 作为 shard 文件内偏移；
+- 对单分片正确；
+- 对多分片（如真实 PLE 128 shards）会导致 `shard > 0` 的所有行读取错误；
+- Python Store 之前读 shard 0 正确，跨 shard 全部 mismatch。
+
+修复：
+
+- `gather_pp` 改为 `rowid % rows_per_shard` 计算 shard 内局部偏移；
+- 同步修复 `gather_plan` 的退化直接读路径同样的偏移问题；
+- 新增回归测试 `gather_pp_multishard_uses_local_row_offsets`。
+
+## 3. 验证结果
+
+```text
+checked=100 rowids shards=128 rows_per_shard=2500012 width=160
+raw sha256:  44cfab18c4a051328d19a72d290fec9bb6680cbc0fd9fa53b6035467768eb547
+store sha256: 44cfab18c4a051328d19a72d290fec9bb6680cbc0fd9fa53b6035467768eb547
+mismatches: 0
+PLE_STORE_BIT_EXACT_PASS
+```
+
+## 4. 意义
+
+这是首个“真实 PLE 表 + EngramDB Store”的位级闭环验证。  
+修复前，多分片真实 PLE 数据面即使“能跑”，返回的也是错误行；修复后才有资格继续做真实 PLE adapter 和端到端性能。

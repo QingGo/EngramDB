@@ -734,3 +734,14 @@
 
 5. **版本和功能同源，发布要小步**  
    每完成一个真实闭环就尽快 bump/tag，避免 master 长期领先于发布版。
+
+### 14.6 Session 20 增补：真实 PLE Store 位级验证
+
+- 新增 `scripts/real_ple_bit_exact.py`，对真实 128-shard PLE 原始行做 Store 位级对照。
+- 发现并修复 `gather_pp` 多分片偏移 bug：
+  - 原实现用全局 rowid * row_bytes 作为文件内偏移；
+  - 改为用 shard 内局部行偏移；
+  - 修复 `gather_plan` 退化路径同类问题；
+  - 增加回归测试。
+- 验证：100 个跨 shard 随机 rowid，SHA-256 完全一致，`PLE_STORE_BIT_EXACT_PASS`。
+- 这是真实 PLE 数据面闭环的第一步。

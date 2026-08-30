@@ -335,3 +335,12 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
   - Phase 4 Rust 服务产品化
   - Phase 5 长期维护
 - 明确核心判断：先做真实 PLE + 可重叠性能，再做服务化；LRU 必须有命中率证据。
+
+## 10. Session 20 增补：真实 PLE Store 位级闭环
+
+- 新增 `scripts/real_ple_bit_exact.py`。
+- 发现并修复 Rust `gather_pp` / `gather_plan` 在多分片 PLE 表上的偏移 bug：
+  - 原来错误使用全局 rowid 计算文件偏移；
+  - 现在使用 shard 内局部偏移。
+- 新增回归测试 `gather_pp_multishard_uses_local_row_offsets`。
+- 真实 PLE 128 shard 抽样 100 行 SHA-256 完全一致，`PLE_STORE_BIT_EXACT_PASS`。

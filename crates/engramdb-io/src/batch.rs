@@ -172,7 +172,11 @@ impl<'a> BadgeGather<'a> {
                         let mut prev_key: Option<u64> = None;
                         for (k, oi) in pairs {
                             let (_, _, in_b) = self.layout.locate(k);
-                            let byte_off = k * rb as u64;
+                            // gather_pp groups by shard and reads from that
+                            // shard's file, so the byte offset must be local
+                            // to the shard rather than the global rowid.
+                            let local_row = k % self.layout.rows_per_shard;
+                            let byte_off = local_row * rb as u64;
                             let page_id = byte_off & !(PAGE - 1);
                             if last_page != Some(page_id) {
                                 let want = (PAGE + rb as u64) as usize;
@@ -319,6 +323,37 @@ mod tests {
         for (j, &want) in keys.iter().enumerate() {
             let got = u64::from_le_bytes(out[j * 8..(j + 1) * 8].try_into().unwrap());
             assert_eq!(got, want, "rowid {want} at out[{j}]");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gather_pp_multishard_uses_local_row_offsets() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("engramdb-gather-pp-multishard-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let shards = 3u64;
+        let rows_per_shard = 32u64;
+        let width = 4u64;
+        let layout = Layout::new(shards, rows_per_shard, width, 1);
+        for s in 0..shards {
+            let mut f = std::fs::File::create(dir.join(format!("shard_{s:03}.bin"))).unwrap();
+            for local in 0..rows_per_shard {
+                let val = (s * 1_000_000 + local) as u32;
+                f.write_all(&val.to_le_bytes()).unwrap();
+            }
+        }
+        let bg = BadgeGather::open(&dir, &layout).unwrap();
+        let keys = vec![0u64, 1, 31, 32, 63, 64, 95];
+        let mut out = vec![0u8; keys.len() * width as usize];
+        bg.gather_pp(&keys, &mut out, 4).unwrap();
+        for (j, &k) in keys.iter().enumerate() {
+            let shard = k / rows_per_shard;
+            let local = k % rows_per_shard;
+            let want = (shard * 1_000_000 + local) as u32;
+            let got = u32::from_le_bytes(out[j * 4..(j + 1) * 4].try_into().unwrap());
+            assert_eq!(got, want, "gather_pp rowid {k} at out[{j}]");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
