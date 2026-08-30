@@ -23,6 +23,7 @@
 - `docs/design.md` —— 技术设计与开发方案（架构/负载/实测基线§7/里程碑/风险/ADR）
 - `docs/engram-specs.md` —— Engram/PLE 结构规格与证据链
 - `docs/roadmap.md` —— 战略路线图：终极目标 / 技术债 / 借鉴矩阵 / Phase 计划 / 稳定性机制
+- `docs/engine-integration.md` —— vLLM / SGLang / llama.cpp 接入调研与实施路径
 - `docs/session-log.md` —— 首个开发 session 完整复盘（尝试-坑-完成-新问题-计划）
 - `docs/licenses.md` —— 许可与合规边界（模型权重/语料统计分发规则）
 - `scripts/gate.sh` —— 本地门禁（fmt + clippy -D warnings + test）
