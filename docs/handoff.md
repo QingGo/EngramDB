@@ -56,6 +56,9 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   ✅ v0.2.3 已发布，修复 release-assets 重复上传问题，GitHub Release 含 4 平台二进制 + Python 包；
   ✅ v0.2.4 已发布，包含“不改源码”的类级 PLE patch hook（`install_vllm_ple` / `install_sglang_ple`）；
   ✅ v0.2.5 已发布并验证（包含 LRU、多表、Arrow helpers、JSON+二进制最小服务、扩展 wheel smoke）；
+  ✅ v0.2.6 已发布（Rust serve/check/二进制协议、CPU A/B 脚本、cache_size=0 修复）；
+  ✅ v0.2.7 已发布（真实 PLE Store/层 bit-exact、C ABI rowids、FP8 磁盘集成、兄弟项目契约）；
+  ✅ v0.2.8 已发布（修复 v0.2.7 CI：rustfmt + 无 torch Python 导入；新增自动 weight_scale、Python rowids_for_seq、PyO3 native rowids、C ABI smoke 入 CI）；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）；

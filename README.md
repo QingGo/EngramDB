@@ -155,11 +155,19 @@ T3 NVMe       → preadv 默认；io_uring 作为可插拔语义实现
 
 ### 5.1 Python 包（推荐入口）
 
+已发布到 PyPI：`engramdb-python`，import 名仍是 `engramdb`。
+
 ```bash
+# pip
 python3 -m pip install --upgrade engramdb-python
+
+# uv
+uv add engramdb-python
 ```
 
-当前发布线包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel。
+当前发布线（v0.2.8）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+
+#### 5.1.1 核心存储与视图
 
 ```python
 import engramdb
@@ -187,6 +195,33 @@ if hasattr(engramdb, "IoUringPageReader"):
     io_reader = engramdb.IoUringPageReader(page_size=4096)
     pages = io_reader.read_pages([fd0, fd1], [offset0, offset1])
 ```
+
+#### 5.1.2 PLE rowid 与自动发现
+
+```python
+from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale
+
+# Qwen PLE / Engram 确定性 rowid，返回 [T, 16]
+rows = rowids_for_seq([248044, 1000, 99999, 42])
+print(len(rows), len(rows[0]))
+
+# 从真实 Qwen checkpoint 自动读取元数据与 FP8 weight_scale
+info = discover_ple("/path/to/Qwen3.8-Flash-Next")
+scale = load_ple_weight_scale("/path/to/Qwen3.8-Flash-Next")
+```
+
+#### 5.1.3 多表 / Arrow / 最小服务
+
+```python
+from engramdb import Database
+from engramdb.arrow_utils import store_fetch_arrow, table_to_ipc_bytes
+
+db = Database("/path/to/tables-root")
+print(db.list_tables())
+raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
+```
+
+服务端与客户端见 `python/README.md` 或 `docs/`。
 
 ### 5.2 vLLM：不修改源码，启动前 patch PLE 表
 
@@ -229,21 +264,76 @@ from engramdb.sglang import install_sglang_io_uring_reader
 install_sglang_io_uring_reader()
 ```
 
-### 5.4 engram-peft
+### 5.4 真实 PLE 磁盘 Adapter
+
+不加载完整的大 PLE 表，直接用 EngramDB 磁盘 Store 替换真实 PLE n-gram embedding：
+
+```python
+from engramdb import discover_ple, Store
+from engramdb.ple_adapter import disk_ple_from_discovery, DiskPleNGramEmbedding
+
+info = discover_ple("/path/to/Qwen3.8-Flash-Next")
+store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
+
+# 自动使用 checkpoint 的 weight_scale 做 FP8 反量化
+ple = disk_ple_from_discovery(store, info)
+
+# 或者显式构造
+ple = DiskPleNGramEmbedding(store, embedding_dim=2560, num_heads=16, scale=info["weight_scale"])
+```
+
+### 5.5 engram-peft
 
 ```python
 from engramdb.integrations import install_disk_multi_head_embedding
 
+# 普通 float32 磁盘 MultiHeadEmbedding
 install_disk_multi_head_embedding(store)
+
+# 真实 Qwen PLE FP8 注入：自动从 checkpoint 读取 weight_scale
+from engramdb.integrations import install_real_qwen_ple_embedding
+install_real_qwen_ple_embedding(store, model_dir="/path/to/Qwen3.8-Flash-Next")
 ```
 
-### 5.5 Rust / CLI
+### 5.6 Rust / CLI 安装与使用
+
+crates.io 已发布：
+
+- `engramdb` —— 主库 + CLI
+- `engramdb-core` —— 布局 / 直接寻址 / manifest
+- `engramdb-io` —— 视图 / gather / IO 后端
+- `engramdb-keygen` —— PLE / Engram 确定性 rowid 生成
 
 ```bash
-cargo test --workspace
+# 作为库依赖
+cargo add engramdb engramdb-core engramdb-io engramdb-keygen
+
+# 安装 CLI
+cargo install engramdb
+
+# 直接跑
+engramdb --help
+```
+
+Rust 示例：
+
+```rust
+use engramdb_keygen::PleSpec;
+
+let spec = PleSpec::real();
+let rows = spec.rowids_for_seq(&[248044, 1000, 99999, 42]);
+println!("{} rows, first = {:?}", rows.len(), rows[0]);
+```
+
+CLI 常用命令：
+
+```bash
+cargo run --release -p engramdb -- tables <root>
+cargo run --release -p engramdb -- check <root>
 cargo run --release -p engramdb -- view build data/real-rows 2000 /tmp/view.bin /tmp/keys.txt --slot 2560
 cargo run --release -p engramdb -- view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
 cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
+cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 ```
 
 ---
@@ -252,12 +342,16 @@ cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
 
 | 项目 | 状态 |
 |---|---|
-| crates.io | 四个核心 crate 已发布 |
+| 最新版本 | v0.2.8 |
+| crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
-| Python 桥 | PyO3 原生扩展优先，ctypes 回退 |
-| CI | cargo test + clippy + Python wheel smoke |
+| Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
+| PLE rowid | Python / C ABI / PyO3 / Rust 四路径一致，golden 对拍 |
+| 真实 PLE | `discover_ple` + `load_ple_weight_scale` + `DiskPleNGramEmbedding` + FP8 磁盘适配 |
+| CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁 |
 | SGLang 适配 | 低层 reader + 模型类 patch hook |
 | vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
+| 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
 | 性能契约 | 存储面已闭环，端到端待实机 |
 
 ---
@@ -274,9 +368,9 @@ EngramDB/
 │  ├─ engramdb-bench/     探针
 │  ├─ engramdb-python/    C ABI ctypes fallback
 │  └─ engramdb-pyo3/      PyO3 原生扩展
-├─ python/engramdb/       Python 包：Store/View/PageReader/适配层
+├─ python/engramdb/       Python 包：Store/View/PageReader/PLE discovery/adapter/服务/引擎适配
 ├─ docs/                  设计、路线图、session-log、接入调研
-├─ scripts/              构建、发布、探针、门禁
+├─ scripts/              构建、发布、探针、门禁、C ABI smoke
 └─ probes/               实测数据与复现说明
 ```
 
@@ -284,6 +378,7 @@ EngramDB/
 
 ## 8. 文档导航
 
+- `python/README.md` —— Python 包安装、引擎适配、多表 / Arrow / 服务客户端
 - `docs/handoff.md` —— 空白上下文 agent 交接，最新状态/资产/环境/待办
 - `docs/design.md` —— 技术架构、负载、性能基线、风险
 - `docs/roadmap.md` —— 终极目标、技术债、借鉴矩阵、阶段计划
@@ -301,6 +396,11 @@ EngramDB/
 - `scripts/wsl_cold_view_bench.py` —— 冷缓存顺序/随机视图 A/B
 - `scripts/service_smoke.py` —— 多表 + Arrow IPC + JSON/二进制最小服务 smoke
 - `scripts/cpu_tiny_decode_ab.py` —— CPU 小模型 memory / disk raw / disk LRU 端到端 decode A/B
+- `scripts/qwen35_cpu_decode_ab.py` —— 真实 Qwen3.5 CPU decode A/B
+- `scripts/real_ple_bit_exact.py` —— 真实 PLE 128-shard Store 位级验证
+- `scripts/ple_layer_bit_exact.py` —— 真实 PLE 层前向 bit-exact
+- `scripts/sibling_contract_smoke.py` —— qwen35-ple / engram-peft 契约冒烟
+- `scripts/c_abi_smoke.py` —— 纯 stdlib C ABI / golden rowids 对拍（CI）
 
 ---
 
@@ -316,8 +416,10 @@ EngramDB/
 3. 服务化与多表形态。
 
 > 已闭环：
-> - 树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel 完整冒烟。
+> - 树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 wheel 完整冒烟。
 > - vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均通过 `install_vllm_ple` / `install_sglang_ple` 类级 patch 及 `DiskPleEmbedding` 前向验证（Session 9）。
 > - 访问序视图 `view build --keys` + 校验 + 冷盘顺序/随机 A/B 已在 WSL 跑通（Session 10/11），冷顺序 786MB/s vs 冷随机 86MB/s。
 > - vLLM 真实模型类 embedding A/B 已测（Session 12/13）：raw disk 235-268μs/call，加入 LRU 后降到 14-23μs/call。
 > - 多表 `Database`、Arrow helpers、JSON + 二进制 Arrow IPC 服务（含 `fetch_raw` / `fetch_arrow`）已跑通（Session 14/15）。
+> - 真实 Qwen PLE 数据面闭环（Session 20-22）：128-shard Store bit-exact、真实 PLE 层 forward bit-exact、C ABI rowids、`DiskMultiHeadEmbedding` FP8 反量化。
+> - v0.2.7 CI 失败已修复，Phase A EngramDB 侧补齐（Session 23）：自动读取 `weight_scale`、Python `rowids_for_seq`、PyO3 native rowids、C ABI smoke 进 CI；随后发布 v0.2.8。
