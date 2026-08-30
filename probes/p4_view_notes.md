@@ -130,3 +130,17 @@ B8t=17.9M, A8t=1.34M, ampl_B=1.00 → PASS。基线 CSV: `probes/baseline_view.c
 2. 真正价值路径 = **批量提交**（一次 submit N SQE 后统一 wait，绕过 syscall 路径/复制）→ batch API（io::view/gather 路径）留作后端演进；
 3. 顺带验证：合成表布局与 Mac 真表行为完全同构（1.09M rows/s 一致），WSL 平台可作为性能复现环境（后续基准以"Mac 真表 + WSL 合成表"双口径）；
 4. P4 record：A/B 口径下 1.09M vs B(warm) 26.0M rows/s = 视图 24×（8t 档，虚高因 51MB 全热）——冷对照请用 full 表数据（P4 v3）。
+
+## P4 v7（2026-08-30：P4b 环境探索 + Pi/windows 口径记录）
+
+**llama.cpp 基线（WSL CPU, Qwen3-0.6B-Q8_0, 604MB）**：
+- 预填充 pp64 = **31.79 t/s**（8 线程 CPU, i7-6700/haswell 现成 b10688 预编）
+- tg 段在 WSL+CPU 环境中 D-state 卡住（llama-cli/llama-bench 均卡，非超时简单问题）——记录为待排查（环境 vs 预编二进制）；GPU 路径是正解
+- **CUDA 环境边界（重要）**：WSL /usr/local/cuda/bin/nvcc = **13.2**；driver/CUDA 运行库 = **13.0**（nvidia-smi）
+  → 13.2 编译产物跑在 13.0 运行库 = **不兼容**（运行时版本须 ≥ 编译版本）；Windows 侧另有 v12.4 完整 toolkit ✓
+  → GPU 决策点：**升级 Windows 驱动到 CUDA 13.2+**（推荐，一条命令/15分钟）或 v12.4 预编方案
+- llama.cpp v0.3.0 tag 无 bin 资产：BIN 在 b-tag（b10688 起），win-cuda-12.4/13.3 预编齐全、ubuntu-x64 CPU 预编 ✓（供以后直接用）
+
+**树莓派性能采样（弃，记录原因）**：Pi 功能门禁 17 测试全绿；性能点因 /tmp tmpfs 目录/脚本飘忽 + SD 介质无代表性弃掉（代价收益不成比例）。Pi 定位 = 功能/门禁验证。
+
+**测试基础设施发现（重要复现）**：Windows→WSL 长任务必须走 **schtasks**（每任务 bat + `schtasks /run`），ssh 会话/Start-Process 子进程会被 WSL 树终止——多个异步任务都因此已固化。
