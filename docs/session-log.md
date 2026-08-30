@@ -1424,19 +1424,37 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
     `table_source="engramdb:store"`：打开 EngramDB Store 并安装 Disk
     MultiHeadEmbedding；真实 PLE 检测到 `table_model_dir` / `table_scale` 时走
     `install_real_qwen_ple_embedding`。
-  - 已推 GitHub feature branch：`feat/engramdb-table-source`。
+  - 已直接推 engram-peft master。
 - qwen35-ple：
   - `EngineConfig` 增加 `store_path` / `model_dir` / `shards` / `rows_per_shard` /
-    `width` / `scale` / `cache_size` 字段。
+    `width` / `scale` / `cache_size` / `dtype` 字段。
   - 新增 `Qwen35PleConfig.to_engram_config()`，可直接从 YAML 桥接到
     engram-peft `EngramConfig`。
   - `run_m0_smoke.py --e2e` 改为配置驱动真实 FP8 注入，命令行增加
     `--ple-model-dir`。
+  - 跨仓契约 smoke 已加入 qwen35-ple CI：checkout EngramDB + engram-peft，
+    `test_cross_repo_hash_golden.py` 用轻量 torch stub 运行。
   - README 增加“配置即用”与真实 FP8 e2e 示例。
   - 已推 qwen35-ple main。
 
-## 4. 遗留
+## 4. Phase B 推进
+
+- 新增 `engramdb.official_loader`：
+  - `filter_ngram_shard_state_dict`
+  - `install_disk_ple_in_official_model`
+  - `load_state_dict_without_ngram_shards`
+- 新增 `qwen35-ple/scripts/qwen4_ple_custom_loader.py`：
+  - dry-run 读取真实 PLE 元数据、shard 跳过计划。
+  - 完整加载路径入口（待 Qwen4Exp transformers 大内存环境）。
+- 新增 `qwen35-ple/scripts/run_real_fp8_e2e.py`：
+  - 轻量加载 engram-peft 子模块，绕开 TRL/datasets。
+  - 配置驱动 `table_source="engramdb:store"`。
+- 已在本机跑通真实 FP8 e2e：
+  - Qwen3.5-0.8B + 真实 128-shard Store-I + 自动 FP8 注入。
+  - `REAL_FP8_E2E_OK`，logits 有限，生成 shape 1x10，单步约 9.6s。
+
+## 5. 遗留
 
 - README 最终收编需等下个版本 bump。
 - README 核心示例全量化 smoke 仍需继续。
-- 跨仓契约 smoke 纳入兄弟项目 CI 仍待做。
+- 官方 Qwen4Exp 模型类实机验证与 memory/disk A/B 仍待大内存/新版 transformers 环境。

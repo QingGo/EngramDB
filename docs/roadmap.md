@@ -1137,7 +1137,8 @@ LLM-CompileForge  推理 runtime（后续）
 
 #### Phase B：真实模型 E2E
 - [x] 写 custom loader / from_pretrained hook，跳过 `ngram_embedding.shard_*` 大权重（`engramdb.official_loader` + `qwen35-ple/scripts/qwen4_ple_custom_loader.py`）。
-- [ ] 在官方 `Qwen4ExpForCausalLM` 或等价类中替换真实 PLE 并实机验证（代码路径已就绪，待大内存环境）。
+- [x] 真实 FP8 PLE e2e 已在本机跑通：Qwen3.5-0.8B + 真实 128-shard Store-I + 配置驱动 `table_source="engramdb:store"`，forward/generate 有限、无 NaN（`REAL_FP8_E2E_OK`）。
+- [ ] 在官方 `Qwen4ExpForCausalLM` 或等价类中替换真实 PLE 并实机验证（代码路径已就绪，待包含 Qwen4Exp 的大内存/新 transformers 环境）。
 - [ ] 找大内存 Linux / 云环境，跑 memory vs disk generate A/B。
 
 **退出标准**：

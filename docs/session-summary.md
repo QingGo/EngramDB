@@ -638,8 +638,9 @@ master 已包含 README 刷新 + 系统性思考
 
 #### Phase B：真实模型 E2E
 - ✅ custom loader / skip ngram_embedding（`engramdb.official_loader` + `qwen4_ple_custom_loader.py`）
-- 🔶 官方模型类验证（代码路径已就绪，待大内存环境实机跑）
-- ❌ 大内存/云环境 A/B
+- ✅ 真实 FP8 PLE e2e 已跑通（Qwen3.5-0.8B + 真实 128-shard Store-I + 配置驱动自动注入）
+- 🔶 官方 Qwen4Exp 模型类验证（代码路径就绪，待 Qwen4Exp transformers/大内存环境）
+- ❌ 大内存/云环境 memory vs disk A/B
 
 #### Phase C：Rust 性能路径
 - native rowid + gather + dequant
