@@ -10,6 +10,8 @@ name: publish-pypi
 on:
   push:
     tags: ["v*"]
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,68 +32,19 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-  sdist:
-    needs: [preflight]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-      - uses: astral-sh/setup-uv@v5
-      - name: build sdist
-        run: |
-          cd python
-          uv build --sdist --out-dir dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-sdist
-          path: python/dist/*
-
-  wheels:
-    needs: [preflight]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux-x86_64
-          - os: ubuntu-24.04-arm
-            name: linux-aarch64
-          - os: macos-15-intel
-            name: macos-x86_64
-          - os: macos-15
-            name: macos-aarch64
-    runs-on: ${{ matrix.os }}
-    env:
-      UV_CACHE_DIR: /tmp/uvcache
-      CARGO_HOME: /tmp/cargo-home
-      RUSTFLAGS: ${{ runner.os == 'macOS' && '-C link-arg=-undefined -C link-arg=dynamic_lookup' || '' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-      - uses: astral-sh/setup-uv@v5
-      - name: build wheel
-        run: |
-          cd python
-          uv build --wheel --out-dir dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-wheel-${{ matrix.name }}
-          path: python/dist/*
-
   pypi:
-    needs: [sdist, wheels]
+    needs: [preflight]
     environment: pypi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
+      - uses: astral-sh/setup-uv@v5
+      - name: build sdist + wheel
+        run: |
+          cd python
+          uv build .
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
+          packages-dir: python/dist
