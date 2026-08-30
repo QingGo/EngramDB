@@ -96,3 +96,57 @@ def patch_named_embedding(
     )
     setattr(parent, leaf, new)
     return new
+
+
+
+def patch_model_class_ple(
+    model_class: type,
+    store: Store,
+    attr_name: str,
+    embedding_dim: int,
+    dtype: Any = None,
+    cache_size: int = 4096,
+) -> type:
+    """Patch a model *class* so every instance uses EngramDB for its PLE table.
+
+    This is the no-source-change entry point for vLLM/SGLang-style serving:
+    call it before constructing the engine/model, with the model class that owns
+    the PLE embedding attribute.  The class ``__init__`` is wrapped and, after
+    normal construction, the named PLE embedding is replaced on the instance.
+
+    Example::
+
+        from engramdb.vllm_plugin import patch_model_class_ple
+        patch_model_class_ple(
+            Qwen3_8FlashNextNGramEmbedding,
+            store=store,
+            attr_name="embed_tokens_per_layer",
+            embedding_dim=hidden_size_per_layer_input,
+        )
+        llm = LLM(model=..., ...)
+    """
+    if not hasattr(model_class, "__init__"):
+        raise TypeError(f"{model_class!r} is not a normal class with __init__")
+    if getattr(model_class, "_engramdb_ple_patched", False):
+        return model_class
+
+    original_init = model_class.__init__
+
+    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        patch_named_embedding(
+            self,
+            attr_name=attr_name,
+            store=store,
+            embedding_dim=embedding_dim,
+            dtype=dtype,
+            cache_size=cache_size,
+        )
+
+    model_class.__init__ = patched_init  # type: ignore[method-assign]
+    model_class._engramdb_ple_patched = True  # type: ignore[attr-defined]
+    return model_class
+
+
+# vLLM-specific alias; SGLang can reuse the same generic helper via engramdb.sglang.
+install_vllm_ple = patch_model_class_ple

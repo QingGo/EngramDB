@@ -37,6 +37,21 @@ from engramdb.sglang import install_sglang_io_uring_reader
 install_sglang_io_uring_reader()
 ```
 
+You can also patch an SGLang model class before starting the server, again
+without changing SGLang source:
+
+```python
+from engramdb.sglang import install_sglang_ple
+
+install_sglang_ple(
+    Gemma4Model,                   # your actual SGLang model class
+    store=store,
+    attr_name="embed_tokens_per_layer",
+    embedding_dim=hidden_size_per_layer_input,
+)
+# then start SGLang normally
+```
+
 ### 1.2 Rust-side replacement
 
 For a real upstream contribution, the PR's Rust reader should be replaced by an
@@ -54,13 +69,30 @@ Target upstream work: [vllm-project/vllm#54070](https://github.com/vllm-project/
 ### 2.1 Python-side prototype
 
 The prototype in `engramdb.vllm_plugin` replaces a named embedding attribute with
-an EngramDB-backed module:
+an EngramDB-backed module.  For no-source-change serving, patch the model class
+*before* constructing the engine:
 
 ```python
 from engramdb import Store
-from engramdb.vllm_plugin import patch_named_embedding
+from engramdb.vllm_plugin import patch_model_class_ple
 
 store = Store("path/to/engram-store", shards=1, rows_per_shard=N, width=W)
+patch_model_class_ple(
+    Qwen3_8FlashNextNGramEmbedding,   # your actual vLLM model class
+    store=store,
+    attr_name="embed_tokens_per_layer",
+    embedding_dim=hidden_size_per_layer_input,
+)
+
+# then start vLLM normally
+llm = LLM(model=..., ...)
+```
+
+If you already have a constructed model instance, you can use the instance-level
+helper instead:
+
+```python
+from engramdb.vllm_plugin import patch_named_embedding
 patch_named_embedding(
     model,
     "embed_tokens_per_layer",

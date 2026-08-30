@@ -7,9 +7,9 @@ small upstream patch can swap ``sglang_storage.IoUringReader`` for this class.
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
-from . import PageReader, IoUringPageReader
+from . import PageReader, IoUringPageReader, Store
 
 
 class SGLangPageReader:
@@ -56,3 +56,41 @@ def install_sglang_io_uring_reader() -> bool:
 
     sglang_storage.IoUringReader = SGLangPageReader
     return True
+
+
+
+def install_sglang_ple(
+    model_class: type,
+    store: Store,
+    attr_name: str,
+    embedding_dim: int,
+    dtype: Any = None,
+    cache_size: int = 4096,
+) -> type:
+    """Patch an SGLang model class to use EngramDB for its PLE table.
+
+    This is the no-source-change entry point: call it before constructing the
+    SGLang model/engine.  It wraps ``model_class.__init__`` and replaces the PLE
+    embedding attribute on each instance after normal construction.
+
+    Example::
+
+        from engramdb.sglang import install_sglang_ple
+        install_sglang_ple(
+            Gemma4Model,
+            store=store,
+            attr_name="embed_tokens_per_layer",
+            embedding_dim=hidden_size_per_layer_input,
+        )
+        # then start SGLang normally
+    """
+    from .vllm_plugin import patch_model_class_ple
+
+    return patch_model_class_ple(
+        model_class,
+        store=store,
+        attr_name=attr_name,
+        embedding_dim=embedding_dim,
+        dtype=dtype,
+        cache_size=cache_size,
+    )
