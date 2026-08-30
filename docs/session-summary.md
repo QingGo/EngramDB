@@ -377,3 +377,93 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
 - qwen35-ple M0 quick 通过
 - 新增技术债 V52–V59
 - 计划聚焦：配置即用、真实 e2e、Rust 热路径
+
+## 14. 第十二轮完整整理（Session 19–22：可信基线 → 真实 PLE → 兄弟项目服务）
+
+### 14.1 本轮计划
+
+1. 建立可信 CPU decode 性能基线
+2. 真实权重 store + bit-exact
+3. 自动发现并接入真实 Qwen PLE
+4. 真实 PLE Store / PLE Layer bit-exact
+5. 构造可复用磁盘 PLE adapter
+6. 服务 qwen35-ple / engram-peft 兄弟项目
+7. 补齐 C ABI 与 FP8 注入
+8. 发布新版本
+
+### 14.2 重要发现
+
+- 真实 Qwen PLE 路径在 Qwen4Exp / Qwen3.8：
+  `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`
+- Qwen3.5-0.8B 本身没有 PLE，只用于普通 embedding 替换验证。
+- 发现 `gather_pp` 多分片偏移 bug：
+  - 用全局 rowid 计算文件偏移；
+  - 单分片正确；
+  - 真实 128-shard 表全部错误。
+- FP8 PLE 行必须乘 `weight_scale` 才等于真实数值。
+- LRU 在无复用短生成中可能比 raw 慢；真实 PLE 场景必须在有命中率证据时使用。
+- 兄弟项目契约要求：
+  - `engramdb_rowids_for_seq`
+  - `engramdb_abi_version`
+  - 真实 FP8 磁盘注入需要支持 `float8_e4m3fn + scale`
+
+### 14.3 做的尝试
+
+- 固定 seed / eval / reps>=5 / median+p90
+- 真实权重填充 Qwen3.5 store
+- Qwen3.5 bit-exact
+- Qwen4Exp PLE 元数据自动发现
+- 真实 PLE 128-shard Store 位级验证
+- 自实现 PLE layer forward bit-exact
+- `DiskPleNGramEmbedding` adapter
+- engram-peft 风格 `DiskMultiHeadEmbedding` FP8 反量化
+- C ABI rowids 对拍 qwen35-ple
+- qwen35-ple M0 quick smoke
+
+### 14.4 踩过的坑
+
+| 坑 | 处理 |
+|---|---|
+| 真实 PLE Store 读取跨 shard 全错 | 修复 `gather_pp` / `gather_plan` 局部偏移 |
+| PyTorch/Numpy 本地环境 numpy 2 不兼容 | 用 WSL / 避免 numpy 路径 |
+| 完整 Qwen4Exp 无法加载（200GB+ embedding） | 改为只加载 PLE 小权重 + 磁盘 Store 验证 |
+| 自实现 PLE forward 容易 shape/groups 错 | 对照官方源码修复 flatten / conv groups |
+| engram-peft 默认 float32 注入不能读 FP8 | 增加 scale / output_dtype / 专用 wrapper |
+| 完整模型 E2E 环境不足 | 明确记录为环境限制 |
+
+### 14.5 完成的内容
+
+- ✅ 可信 CPU decode 基线 + CSV + 阈值检查
+- ✅ 真实权重 Qwen3.5 bit-exact
+- ✅ 真实 PLE Store bit-exact
+- ✅ `gather_pp` 多分片 bug 修复 + 回归测试
+- ✅ `ple_discovery` 自动发现
+- ✅ `DiskPleNGramEmbedding` adapter
+- ✅ 真实 PLE layer forward bit-exact
+- ✅ C ABI `rowids_for_seq` / `abi_version`
+- ✅ `DiskMultiHeadEmbedding` FP8 支持
+- ✅ `install_real_qwen_ple_embedding`
+- ✅ 兄弟项目契约 smoke
+- ✅ qwen35-ple M0 quick 通过
+
+### 14.6 未完成的内容
+
+- ❌ 完整 Qwen4Exp 模型 E2E A/B（环境/内存限制）
+- ❌ engram-peft 原生消费 `table_source`（兄弟侧待实现）
+- ❌ qwen35-ple 真实 e2e 脚本改用新 FP8 wrapper（兄弟侧待更新）
+- ❌ Rust native PLE 热路径
+- ❌ vLLM/SGLang/llama.cpp serving A/B
+- ❌ `ENG_DEEPSEEK_V1` C ABI 实现
+
+### 14.7 未来计划
+
+1. Phase A：配置即用
+   - engram-peft 自动注入
+   - qwen35-ple 真实路径更新
+   - 自动读取 weight_scale
+   - Python `rowids_for_seq`
+   - C ABI 测试入 CI
+2. Phase B：完整模型 E2E
+3. Phase C：Rust 原生性能路径 + 预取
+4. Phase D：服务化 / 推理引擎 A/B
+5. 发布维护：v0.2.7

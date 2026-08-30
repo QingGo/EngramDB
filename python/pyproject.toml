@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "engramdb-python"
-version = "0.2.6"
+version = "0.2.7"
 description = "Disk-first storage engine for Engram/PLE n-gram memory tables (Rust core, Python bindings)"
 readme = "README.md"
 requires-python = ">=3.10"
