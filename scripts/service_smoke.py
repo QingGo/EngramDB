@@ -70,6 +70,25 @@ def main() -> None:
         assert base64.b64decode(fet["raw_base64"]) == db.fetch(
             "alpha", [0, 2], shards=1, rows_per_shard=4, width=8
         )
+        try:
+            import pyarrow as pa
+            arrow_resp = call({
+                "cmd": "fetch_arrow",
+                "table": "alpha",
+                "rowids": [0, 2],
+                "shards": 1,
+                "rows_per_shard": 4,
+                "width": 8,
+            })
+            assert arrow_resp["ok"]
+            ipc_bytes = base64.b64decode(arrow_resp["ipc_base64"])
+            with pa.ipc.open_stream(ipc_bytes) as reader:
+                arrow_table = reader.read_all()
+            assert arrow_table.num_rows == 2
+            print("Server Arrow OK:", arrow_table.num_rows, arrow_table.column_names)
+        except ImportError:
+            print("Server Arrow skipped: pyarrow not available")
+
         print("Server OK:", ping, tables, len(base64.b64decode(fet["raw_base64"])))
 
         server.shutdown()

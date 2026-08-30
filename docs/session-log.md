@@ -750,7 +750,7 @@ SGLANG_PLE_VERIFY_OK
 |---|---|
 | `python/engramdb/tables.py` | `Database`：多表目录注册、`list_tables`、按表 `fetch` |
 | `python/engramdb/arrow_utils.py` | `store_fetch_arrow` / `view_read_arrow` / `table_to_ipc_bytes`（可选 pyarrow） |
-| `python/engramdb/server.py` | 最小 TCP/JSON 服务：`ping` / `list_tables` / `fetch` / `view_read` |
+| `python/engramdb/server.py` | 最小 TCP/JSON 服务：`ping` / `list_tables` / `fetch` / `fetch_arrow` / `view_read` |
 | `scripts/service_smoke.py` | 多表 + Arrow IPC + 服务端到端 smoke |
 
 ## 3. 关键实现约束
@@ -774,7 +774,7 @@ SERVICE_SMOKE_OK
 - Arrow IPC：✅ 可生成 pyarrow Table 和 IPC bytes
 - 服务化：✅ 最小 TCP/JSON 服务可跑
 - 待做：
-  - 真正的 Arrow IPC wire protocol（当前服务仍返回 JSON+base64）
+  - Arrow IPC bytes 已可通过服务返回，但仍是 base64 封装；后续可改二进制 length-prefix wire
   - 认证/并发/连接复用
   - 调度、预取、stats 遥测
   - 与 vLLM/SGLang 真正通过服务读取 PLE（当前仍是嵌入式直接调用）

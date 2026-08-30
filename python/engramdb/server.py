@@ -9,6 +9,8 @@ Implemented commands:
   {"cmd": "list_tables"}
   {"cmd": "fetch", "table": "...", "rowids": [...],
    "shards": n, "rows_per_shard": n, "width": n}
+  {"cmd": "fetch_arrow", "table": "...", "rowids": [...],
+   "shards": n, "rows_per_shard": n, "width": n}
   {"cmd": "view_read", "path": "/...", "index": i}
 """
 
@@ -19,6 +21,7 @@ import socketserver
 from typing import Any
 
 from . import Store, View
+from .arrow_utils import store_fetch_arrow, table_to_ipc_bytes
 from .tables import Database
 
 
@@ -58,6 +61,25 @@ class _Handler(socketserver.StreamRequestHandler):
                 "rowids": rowids,
                 "width": int(req["width"]),
                 "raw_base64": __import__("base64").b64encode(raw).decode("ascii"),
+            }
+        if cmd == "fetch_arrow":
+            table = req["table"]
+            rowids = [int(x) for x in req.get("rowids", [])]
+            store = Store(
+                str(server.database.root / table),
+                int(req["shards"]),
+                int(req["rows_per_shard"]),
+                int(req["width"]),
+            )
+            try:
+                arrow_table = store_fetch_arrow(store, rowids)
+                ipc = table_to_ipc_bytes(arrow_table)
+            finally:
+                store.close()
+            return {
+                "ok": True,
+                "num_rows": len(rowids),
+                "ipc_base64": __import__("base64").b64encode(ipc).decode("ascii"),
             }
         if cmd == "view_read":
             view = View(req["path"])
