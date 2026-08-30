@@ -153,6 +153,8 @@ SERVICE_SMOKE_OK
 ## 6. 相关提交
 
 ```text
+c23017b feat(rust,engines): add Rust multi-table serve and CPU decode A/B
+764831c ci(python): install pyarrow in smoke job to exercise Arrow paths
 1fbe60a release: bump v0.2.5
 5a07bf8 feat(python): add binary Arrow IPC service protocol and expand wheel smoke
 0321ff7 docs(roadmap): add sixth-round systematic retrospect and updated debts/plan
