@@ -4,14 +4,24 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.1.x 已从占位包升级为最小可用的 ctypes 桥接：
-> Rust 侧通过 `crates/engramdb-python` 暴露 C ABI，Python 侧在 `python/engramdb/__init__.py`
-> 加载 `libengramdb_c` 并提供 `Store` / `View` 两类对象。完整的 PyO3/maturin 发布链将在后续阶段补齐。
+> 当前 v0.1.x 同时包含两条 Python 接入路径：
+> 1. **PyO3 原生扩展**（优先）：`crates/engramdb-pyo3`，构建后以
+>    `python/engramdb/_engramdb.so` 提供 `Store` / `View`。
+> 2. **ctypes C-ABI 回退**：`crates/engramdb-python`，无 PyO3 构建产物时也能用。
+>
+> `python/engramdb/__init__.py` 会自动优先加载 PyO3，失败则回退 ctypes。
 
 ## 快速使用
 
 ```bash
+# 构建 PyO3 原生扩展（macOS Intel 需要 dynamic_lookup linker flag）
+CARGO_HOME=/tmp/cargo-home RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
+  cargo build -p engramdb-pyo3 --release
+cp target/release/lib_engramdb.dylib python/engramdb/_engramdb.so
+
+# 或者构建 C-ABI 回退桥
 cargo build -p engramdb-python --release
+
 PYTHONPATH=python python3 -c "import engramdb; print(engramdb.__version__)"
 ```
 

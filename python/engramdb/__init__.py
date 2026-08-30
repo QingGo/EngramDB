@@ -181,5 +181,22 @@ def read_keys(path: str) -> list[int]:
     return result
 
 
+# Prefer the PyO3 native extension when built/installed.  The ctypes fallback
+# above keeps the package functional in source checkouts without the .so.
+_USING_PYO3 = False
+try:
+    from ._engramdb import Store as _PyO3Store
+    from ._engramdb import View as _PyO3View
+    from ._engramdb import read_keys as _pyo3_read_keys
+
+    Store = _PyO3Store
+    View = _PyO3View
+    read_keys = _pyo3_read_keys
+    _USING_PYO3 = True
+except ImportError:
+    pass
+
+
 def __repr__() -> str:  # pragma: no cover
-    return f"<engramdb {__version__} ctypes bindings>"
+    backend = "pyo3" if _USING_PYO3 else "ctypes"
+    return f"<engramdb {__version__} {backend} bindings>"

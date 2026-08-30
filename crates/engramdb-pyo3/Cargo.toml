@@ -1,0 +1,15 @@
+[package]
+name = "engramdb-pyo3"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "PyO3 bindings for EngramDB (native extension)"
+
+[lib]
+name = "_engramdb"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24.2", features = ["extension-module"] }
+engramdb-core = { path = "../engramdb-core" }
+engramdb-io = { path = "../engramdb-io" }

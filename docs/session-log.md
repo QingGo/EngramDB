@@ -280,6 +280,7 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 | S4-5 | `examples/interop_engram_peft.py` 磁盘版 `DiskMultiHeadEmbedding` | ✅ self_check 通过 | 输出与直接查表逐元素一致 |
 | S4-6 | 真实 `EngramLayer` forward（Python 3.10 + torch 2.9 本地轮 + engram-peft 源码） | ✅ `engram_layer_check` 通过 | 磁盘版 MultiHeadEmbedding 已进入真实 Engram 层前向路径 |
 | S4-7 | 尝试 TinyLlama 全模型 E2E | ⚠️ 被本地 torch 2.9.1a0 wheel 的 base forward segfault 阻断 | 脚本已留 `examples/engram_tinyllama_e2e.py`，待稳定 torch 后复跑 |
+| S4-8 | PyO3 原生扩展 `engramdb-pyo3` | ✅ 构建并 import 成功；Python 包优先加载 PyO3，ctypes 作回退 | 使用 `/tmp/cargo-home` + RUSTFLAGS dynamic_lookup 绕过本机 cargo 缓存写入限制 |
 
 ## 3. 坑 / 环境注意
 
