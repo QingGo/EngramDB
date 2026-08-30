@@ -86,3 +86,35 @@ same pattern into that class:
 - cgroup memory limits and deployment recipes.
 
 These remain for real vLLM integration and hardware A/B testing.
+
+## 3. Linux real-machine verification
+
+The 0.2.2 PyPI wheel includes the SGLang/vLLM adapter modules. On a Linux box
+(WSL or Raspberry Pi) run:
+
+```bash
+python3 -m pip install --upgrade engramdb-python==0.2.2
+
+curl -sL https://raw.githubusercontent.com/QingGo/EngramDB/master/scripts/python_wheel_smoke.py \
+  -o /tmp/engramdb_smoke.py
+python3 /tmp/engramdb_smoke.py
+```
+
+The smoke tests:
+
+- `engramdb.Store` + `PleDiskGather`
+- `PageReader` / Linux `IoUringPageReader`
+- `SGLangPageReader`
+- importing `vllm_plugin` (torch optional)
+
+If a real PLE store is available, additionally test the vLLM patch prototype with
+a real model attribute:
+
+```python
+from engramdb import Store
+from engramdb.vllm_plugin import patch_named_embedding
+
+store = Store("/path/to/engram-rows", shards=..., rows_per_shard=..., width=...)
+patch_named_embedding(model, "embed_tokens_per_layer", store, embedding_dim=...)
+```
+

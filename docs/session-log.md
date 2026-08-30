@@ -423,14 +423,14 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 
 - ✅ v0.2.1 已发布：crates.io 四 crate；PyPI `engramdb-python 0.2.1` 包含
   Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 共 5 个 wheel + sdist。
-- `IoUringPageReader` 已通过 GitHub Actions Linux 构建（预检/打包成功），尚未在 Linux 实机跑性能。
-- SGLang / vLLM 适配层和插件原型已入库（`engramdb.sglang`、`engramdb.vllm_plugin`），
-  这些是 0.2.1 发布之后的代码，待下一个版本再进 PyPI。
+- ✅ v0.2.2 已发布，新增 `engramdb.sglang` / `engramdb.vllm_plugin` 适配原型到 PyPI。
+- `IoUringPageReader` 已通过 GitHub Actions Linux 构建和 wheel 冒烟，但尚未在用户指定的
+  WSL/树莓派上实机跑性能。
+- GitHub CI（Ubuntu Linux）已验证 0.2.2 wheel 的 Python smoke 通过。
 
 ## 5. 下一步
 
-1. 确认 GitHub Actions 上 v0.2.1 发布成功（crates.io 四个 crate + PyPI 多平台 wheel）。
-2. 在 Linux/目标硬件上验证 `IoUringPageReader` 和新的 wheel 矩阵。
-3. 把 SGLang / vLLM 原型接到真实仓库做功能验证。
-4. 目标硬件真实 PLE 端到端。
+1. 在 WSL / 树莓派上安装 `engramdb-python==0.2.2` 并跑 `scripts/python_wheel_smoke.py`。
+2. 把 SGLang / vLLM 原型接到真实仓库做功能验证。
+3. 目标硬件真实 PLE 端到端。
 

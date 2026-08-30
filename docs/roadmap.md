@@ -199,7 +199,7 @@
   - SGLang 兼容 `engramdb.PageReader.read_pages(fds, offsets)`。
   - vLLM 方向 `engramdb.vllm.PleDiskGather`。
   - ✅ 0.2.1 已发布：Linux `IoUringPageReader`、5 平台 PyPI wheel 矩阵、Python CI 冒烟。
-  - 发布后追加：`engramdb.sglang.SGLangPageReader`、`engramdb.vllm_plugin.DiskPleEmbedding` 原型。
+  - ✅ 0.2.2 已发布：`engramdb.sglang.SGLangPageReader`、`engramdb.vllm_plugin.DiskPleEmbedding` 原型。
 
 ### 8.2 本轮新增技术债
 
