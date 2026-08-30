@@ -153,3 +153,56 @@ store = Store("/path/to/engram-rows", shards=..., rows_per_shard=..., width=...)
 patch_named_embedding(model, "embed_tokens_per_layer", store, embedding_dim=...)
 ```
 
+
+## 4. Real machine verification (WSL2, 2026-08-30)
+
+As of Session 9 both no-source hooks have been verified against real model
+classes installed from PyPI, not just source sketches:
+
+- vLLM `0.28.0` + `engramdb-python==0.2.4`
+- SGLang `0.5.9` + `engramdb-python==0.2.4`
+- Real class used: `vllm.model_executor.models.qwen3.Qwen3ForCausalLM` and
+  `sglang.srt.models.qwen3.Qwen3ForCausalLM`
+- Tiny local `Qwen3Config` (hidden=32, 1 layer, vocab=128) plus an EngramDB
+  `Store` with 128-byte rows.
+
+Verified operations:
+
+- `install_vllm_ple(Qwen3ForCausalLM, ..., attr_name="model.embed_tokens")`
+  before construction → instance `model.embed_tokens` is `DiskPleEmbedding`.
+- `install_sglang_ple(Qwen3ForCausalLM, ..., attr_name="model.embed_tokens")`
+  before construction → same replacement.
+- Direct forward through the disk-backed embedding returns
+  `(batch, seq, 32)` float32.
+- Instance-level `patch_named_embedding` also works.
+
+Notes for reproducing SGLang CPU path:
+
+```bash
+export CUDA_VISIBLE_DEVICES=""
+export SGLANG_USE_CPU_ENGINE=1
+```
+
+And in-process initialization:
+
+```python
+set_global_server_args_for_scheduler(ServerArgs(...))
+init_distributed_environment(world_size=1, rank=0, backend="gloo")
+initialize_model_parallel(tensor_model_parallel_size=1, ...)
+initialize_dp_attention(server_args, model_config)
+```
+
+For vLLM CPU path:
+
+```python
+with set_current_vllm_config(vllm_config):
+    init_distributed_environment(world_size=1, rank=0, backend="gloo")
+    initialize_model_parallel(tensor_model_parallel_size=1, ...)
+```
+
+Not yet verified:
+
+- Full vLLM/SGLang server run with a real PLE table.
+- GPU path on GTX 1070 (sm_61): current torch cu128/cu130 builds do not include
+  sm_61 kernels; need torch cu126 or another compatible build.
+- End-to-end decode performance A/B.

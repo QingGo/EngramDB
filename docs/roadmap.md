@@ -209,7 +209,7 @@
 | R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | ✅ 0.2.1 已实现 Linux `IoUringPageReader`（io_uring batch）；已通过树莓派 + WSL2 实机 smoke（Session 8） |
 | R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | ✅ 0.2.1 已包含 PageReader / PleDiskGather / IoUringPageReader |
 | R4 | 无 Python CI smoke test | 仅在本地验证 | ✅ CI 新增 wheel 安装 + Store/PageReader/PleDiskGather 冒烟 |
-| R5 | 没有真正接入 vLLM / SGLang 仓库 | 已有 `SGLangPageReader` 和 `vllm_plugin` 原型 | 下一步做上游 patch / 真实引擎内验证 |
+| R5 | ~~没有真正接入 vLLM / SGLang 仓库~~ | ✅ 已在真实 vLLM/SGLang 模型类上验证类级 hook（Session 9）；完整 serving/性能仍待做 | 下一步为引擎内 serving 与性能 A/B |
 | R6 | 没有目标硬件端到端性能数据 | Intel Mac PyTorch 测试已暂停 | 用用户自维护 wheel / Windows/WSL + 真实 PLE 表验证 |
 
 ### 8.3 借鉴增量（本轮）
@@ -251,7 +251,7 @@
 | # | 债 | 现状 | 处置 |
 |---|---|---|---|
 | V1 | ~~没有在真实 Linux/WSL/树莓派上跑适配层~~ | ✅ 已关闭：树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel smoke | 已由 Session 8 验证，保留为发布前回归项 |
-| V2 | 没有在真实 vLLM/SGLang 模型类上验证 hook | 只知道类名/属性名约定 | 选一个具体模型（Qwen3.8-Flash / Gemma4 等）做真实实例验证 |
+| V2 | ~~没有在真实 vLLM/SGLang 模型类上验证 hook~~ | ✅ 已关闭：vLLM 0.28.0 + SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 类均通过类级/实例级 patch 与前向验证（Session 9） | 保留为发布前的引擎 smoke 回归项 |
 | V3 | 模型类名/属性名需要用户手动传入 | 缺少自动发现或配置化 | 增加按模型名/配置映射表，或提供 entry-point 注册 |
 | V4 | 端到端性能契约仍未闭环 | 存储面已达标，应用面缺 | WSL+GPU/CPU 实机 PLE decode 曲线 |
 | V5 | 发布工程仍偏人工 | 已修 release-assets，但需要更完整的 preflight/回滚 | 后续接入自动 release 检查 + release notes 资产完整性断言 |
@@ -271,7 +271,7 @@
 ### 9.4 下一阶段计划（v0.3 修正版）
 
 1. ✅ **真实 Linux 验证**：已完成（Session 8），树莓派 aarch64 + WSL2 x86_64 均通过 v0.2.4 wheel smoke。
-2. **真实引擎接入**：选一个明确模型，把 `install_vllm_ple` / `install_sglang_ple` 接到真实 vLLM/SGLang 实例，功能一致 + 性能 A/B。
+2. ✅ **真实引擎接入（功能面）**：已完成（Session 9），vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均验证通过；剩余为完整 serving + 性能 A/B。
 3. **端到端性能**：CPU 小模型 PLE decode ≥50 tok/s，或 GPU A/B ≤5%。
 4. **顺序化视图 / 访问序调度**：把 88.7MB/s 随机路径提升到数百 MB/s 量级。
 5. **存储产品化**：多表、manifest 完整性、服务化/Arrow IPC、CLI 收敛。

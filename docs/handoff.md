@@ -66,6 +66,8 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   支持 `install_vllm_ple` / `install_sglang_ple` 类级 patch，用户可不改引擎源码。
   多平台 PyPI wheel：Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64；CI 含 Python 安装冒烟。
   README 已重写为完整用户入口（用法/架构/性能/优化策略）。
+  **真实引擎模型类验证已闭环（Session 9）**：vLLM 0.28.0 与 SGLang 0.5.9 的真实
+  `Qwen3ForCausalLM` 均通过类级/实例级 patch，`DiskPleEmbedding` 前向成功。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

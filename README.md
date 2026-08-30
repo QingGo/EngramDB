@@ -294,6 +294,8 @@ EngramDB/
 - `docs/licenses.md` —— 许可与合规边界
 - `scripts/gate.sh` —— 本地门禁
 - `scripts/linux_verify.sh` —— Linux/WSL/树莓派 wheel 实机冒烟
+- `scripts/vllm_ple_smoke.py` —— 真实 vLLM 模型类 `install_vllm_ple` 验证
+- `scripts/sglang_ple_smoke.py` —— 真实 SGLang 模型类 `install_sglang_ple` 验证
 
 ---
 
@@ -304,8 +306,10 @@ EngramDB/
 
 当前最重要缺口：
 
-1. 在真实 vLLM/SGLang 模型类上验证 `install_vllm_ple` / `install_sglang_ple`，并完成 PLE 端到端 tok/s 验收；
+1. 完成真实 vLLM/SGLang serving 中的 PLE 端到端 tok/s 验收（功能 hook 已在真实模型类上验证）；
 2. 完成顺序化视图/预取调度，兑现全表随机 88.7MB/s → 数百 MB/s 的潜在提升；
 3. 服务化与多表形态。
 
-> 已闭环：树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel 完整冒烟（`PageReader` / `IoUringPageReader` / `SGLangPageReader` / `PleDiskGather` / `vllm_plugin`）。
+> 已闭环：
+> - 树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel 完整冒烟。
+> - vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均通过 `install_vllm_ple` / `install_sglang_ple` 类级 patch 及 `DiskPleEmbedding` 前向验证（Session 9）。

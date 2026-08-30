@@ -505,3 +505,82 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 1. 选一个真实模型类，在 WSL 中验证 `install_vllm_ple` / `install_sglang_ple`。
 2. 在 WSL/GPU 上完成端到端 PLE 性能 A/B。
 3. 顺序化视图/访问序调度。
+
+# Session 9 复盘（2026-08-30 后段：真实 vLLM/SGLang 模型类验证闭环）
+
+## 1. 目标
+
+在 WSL2 真实 Linux 环境中安装 vLLM / SGLang，并验证：
+- `install_vllm_ple` 能 patch 真实 vLLM 模型类；
+- `install_sglang_ple` 能 patch 真实 SGLang 模型类；
+- 替换后的 `DiskPleEmbedding` 能真实进行一次前向读取。
+
+## 2. 环境
+
+| 项 | vLLM | SGLang |
+|---|---|---|
+| WSL | Ubuntu x86_64 / Linux 6.18 | 同左 |
+| Python | 3.12.3 | 3.12.3 |
+| 框架 | vllm 0.28.0 | sglang 0.5.9 |
+| torch | 2.13.0+cu130 | 2.9.1+cu128 |
+| 模式 | CPU 单进程 + gloo | CPU 单进程 + gloo + `SGLANG_USE_CPU_ENGINE=1` |
+| GPU | GTX1070 sm_61 与当前 torch 构建不兼容，未用于本次验证 | 同左 |
+
+## 3. 验证方法
+
+- 使用 `transformers.Qwen3Config` 构造一个极小的本地 Qwen3 模型目录（hidden=32、1 layer、vocab=128）。
+- 为 `embed_tokens` 构造一个 128 宽（float32 32 维）EngramDB Store。
+- 在构造模型前调用 `install_vllm_ple` / `install_sglang_ple`：
+  ```python
+  install_vllm_ple(
+      Qwen3ForCausalLM,
+      store=store,
+      attr_name="model.embed_tokens",
+      embedding_dim=32,
+      dtype=torch.float32,
+  )
+  ```
+- 构造真实 `Qwen3ForCausalLM` 实例。
+- 断言 `model.model.embed_tokens` 已变成 `DiskPleEmbedding`。
+- 调用该模块前向：`emb(torch.tensor([[1,2,3]]))`，输出 `(1,3,32)`。
+- 再验证实例级 `patch_named_embedding` 同样有效。
+
+## 4. 结果
+
+| # | 尝试 | 结果 |
+|---|---|---|
+| S9-1 | WSL 安装 vLLM 0.28.0 + 本包 0.2.4 | ✅ |
+| S9-2 | vLLM 真实 `Qwen3ForCausalLM` 类级 hook | ✅ `patched type: DiskPleEmbedding` |
+| S9-3 | vLLM `DiskPleEmbedding.forward` | ✅ `embed out: (1,3,32) torch.float32` |
+| S9-4 | vLLM 实例级 `patch_named_embedding` | ✅ |
+| S9-5 | WSL 安装 SGLang 0.5.9 + 本包 0.2.4 | ✅ |
+| S9-6 | SGLang 真实 `Qwen3ForCausalLM` 类级 hook | ✅ `patched type: DiskPleEmbedding` |
+| S9-7 | SGLang `DiskPleEmbedding.forward` | ✅ `embed out: (1,3,32) torch.float32` |
+| S9-8 | SGLang 实例级 `patch_named_embedding` | ✅ |
+
+验证输出：
+```text
+# vLLM
+VLLM_PLE_VERIFY_OK
+
+# SGLang
+SGLANG_PLE_VERIFY_OK
+```
+
+## 5. 当前状态
+
+- 技术债 **V2 已关闭**：`install_vllm_ple` / `install_sglang_ple` 已在真实框架的
+  真实模型类上完成功能验证。
+- 仍未完成：
+  - 完整 vLLM/SGLang serving 的端到端 PLE decode；
+  - GPU 路径（GTX1070 与当前 torch cu130/cu128 的 sm_61 不兼容，需要 CUDA 12.6 或更老 torch 构建）；
+  - 性能 A/B（V4）；
+  - 顺序化视图 / 访问序调度（V6）；
+  - 多表 / Arrow IPC / 服务化。
+
+## 6. 下一步
+
+1. 安装支持 GTX1070（sm_61）的 torch（例如 cu126 构建），重试 GPU 路径。
+2. 用真实 PLE 表或大合成表完成端到端性能 A/B。
+3. 顺序化视图基准与调度落地。
+4. 存储产品化（多表 / Arrow IPC / 服务化）。
