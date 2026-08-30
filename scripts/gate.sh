@@ -50,4 +50,21 @@ else
   echo "  [gate] 无真表数据：跳过基准（CI 同理）"
 fi
 
+
+echo "== [gate] decode baseline check =="
+if [[ -f probes/cpu_tiny_baseline.csv && -f probes/qwen35_cpu_baseline.csv ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    if ! python3 scripts/decode_baseline_check.py >/tmp/decode_baseline_check.log 2>&1; then
+      echo "  [gate] FAIL: decode baseline thresholds exceeded"
+      cat /tmp/decode_baseline_check.log
+      exit 1
+    fi
+    echo "  [gate] PASS: decode baseline thresholds satisfied"
+  else
+    echo "  [gate] python3 not found; skip"
+  fi
+else
+  echo "  [gate] decode baseline CSVs missing; skip"
+fi
+
 echo "== [gate] PASS =="

@@ -26,6 +26,6 @@ venv/
 # logs
 *.log
 /download.log
-!probes/baseline_*.csv
+!probes/*baseline*.csv
 # Local PyO3 build artifact (regenerate with cargo build -p engramdb-pyo3)
 python/engramdb/_engramdb.so

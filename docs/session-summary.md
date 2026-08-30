@@ -283,3 +283,33 @@ c70ed5d feat(python): add multi-table Database, Arrow helpers, and minimal TCP s
 c515d30 docs(engines): verify real vLLM/SGLang PLE hooks on WSL2
 99cafd8 docs(session): record real Linux wheel verification on Pi and WSL2
 ```
+
+## 7. Session 19 增量（可信基线 + 真实权重 bit-exact）
+
+在 Session 18 之后继续完成：
+
+### 已闭环
+
+- ✅ `scripts/cpu_tiny_decode_ab.py` / `scripts/qwen35_cpu_decode_ab.py` 升级为可回归基线：
+  - 固定 seed=42、模型 eval、reps>=5、median/p90/mean/min/max；
+  - CSV 默认写入 `probes/`；
+  - 可选 raw/LRU slowdown 门禁。
+- ✅ `probes/cpu_tiny_baseline.csv`、`probes/qwen35_cpu_baseline.csv` 已入库
+  （`.gitignore` 已放开 `probes/*baseline*.csv`）。
+- ✅ `scripts/decode_baseline_check.py`：读取 CSV 并检查阈值，当前默认通过。
+- ✅ `scripts/qwen35_bit_exact.py`：真实权重填充 store + bit-exact 验证。
+  - 实机结果：直接 embedding `max_abs=0.0`，完整生成序列一致，`BIT_EXACT_PASS`。
+- ✅ `scripts/prep_real_model.sh`：自动软链/复制/校验真实模型。
+- ✅ 真实 Qwen3.5 A/B 改为真实权重 store 后重新出数：
+  - memory 4.69 tok/s
+  - disk raw 4.15 tok/s（慢 13.0%）
+  - disk LRU 3.94 tok/s（慢 19.2%）
+
+### 对应提交
+
+```text
+feat(bench): add reproducible CPU decode baseline stats and threshold check
+feat(bench): add real-weight store fill and Qwen3.5 bit-exact check
+feat(scripts): add real Qwen3.5 model prep helper
+docs(session): record Session 19 trustworthy baseline and bit-exact progress
+```

@@ -58,3 +58,5 @@ jobs:
         run: python scripts/python_wheel_smoke.py
       - name: run service smoke
         run: python scripts/service_smoke.py
+      - name: check decode baselines
+        run: python scripts/decode_baseline_check.py

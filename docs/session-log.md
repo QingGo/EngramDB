@@ -1012,3 +1012,104 @@ check: {"ok": true, "table_count": 1, ...}
   - 用真实权重填充 store（非稀疏零值）做 bit-exact 功能对照；
   - 尝试 vLLM/SGLang 对 Qwen3.5-0.8B 的真实 serving 路径；
   - 或者用 llama.cpp 替代 CPU 路径。
+
+# Session 19 复盘（2026-08-30 后段：可信性能基线 + 真实权重 bit-exact）
+
+## 1. 目标
+
+把此前的“单次抖动观察”升级为可回归的 CPU decode 基线，并补上真实权重数据面：
+
+- 固定 seed、固定输入、模型 eval、至少 5 次重复；
+- 输出 median / p90 / mean / best / worst；
+- 生成 `probes/cpu_tiny_baseline.csv`、`probes/qwen35_cpu_baseline.csv`；
+- 增加阈值检查脚本；
+- 用真实 Qwen3.5 embedding 填充 store，并验证 bit-exact。
+
+## 2. 完成内容
+
+### 2.1 脚本升级
+
+- `scripts/cpu_tiny_decode_ab.py`
+- `scripts/qwen35_cpu_decode_ab.py`
+
+两脚本统一加入：
+
+- `--seed`（默认 42）
+- `--warmup`（默认 1）
+- `--reps`（默认 7，强制 >=5）
+- `model.eval()`
+- 百分位统计：median / p90 / mean / min / max
+- CSV 输出，默认写入 `probes/`
+- 可选 `--max-raw-slowdown` / `--max-lru-slowdown` 回归门禁
+- qwen 脚本增加 `--no-create-store`，可用已填充的真实 store 跑 A/B
+
+### 2.2 阈值检查
+
+新增 `scripts/decode_baseline_check.py`：
+
+- 读取两份基线 CSV；
+- 计算 memory vs disk raw / LRU 的 median 吞吐 slowdown；
+- 默认阈值：
+  - tiny：raw ≤50%，LRU ≤75%
+  - qwen：raw ≤50%，LRU ≤50%
+- 超阈值即非零退出。
+
+### 2.3 真实权重与 bit-exact
+
+新增 `scripts/qwen35_bit_exact.py`：
+
+- 用 `embed_tokens.weight` 真实填充 store；
+- 直接 embedding 比较：`max_abs=0.0`；
+- 完整生成比较：memory 输出序列 == disk 输出序列；
+- 实机结果：`BIT_EXACT_PASS`。
+
+### 2.4 模型准备脚本
+
+新增 `scripts/prep_real_model.sh`：
+
+- `symlink`：默认建立 `data/Qwen3.5-0.8B` 软链；
+- `copy`：可复制到 WSL 可见目录；
+- `verify`：校验必需文件存在且非空。
+
+## 3. 可信基线数据
+
+### 3.1 tiny Qwen3（`probes/cpu_tiny_baseline.csv`）
+
+| 路径 | median tok/s | p90 tok/s | 相对 memory 中位 slowdown |
+|---|---|---|---|
+| memory | 394.76 | 337.97 | — |
+| disk raw | 282.39 | 259.89 | 39.8% |
+| disk LRU | 244.96 | 208.02 | 61.2% |
+
+- seed=42，seq=`5,6,7,8,9,10`，64 new tokens，7 reps。
+
+### 3.2 真实 Qwen3.5-0.8B（`probes/qwen35_cpu_baseline.csv`，真实权重 store）
+
+| 路径 | median tok/s | p90 tok/s | 相对 memory 中位 slowdown |
+|---|---|---|---|
+| memory | 4.69 | 4.64 | — |
+| disk raw | 4.15 | 3.34 | 13.0% |
+| disk LRU | 3.94 | 3.59 | 19.2% |
+
+- seed=42，seq=`1,2,3,4,5`，8 new tokens，5 reps。
+- 这次不再用稀疏零值 store，而是真实权重填充后的 store。
+
+## 4. 验证结果
+
+```text
+PASS: cpu_tiny_baseline.csv disk-lru-cache4096 slowdown=61.2% (limit 75.0%)
+PASS: cpu_tiny_baseline.csv disk-raw-cache0 slowdown=39.8% (limit 50.0%)
+PASS: qwen35_cpu_baseline.csv disk-lru-cache4096 slowdown=19.2% (limit 50.0%)
+PASS: qwen35_cpu_baseline.csv disk-raw-cache0 slowdown=13.0% (limit 50.0%)
+GATE PASS: decode baseline thresholds satisfied
+```
+
+## 5. 状态与后续
+
+- 可回归 CPU decode 基线：✅
+- 真实权重 store + bit-exact：✅
+- 待做：
+  - 从 Qwen3.5 定位真实 PLE/Engram 表（当前仍是普通 `embed_tokens`）；
+  - 把 bit-exact 直接合并进 A/B 脚本作为自动步骤；
+  - vLLM/SGLang/llama.cpp serving 级 A/B；
+  - v0.2.7 发布收编。

@@ -539,3 +539,41 @@
 3. **Rust 为核，Python 为薄壳**：服务、协议、校验、存储 API 逐步下沉到 Rust。
 4. **版本和功能同源**：每次真实功能合并后，尽快收编进下一个版本，避免 master 无限领先。
 5. **薄接入，不修改上游**：所有引擎适配保持 plugin/patch 形式，避免 fork。
+
+## 13. 第九轮增量（2026-08-30 后段：可信基线闭环 + 真实权重 bit-exact）
+
+### 13.1 已完成
+
+| 项 | 状态 |
+|---|---|
+| 固定 seed / eval / reps>=5 / median+p90 | ✅ |
+| `probes/cpu_tiny_baseline.csv` | ✅ |
+| `probes/qwen35_cpu_baseline.csv`（真实权重 store） | ✅ |
+| `scripts/decode_baseline_check.py` 阈值门禁 | ✅ |
+| 真实权重填充 store | ✅ |
+| Qwen3.5 bit-exact（direct + generation） | ✅ |
+| `scripts/prep_real_model.sh` | ✅ |
+| `.gitignore` 放行 `probes/*baseline*.csv` | ✅ |
+
+### 13.2 关键数字
+
+- tiny：memory 394.76 tok/s，raw 282.39（39.8% 慢），LRU 244.96（61.2% 慢）。
+- Qwen3.5-0.8B 真实权重：
+  - memory 4.69 tok/s
+  - raw 4.15 tok/s（13.0% 慢）
+  - LRU 3.94 tok/s（19.2% 慢）
+- bit-exact：`max_abs=0.0`，生成序列完全一致。
+
+### 13.3 后续重点
+
+1. 把 bit-exact 合入 A/B 主流程，让每次跑数同时验证功能。
+2. 从 Qwen3.5 权重中定位真实 PLE/Engram 表属性；当前仍替换普通 `embed_tokens`。
+3. v0.2.7 发布收编本轮所有内容。
+4. Rust 服务产品化继续（Unix socket / Arrow / 连接池 / 认证）。
+
+### 13.4 残留债务
+
+- V25 部分闭合：真实权重 + bit-exact 已做；但仍不是真实 PLE 表语义。
+- V26 闭合：可信 CPU 基线已建立；仍需在更多序列长度/输入上积累。
+- V28 闭合：真实模型准备脚本已写。
+- V29/V30/V31/V32 仍开放。
