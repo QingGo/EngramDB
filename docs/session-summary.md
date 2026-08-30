@@ -491,3 +491,26 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
 - Python wheel smoke（无 torch）、service smoke、C ABI smoke 全绿。
 - 真实 checkpoint `weight_scale=0.00019931793212890625` 自动读取验证通过。
 - 下一步可发 v0.2.8，或继续 Phase A 的兄弟侧接入。
+
+## 16. Session 24：系统性思考与文档刷新
+
+### 16.1 目标
+
+从“功能正确”走向“可发布、可安装、可文档化、可稳定前进”。
+
+### 16.2 本轮发现
+
+- CI 失败往往不是功能问题，而是发布工程问题。
+- Python 核心包必须保持无 torch 可用。
+- 文档更新不能晚于版本发布。
+- 兄弟侧配置自动消费仍是最大“方便使用”缺口。
+
+### 16.3 新增技术债
+
+V60–V73，核心包括：release gate、README 收编、兄弟侧配置、Rust 热路径、完整模型 E2E、serving A/B、Store 线程安全。
+
+### 16.4 计划
+
+Phase 0 发布稳定 → Phase A 配置即用 → Phase B 完整模型 E2E → Phase C Rust 性能 → Phase D 服务化。
+
+详见 `docs/roadmap.md` 第 17 节。

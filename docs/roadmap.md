@@ -1005,3 +1005,180 @@ LLM-CompileForge  推理 runtime（后续）
 3. **配置驱动优先于手动调用**，方便使用才能成为基础设施。
 4. **环境限制照实记录**，不能把“没跑”当成“能跑”。
 5. **性能最终必须下沉 Rust**，Python 只负责语义和编排。
+
+## 17. 第十三轮系统性思考（Session 24：v0.2.8 发布与工程稳定化）
+
+### 17.1 终极目标再锚定
+
+不变：
+
+> **让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。**
+
+我们不是“又一个 KV 存储”，也不是“向量数据库”。我们解决的是一个非常具体的开销问题：
+
+- 确定性 n-gram 表非常大、只读、静态；
+- 查询地址在推理/训练开始前就已知；
+- 现在的痛点不是“有没有这张表”，而是“把这张表放进 RAM/显存太贵，放进磁盘又该如何做到低延迟、高吞吐、可编程、可服务”。
+
+### 17.2 当前坐标
+
+| 层 | 状态 |
+|---|---|
+| 存储面：Store-I / Store-P | ✅ 已闭环并有多平台基准 |
+| 确定性 rowid：Rust / C ABI / PyO3 / Python | ✅ 四路径一致，golden 对拍 |
+| 真实 Qwen PLE 数据面 | ✅ 128-shard Store bit-exact |
+| 真实 PLE 层 forward bit-exact | ✅（自实现层） |
+| Python 磁盘 Adapter / FP8 反量化 | ✅ |
+| 兄弟项目契约 | ✅ C ABI + smoke + qwen35-ple M0 |
+| 完整模型加载替换 PLE | ⚠️ 需要 official class / custom loader |
+| 完整模型 E2E A/B | ❌ 受环境/内存限制 |
+| 服务引擎级 A/B | ❌ 未做 |
+| Rust native PLE 热路径 | ❌ 未做 |
+| 发布/CI 稳定性 | ✅ v0.2.8 已修复，README 已刷新 |
+
+### 17.3 本轮完成与发现
+
+本轮（Session 23-24）主要做的是“把已经验证的正确性变成可发布、可安装、可文档化的产品面”：
+
+- 修复 v0.2.7 CI 两个根因：
+  - rustfmt import 顺序；
+  - 无 torch 环境下 eager import `DiskPleNGramEmbedding` 导致 wheel smoke 失败。
+- 补完 Phase A 的 EngramDB 侧：
+  - `load_ple_weight_scale()` 自动读取 checkpoint；
+  - `discover_ple()` 自动附带 `weight_scale`；
+  - `disk_ple_from_discovery()` / `install_real_qwen_ple_embedding()` 自动 scale；
+  - Python `rowids_for_seq()`；
+  - PyO3 native `rowids_for_seq` / `abi_version`；
+  - C ABI smoke 进入 CI。
+- 发布 v0.2.8。
+- 刷新 README / python README，补上 Rust/Python 安装与真实 PLE 用法。
+
+关键发现：
+
+1. **“功能已正确”不等于“可发布”**  
+   C ABI、bit-exact、真实 PLE 都已验证，但 CI 仍会因 import 顺序和可选依赖问题失败。  
+   说明发布工程和正确性工程必须同时管理。
+
+2. **无 torch 环境是 Python 包的基本输入**  
+   不是所有用户都装 PyTorch；核心 Store/rowids/discovery 必须能在纯 Python 环境使用。  
+   这次修复建立了“核心轻依赖、PyTorch adapter 按需加载”的边界。
+
+3. **文档与版本已经开始分叉**  
+   v0.2.8 tag 后 README 才更新，意味着 PyPI 上 v0.2.8 的长描述可能不是最新。  
+   需要把文档更新纳入版本收口，而不是 release 后补写。
+
+4. **兄弟侧“配置即用”仍未完成**  
+   EngramDB 这一侧已经准备好了，但 engram-peft 消费 `table_source`、qwen35-ple 真实脚本切换仍是外部仓库动作。
+
+### 17.4 本轮新技术债（V60 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V60 | 发布前没有强制跑“完整 release gate” | v0.2.7 的 CI 问题直到推送后才暴露 | 新增 `scripts/release_gate.sh`，bump/push 前本地强制跑 |
+| V61 | README 更新晚于 v0.2.8 tag | PyPI/发布物长描述可能滞后 | 下个版本收编本文档更新 |
+| V62 | `ple_adapter.py` 用 dummy nn 兼容无 torch | 类型/错误提示不够清晰 | 后续做懒加载 plugin 或 stub，避免 dummy module 进入公共面 |
+| V63 | `install_real_qwen_ple_embedding` 无 model_dir 时仍静默回退硬编码 scale | 错误 checkpoint 可能用错 scale | 生产路径改为显式要求 `model_dir` 或 `scale`，避免静默错误 |
+| V64 | Python `rowids_for_seq()` 纯 Python fallback 使用固定 multipliers | 非标准 checkpoint 或 DeepSeek 规格时需要调用方额外处理 | 支持从 `info` / `multipliers` 自动解析 |
+| V65 | engram-peft 仍未真正消费 `table_source` | 用户仍需手动调用注入函数 | 兄弟侧按配置自动注入 |
+| V66 | qwen35-ple 真实 e2e 仍未切到 FP8 wrapper | 真实 FP8 路径未在兄弟项目全链验证 | 更新兄弟侧脚本 |
+| V67 | Rust native PLE gather + dequant 热路径未做 | Python 版只是语义验证 | Phase C 下沉 Rust/PyO3 |
+| V68 | 完整模型 E2E 未做 | 无法证明“官方模型类 + 磁盘 PLE”真实可用 | 找大内存/云环境或 custom loader |
+| V69 | vLLM/SGLang/llama.cpp serving A/B 未做 | 尚无服务场景性能结论 | Phase D |
+| V70 | `ENG_DEEPSEEK_V1` C ABI 未实现 | DeepSeek 侧无法用 C ABI | 按需实现 |
+| V71 | Python Store 是 unsendable，服务每请求开新 Store | 多线程/长连接下开销和安全隐患 | 后续 RUST 侧安全句柄 / 线程池 / 连接复用 |
+| V72 | README 示例没有自动化测试 | 文档仍可能漂移 | 将关键示例做成 smoke 或 doctest |
+| V73 | `discover_ple()` 重复读取大型 safetensors index | 大模型 discovery 有冗余 IO | 可缓存 index 或返回一个轻量 spec 对象 |
+
+### 17.5 借鉴矩阵（第十三轮增量）
+
+| 来源 | 借什么 | 不借什么 | 为什么对我们有用 |
+|---|---|---|---|
+| **DuckDB** | 嵌入式、文件即库、manifest、零拷贝、可发布生态 | 不借 SQL/OLAP 查询引擎 | 确立“磁盘优先基础设施”的产品形态 |
+| **SQLite** | 单文件/便携、版本化格式、简单清晰 | 不借关系模型/事务语义 | 让 Store 易于迁移和校验 |
+| **RocksDB / FoundationDB** | checksum、原子发布、文件版本、损坏检测 | 不借 LSM 或分布式事务 | 让大表发布可校验、可回滚 |
+| **HuggingFace safetensors** | 分片 checkpoint、metadata index、lazy scalar 读取 | 不借模型定义/训练器 | `discover_ple` / `load_ple_weight_scale` 可复用该接口精神 |
+| **vLLM / SGLang** | 模型加载 hook、权重替换、CPU offload、cache 管理 | 不借 serving 内核 | 不改上游源码接入真实引擎 |
+| **llama.cpp** | mmap 大表、量化表、极简文件 | 不借 GGUF/推理 kernel | 验证“低配机器也能跑大 n-gram 表” |
+| **Arrow** | IPC、零拷贝、列式传输 | 不借查询引擎 | 服务化时传输原始行/e_t |
+| **DiskANN / Memcached** | LRU、冷热分层、预取 | 不借 ANN/通用 KV | 优化 PLE 在线读路径 |
+| **MLPerf / fio** | 固定协议、阈值、CSV、可复现 | 不借其领域指标 | 所有性能结论可回归 |
+| **engram-peft / qwen35-ple** | 配置驱动集成、四仓库 golden、契约测试 | 不借训练/评测逻辑 | 保证跨仓正确性 |
+| **maturin / abi3 / PyPI** | 多平台 wheel、abi3、发布自动化 | 不借 Python 框架 | 降低安装门槛 |
+
+### 17.6 下一阶段开发计划
+
+#### Phase 0：发布与工程稳定性（先做，门槛）
+- [ ] 新增 `scripts/release_gate.sh`：
+  - `cargo fmt --all --check`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `cargo test --workspace`
+  - `python_wheel_smoke.py`
+  - `service_smoke.py`
+  - `c_abi_smoke.py`
+  - `decode_baseline_check.py`
+- [ ] 将最新 README/python README 收编进下一个版本。
+- [ ] `install_real_qwen_ple_embedding` 去掉静默硬编码 fallback，或至少输出显式 warning。
+- [ ] `rowids_for_seq()` 支持 `multipliers`/`info` 来源。
+- [ ] 把 README 核心示例抽成可执行 smoke，防止再次漂移。
+
+**退出标准**：
+- 本地一条命令能完整预检所有发布门禁。
+- 下一次 bump 前 README 与代码同一点提交。
+
+#### Phase A：兄弟项目“配置即用”
+- [ ] engram-peft：支持 `table_source="engramdb:store"` 自动调用 EngramDB 注入。
+- [ ] qwen35-ple：真实 e2e 改用 `install_real_qwen_ple_embedding(store, model_dir=...)`。
+- [ ] 跨仓契约 smoke 纳入兄弟项目 CI。
+
+**退出标准**：
+- 用户只需配置 `table_source=engramdb:store`，不需要手动 import 注入函数。
+- qwen35-ple 真实 FP8 PLE 全链路跑通。
+
+#### Phase B：真实模型 E2E
+- [ ] 写 custom loader / from_pretrained hook，跳过 `ngram_embedding.shard_*` 大权重。
+- [ ] 在官方 `Qwen4ExpForCausalLM` 或等价类中替换真实 PLE。
+- [ ] 找大内存 Linux / 云环境，跑 memory vs disk generate A/B。
+
+**退出标准**：
+- 完整模型加载不把 200GB+ PLE 表放进内存。
+- 官方 PLE 层 forward 与磁盘 adapter bit-exact。
+- 有真实 tok/s、hit-rate、fetch/convert 数据。
+
+#### Phase C：性能架构
+- [ ] Rust/PyO3 native rowid + gather + dequant。
+- [ ] 预取重叠，隐藏磁盘同步等待。
+- [ ] 真实 PLE 冷/热、批大小、并发矩阵基准。
+
+**退出标准**：
+- 磁盘 PLE 热路径不再依赖 Python 逐行转换。
+- 性能结论可复现并接近“可服务”门槛。
+
+#### Phase D：服务化 / 推理引擎
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] 安全的 Store 句柄 / 线程池 / 连接复用。
+- [ ] Arrow IPC 服务化、认证、发布形态。
+
+**退出标准**：
+- 至少一个真实引擎能在不改上游源码的情况下使用 EngramDB PLE。
+- 有 serving 场景的 tok/s 和延迟数据。
+
+### 17.7 本轮纪律强化
+
+1. **正确性、性能、发布工程三者同等重要**  
+   不能只验证 bit-exact 就发版；还要保证 CI、文档、安装路径都闭环。
+
+2. **核心包必须轻依赖**  
+   Store、rowids、discovery、服务不应被迫导入 PyTorch；PyTorch adapter 必须按需加载。
+
+3. **“配置即用”优先于“手动调用”**  
+   方便使用是基础设施的命门；兄弟侧自动消费配置比“提供更多函数”更重要。
+
+4. **跨仓正确性继续靠 golden / C ABI 守门**  
+   不依赖各自仓库的偶然“能跑”。
+
+5. **性能最终必须下沉 Rust**  
+   Python 只做语义验证和编排，不能作为性能终点。
+
+6. **文档与版本必须同点收编**  
+   避免“代码已发布，README 还在旧版本”的分叉。
+

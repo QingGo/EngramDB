@@ -1344,3 +1344,41 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
 - `c_abi_smoke.py` ✅
 - 真实 Qwen checkpoint `weight_scale` 读取 ✅（0.00019931793212890625）
 - PyO3 / C ABI / 纯 Python rowids 三者一致 ✅
+
+# Session 24 复盘（2026-08-30 后段：v0.2.8 发布后系统性思考 + README 刷新）
+
+## 1. 完成
+
+- 修复 v0.2.7 CI（rustfmt、无 torch 导入）。
+- 补完 Phase A EngramDB 侧：
+  - 自动读取 `weight_scale`
+  - Python `rowids_for_seq()`
+  - PyO3 native rowids / abi_version
+  - C ABI smoke 入 CI
+- 发布 v0.2.8。
+- 刷新根 README 和 python/README：
+  - Rust crate 安装与示例
+  - Python PyPI 安装
+  - 真实 PLE adapter
+  - FP8 engram-peft 注入
+- 新增 roadmap 第 17 节：第十三轮系统性思考。
+
+## 2. 技术债
+
+新增 V60–V73，重点：
+
+- 发布前缺少完整 release gate
+- README 更新晚于 v0.2.8 tag
+- 兄弟侧仍未消费 `table_source`
+- Rust native PLE 热路径未做
+- 完整模型 E2E / serving A/B 未做
+
+## 3. 后续
+
+- Phase 0：发布工程稳定化
+- Phase A：兄弟项目配置即用
+- Phase B：真实模型 E2E
+- Phase C：Rust 性能热路径
+- Phase D：服务化 / 推理引擎
+
+详见 `docs/roadmap.md` 第 17 节。
