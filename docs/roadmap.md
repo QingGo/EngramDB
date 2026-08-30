@@ -134,3 +134,53 @@
 - **P4（M2 关键）**：PyO3 绑定 + engram-peft interop + **P4b 端到端 decode 实测（50/100 tok/s 曲线）**→ N1 收敛
 - **P4a 发布增强**：crates.io OIDC 实验（N4）、PyPI 相似名申请（N6）
 - P5/P6/P7 如前不变；每条出口 gate + 文档同步照旧
+
+---
+
+## 7. 第三轮复盘（2026-08-30 深夜：P4 深化 + 延迟首测 + 全表视图）
+
+### 7.1 终极目标复核（不变 + 本轮把"差距"量化为三段）
+
+北极星不变。本轮最大的价值是**把"端到端还差什么"从概念变为清单**（存面验收档案见 design §7.0 / probes/）：
+
+| 场景 | 存储面（已有真值） | 应用面（缺口） |
+|---|---|---|
+| A 预训练批量 | 1.44M 行/s（warm）；带宽预算 12.8KB/tok ≪ 0.15GB/s@10Ktok/s（无压力） | Python 段式 DataLoader（P5/M3）、sweep 未接 |
+| B 推理在线 | 视图 4.50M 行/s（warm）；**延迟 p99 ≈ 12μs**（比 10ms/token 低 3 个量级） | PyO3 + P4b decode 曲线 + 引擎接入（P4/M2）；单条冷延迟（Linux O_DIRECT） |
+
+→ **两场景的"存储承诺"均已关闭；剩余的是绑定/接入面**（这正好是 roadmap 原设计的 M2 内容，未偏离）。
+
+### 7.2 本轮新技术债（T 序列，沿用 N1-N6）
+
+| # | 债 | 现状证据 | 处置 |
+|---|---|---|---|
+| T1 | **视图构建在探针层**：p4view build/bench/lat 都在 engramdb-bench bin，产品级 API/CLI 视图命令未成形（PyO3 绑定将无法复用） | `engramdb view` 不存在；构建器 130+ 行在 p4view.rs | **提升为 engramdb-io 公共 API**（ViewBuilder/ViewReader）+ CLI 子命令；探针减薄为 wrapper——P4 前端先行 |
+| T2 | **绝对冷口径未闭环**：macOS 页缓存使"冷"半温；只有 warm 档真值 | lat 全表 100K 抽样 p50=0.88μs（实际半命中） | Linux O_DIRECT/io_uring（M2）复测；设计文档注明"B 部署前提 = warm/prefetch" |
+| T3 | **SSD 资产脆弱性**：USB 掉载 2 次；构建 51.2GB 无 integrity 检查、无断点续传；keys 放 /tmp 被清 | build 22min 一次性输出，掉盘即重跑 | ① 构建产物 + sha256 manifest（synchronizable 清单）；② `--resume`/n 校验（已有 manifest 基础）；③ keys 默认写仓库 `probes/` 或 SSD（已改 --keys 可选 + manifest 带 n） |
+| T4 | **全表 A/B 末证**：51.2GB 尺度上 scatter（A）vs 视图（B）的 5x 只在 200K/100K 验证；全表 A（1TB 读）未完成 | bench sub=2M 超时 | P4 v5 用抽样 A --sub 2M 小步推进；不追全表 A |
+| T5 | **max 事件未归类**：2-4ms 簇（1/20K）来源未诊断（OS 换页/盘 sync/SSD GC） | lat 两次 max 2.2ms/4.35ms | 记录为"事件"暂不验；Linux 下对比 O_DIRECT 复测 |
+| T6 | **多表/table_id 路径缺位**：实现仅单表；设计有多表 table_id 前缀 | CLI/io 均单表 | M1.5 收口：table_id 参数进入 CLI+Layout 复用（多表 = 目录粒度即可先支持目录分工） |
+| T7 | **探针散布**：p4view/p2rowid/p3sim 各自为 bin，无统一基准 CLI | `cargo run -p engramdb-bench --bin xxx` | 合并方向：探针子命令随 P4 前端进 `engramdb probe`；bench bin 只在 M 阶段存在 |
+
+### 7.3 借鉴增量（本轮，与前轮不重复）
+
+| 来源 | 借鉴 | 落地 |
+|---|---|---|
+| **MLPerf 的"可复现验收"结构** | 每个基准 = 固定输入 + 固定命令 + 判定阈值 + 结果 CSV（可自动 diff） | ✅ 已成型（gate bench + baseline_view.csv + 固定 keys）；下一轮让 lat/CSV 也有判定行 |
+| **SQLite integrity_check** | 产品级视图构建后自校验（全量/抽样行值与源表一致 + 修复重跑） | T3 处置②：视图构建加 `--verify`（抽样 1% 行值对拍源表） |
+| **fio 的"每档都带直通开关"** | 口径切换显式化：`--direct 0|1` 之类（mac 无 O_DIRECT 时明确标注） | T2 处置：lat/bench 加 `--cache-mode`（warm/cold/auto）；os 支持 O_DIRECT 时自动冷测 |
+| **管理产品运维**（发布链我们已借遍）结束——最后一笔 | 发布/构建产物生命周期（资产存在盘上 vs 可重建） | probes/ 存"如何重建"的命令（已逐步写入 notes；T3 全清单化） |
+
+### 7.4 计划重排（v2.2，按"收敛于端到端"排序）
+
+1. **P4 前端（本轮决策先行）**：ViewBuilder/ViewReader 提升进 engramdb-io + `engramdb view build|bench|lat` CLI；probes 减薄为测试——**同时关掉 T1/T7**（也是 PyO3 绑定的前置面）
+2. **P4 v5 顺序化实验**：视图槽位按访问序重排（预期全表冷随机 88.7MB/s → >400MB/s 量级）——唯一未兑现的大杠杆（T4 顺带）
+3. **P2b 收尾**（小额）：bench-real agent 数值入 baseline CSV + roadmap P2 状态同步
+4. **P4b**（需 Linux/GPU 决策）：PyO3 + 50/100 tok/s 端到端曲线 —— 内容与性质同前，前置依赖 P4 前端
+5. **P5 v0**（A 场景）：Python DataLoader + 100K tok/s 带宽口径
+6. T3/T5/T6 作为平行工程债随以上插缝（T3 下一个视图构建即验）
+
+### 7.5 稳定性原则（本轮重申，构成"稳健前进"的三条）
+- **口径纪律**：吞吐/延迟/放大每个探针带环境注明（页缓存态、设备、并发）——基线 CSV 与 notes 已示范
+- **可重建性**：一切不常驻仓库的资产（视图/行表/keys）都有明确重建命令；产物带 manifest（参数+耗时+校验）
+- **门禁先行**：功能完成 + gate 绿 + 文档同步（每 milestone 三件套收口）
