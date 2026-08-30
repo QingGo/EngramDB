@@ -778,3 +778,61 @@ SERVICE_SMOKE_OK
   - 认证/并发/连接复用
   - 调度、预取、stats 遥测
   - 与 vLLM/SGLang 真正通过服务读取 PLE（当前仍是嵌入式直接调用）
+
+# Session 15 复盘（2026-08-30 后段：扩展 wheel smoke + 二进制 Arrow IPC wire）
+
+## 1. 目标
+
+- 按 v0.2.5 发布准备要求，扩展 Python wheel smoke 覆盖新模块；
+- 把服务从“JSON + base64”升级为真正的 length-prefix 二进制 wire，至少让 Arrow IPC / raw bytes 不再经过 base64 包装。
+
+## 2. 完成内容
+
+### 2.1 Python wheel smoke 扩展
+
+`scripts/python_wheel_smoke.py` 新增：
+
+- `Database` 多表读写；
+- 可选 Arrow helper（有 pyarrow 时）；
+- 最小 TCP/JSON 服务 ping / list_tables / fetch；
+- `DiskPleEmbedding` LRU（有 torch 时）。
+
+同时 CI 的 `python-smoke` job 增加 `scripts/service_smoke.py`，确保服务原型也进入回归。
+
+### 2.2 二进制服务协议
+
+新增：
+
+- `python/engramdb/server.py`：
+  - `EngramDBBinaryServer`：长度前缀 + 1-byte kind 的二进制响应；
+  - 支持 `ping` / `list_tables` / `fetch_raw` / `fetch_arrow` / `view_read`；
+  - 保留原 `EngramDBServer` JSON 模式作为兼容入口。
+- `python/engramdb/service_client.py`：
+  - `EngramDBClient`：同步二进制客户端；
+  - `fetch_raw` 直接返回原始行字节；
+  - `fetch_arrow` 直接返回 Arrow IPC stream 字节。
+
+响应 kind：
+
+- `0` = JSON
+- `1` = raw bytes
+- `2` = Arrow IPC stream
+
+## 3. 验证
+
+```text
+Binary Server OK: ping/list_tables/fetch_raw
+SERVICE_SMOKE_OK
+```
+
+二进制客户端在本地 Python 3.12 + PyO3 扩展下通过。
+
+## 4. 状态与遗留
+
+- 二进制 Arrow IPC wire：✅ 原型闭环
+- JSON 兼容入口：保留
+- 尚未做：
+  - 连接复用 / 认证 / 限流
+  - Rust 侧线程安全句柄（V8）
+  - `EngramDBBinaryServer` 性能门禁（embedded vs server ≤2%）
+  - Rust 多表 / manifest / serve（V12）

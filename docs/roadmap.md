@@ -310,7 +310,7 @@
 | # | 债 | 现状 | 处置 |
 |---|---|---|---|
 | V8 | PyO3 `Store` 是 `unsendable`，服务端不能跨线程共享 | 服务端目前每请求新开 Store；并发扩展受限 | Rust 侧提供线程安全 store 句柄 / 每线程连接池 |
-| V9 | 服务仍是 JSON + base64，不是真正二进制 Arrow IPC wire | `fetch_arrow` 已返回 Arrow bytes，但外层是 base64 | 改为 length-prefix binary protocol，并保留 JSON 兼容入口 |
+| V9 | 服务原为 JSON + base64，不是真正二进制 Arrow IPC wire | 已新增 length-prefix binary protocol + `EngramDBClient`，`fetch_raw`/`fetch_arrow` 均可裸字节返回 | 继续做连接复用、认证、线程安全句柄与性能门禁 |
 | V10 | GPU 路径被 torch/Pascal 兼容性卡住 | GTX1070 sm_61 与 vLLM/SGLang 当前 torch cu130/cu128 不兼容 | 换 cu121/cu126 老 torch 或走 llama.cpp/CPU 完成 E2E |
 | V11 | 小文件冷读多线程反而更慢 | 8t 冷顺序 49MB/s < 1t 786MB/s | 冷读需要顺序流调度，不能盲目并行；大表/真实介质再定 |
 | V12 | 多表/服务只是 Python 原型，Rust CLI/格式未收敛 | 缺少 table_id、manifest、CLI serve | 下一阶段把 table_id/serve 收敛到 Rust，Python 只做薄封装 |
@@ -331,9 +331,9 @@
 
 ### 10.4 下一阶段计划（v0.3→v0.4 修正版）
 
-1. **发布 v0.2.5**
-   - 包含 LRU、多表、Arrow helpers、最小服务；
-   - Python wheel smoke 扩展：Database / Arrow（可选）/ server / LRU；
+1. **发布 v0.2.5（接近就绪）**
+   - 包含 LRU、多表、Arrow helpers、JSON + 二进制最小服务；
+   - Python wheel smoke 扩展已完成：Database / Arrow（可选）/ server / LRU，并已加入 CI；
    - 保持 Rust 存储核心不变。
 
 2. **真实 PLE 端到端性能闭环（V4/V10）**
@@ -343,7 +343,7 @@
 
 3. **服务化/多表/Arrow 从原型变产品**
    - Rust 侧：多表 table_id、manifest 完整性、Unix socket serve；
-   - Python 侧：二进制 Arrow IPC wire、连接复用、线程安全句柄；
+   - Python 侧：二进制 Arrow IPC wire 已落地，继续做连接复用、线程安全句柄、认证；
    - 性能门禁：embedded vs server ≤2%（≤32KB 批往返）。
 
 4. **顺序化/冷读调度**

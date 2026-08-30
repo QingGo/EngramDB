@@ -1,7 +1,7 @@
 # 本 Session 综合整理（2026-08-30 后段）
 
 > 本文件是对本轮主要工作的单一入口摘要。详细分 session 复盘见
-> `docs/session-log.md` Session 8–14；战略复盘与债务表见
+> `docs/session-log.md` Session 8–15；战略复盘与债务表见
 > `docs/roadmap.md` Section 10。
 
 ## 1. 尝试过什么
@@ -24,6 +24,7 @@
 | 14 | 实现多表 `Database` | ✅ smoke 通过 |
 | 15 | 实现 Arrow Table / IPC helper | ✅ |
 | 16 | 实现最小 TCP/JSON 服务 + `fetch_arrow` | ✅ smoke 通过 |
+| 17 | 实现二进制 length-prefix 服务 + `EngramDBClient` | ✅ smoke 通过 |
 
 ## 2. 踩过的坑
 
@@ -88,7 +89,8 @@
 
 - `python/engramdb/tables.py`：`Database` 多表注册与按表 fetch
 - `python/engramdb/arrow_utils.py`：Arrow Table / IPC bytes
-- `python/engramdb/server.py`：最小 TCP/JSON 服务
+- `python/engramdb/server.py`：最小 TCP/JSON + 二进制 length-prefix 服务
+- `python/engramdb/service_client.py`：二进制协议客户端
 - `python/engramdb/vllm_plugin.py`：`DiskPleEmbedding` LRU 缓存
 
 新增脚本：
@@ -105,6 +107,7 @@ smoke：
 Database OK: ['alpha', 'beta']
 Arrow OK: 2 ['rowid', 'row'] ipc_bytes 416
 Server Arrow OK: 2 ['rowid', 'row']
+Binary Server OK: ping/list_tables/fetch_raw
 SERVICE_SMOKE_OK
 ```
 
@@ -113,7 +116,7 @@ SERVICE_SMOKE_OK
 | # | 问题 | 影响 |
 |---|---|---|
 | V8 | PyO3 `Store` 是 `unsendable` | 服务端不能跨线程共享，当前每请求新开 Store |
-| V9 | 服务仍是 JSON + base64 | 不是真正二进制 Arrow IPC wire |
+| V9 | 服务已有二进制 Arrow IPC wire（length-prefix），但尚无连接复用/认证/线程安全句柄 | 二进制数据传输面已闭环，生产级服务面仍待做 |
 | V10 | GPU 路径被 torch/Pascal 兼容性卡住 | GTX1070 sm_61 无法使用当前 cu130/cu128 |
 | V11 | 小文件冷读多线程反而更慢 | 冷读需要顺序流调度，不能盲目并行 |
 | V12 | 多表/服务只是 Python 原型 | Rust CLI、manifest、table_id、serve 未收敛 |
@@ -126,15 +129,15 @@ SERVICE_SMOKE_OK
 
 ### 近期
 
-1. 发布 v0.2.5，包含 LRU、多表、Arrow helpers、最小服务。
-2. 扩展 Python wheel smoke，覆盖 Database / Arrow / server / LRU。
+1. 发布 v0.2.5，包含 LRU、多表、Arrow helpers、JSON + 二进制最小服务。
+2. ~~扩展 Python wheel smoke，覆盖 Database / Arrow / server / LRU~~ → 已完成，并进入 CI。
 3. CPU 完整 serving 做 PLE decode A/B。
 4. 尝试兼容 GTX1070 的 torch 构建做 GPU A/B。
 
 ### 中期
 
 5. Rust 侧多表 table_id、manifest 完整性、`serve`。
-6. 服务升级为二进制 Arrow IPC wire，解决线程安全句柄。
+6. 服务在已有二进制 Arrow IPC wire 基础上继续做连接复用、认证、线程安全句柄、性能门禁。
 7. 冷读顺序流调度与 `StreamingPlanner` / Tier 预取打通。
 8. 自动发现模型 PLE 属性。
 

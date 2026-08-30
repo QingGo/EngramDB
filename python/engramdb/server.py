@@ -1,17 +1,40 @@
 """Minimal EngramDB service prototype.
 
-This is a small TCP/JSON service that exposes basic multi-table reads to remote
-clients.  It is intentionally storage-only: it does not implement scheduling,
-Arrow IPC yet, or engine integration.  The protocol is newline-delimited JSON.
+The service is storage-only and intentionally does not implement scheduling,
+engine integration, or a full query protocol.
+
+Two wire modes are provided:
+
+* ``EngramDBServer`` -- newline-delimited JSON (backward-compatible prototype).
+* ``EngramDBBinaryServer`` -- length-prefixed binary frames.
+
+Binary frame layout
+-------------------
+
+Request::
+
+    4-byte big-endian payload length
+    UTF-8 JSON request
+
+Response::
+
+    4-byte big-endian frame length
+    1-byte kind + payload
+
+Kinds:
+
+* ``0`` -- JSON response body
+* ``1`` -- raw bytes (e.g. Store fetch or View slot)
+* ``2`` -- Arrow IPC stream bytes
 
 Implemented commands:
-  {"cmd": "ping"}
-  {"cmd": "list_tables"}
-  {"cmd": "fetch", "table": "...", "rowids": [...],
-   "shards": n, "rows_per_shard": n, "width": n}
-  {"cmd": "fetch_arrow", "table": "...", "rowids": [...],
-   "shards": n, "rows_per_shard": n, "width": n}
-  {"cmd": "view_read", "path": "/...", "index": i}
+
+* ``ping``
+* ``list_tables``
+* ``fetch`` (JSON mode)
+* ``fetch_raw`` (binary mode)
+* ``fetch_arrow`` (Arrow IPC bytes)
+* ``view_read`` (binary mode returns raw slot bytes)
 """
 
 from __future__ import annotations
@@ -23,6 +46,71 @@ from typing import Any
 from . import Store, View
 from .arrow_utils import store_fetch_arrow, table_to_ipc_bytes
 from .tables import Database
+
+KIND_JSON = 0
+KIND_RAW = 1
+KIND_ARROW = 2
+
+
+def _read_exact(stream: Any, n: int) -> bytes:
+    """Read exactly ``n`` bytes from a socket stream."""
+    chunks: list[bytes] = []
+    remaining = n
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _json_response(obj: dict[str, Any]) -> tuple[int, bytes]:
+    return KIND_JSON, json.dumps(obj).encode("utf-8")
+
+
+def _fetch_raw(server: "EngramDBServer", req: dict[str, Any]) -> bytes:
+    table = req["table"]
+    rowids = [int(x) for x in req.get("rowids", [])]
+    return server.database.fetch(
+        table,
+        rowids,
+        shards=int(req["shards"]),
+        rows_per_shard=int(req["rows_per_shard"]),
+        width=int(req["width"]),
+    )
+
+
+def _binary_dispatch(server: "EngramDBServer", req: dict[str, Any]) -> tuple[int, bytes]:
+    """Dispatch a binary-protocol request to a ``(kind, payload)`` response."""
+    cmd = req.get("cmd")
+    if cmd == "ping":
+        return _json_response({"ok": True, "pong": True})
+    if cmd == "list_tables":
+        return _json_response({"ok": True, "tables": server.database.list_tables()})
+    if cmd == "fetch_raw":
+        return KIND_RAW, _fetch_raw(server, req)
+    if cmd == "fetch_arrow":
+        table = req["table"]
+        rowids = [int(x) for x in req.get("rowids", [])]
+        store = Store(
+            str(server.database.root / table),
+            int(req["shards"]),
+            int(req["rows_per_shard"]),
+            int(req["width"]),
+        )
+        try:
+            arrow_table = store_fetch_arrow(store, rowids)
+            return KIND_ARROW, table_to_ipc_bytes(arrow_table)
+        finally:
+            store.close()
+    if cmd == "view_read":
+        view = View(req["path"])
+        try:
+            return KIND_RAW, view.read_record(int(req["index"]))
+        finally:
+            view.close()
+    raise ValueError(f"unknown command: {cmd!r}")
 
 
 class _Handler(socketserver.StreamRequestHandler):
@@ -93,6 +181,42 @@ class _Handler(socketserver.StreamRequestHandler):
             finally:
                 view.close()
         raise ValueError(f"unknown command: {cmd!r}")
+
+
+class _BinaryHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        server: "EngramDBBinaryServer" = self.server  # type: ignore[assignment]
+        while True:
+            header = _read_exact(self.rfile, 4)
+            if len(header) < 4:
+                return
+            body_len = int.from_bytes(header, "big")
+            body = _read_exact(self.rfile, body_len)
+            try:
+                req = json.loads(body.decode("utf-8"))
+                kind, payload = _binary_dispatch(server, req)
+            except Exception as exc:  # keep the server alive on bad requests
+                kind, payload = _json_response({"ok": False, "error": repr(exc)})
+            frame = bytes([kind]) + payload
+            self.wfile.write(len(frame).to_bytes(4, "big"))
+            self.wfile.write(frame)
+            self.wfile.flush()
+
+
+class EngramDBBinaryServer(socketserver.ThreadingTCPServer):
+    """Length-prefixed binary-protocol EngramDB service.
+
+    The first response byte selects the payload kind (JSON, raw bytes, or Arrow
+    IPC).  This avoids base64-wrapping large reads and gives clients a direct
+    Arrow IPC stream.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, database: Database, host: str = "127.0.0.1", port: int = 8765) -> None:
+        super().__init__((host, port), _BinaryHandler)
+        self.database = database
 
 
 class EngramDBServer(socketserver.ThreadingTCPServer):

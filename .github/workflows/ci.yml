@@ -54,3 +54,5 @@ jobs:
         run: python -m pip install --force-reinstall python/dist/*.whl
       - name: run smoke
         run: python scripts/python_wheel_smoke.py
+      - name: run service smoke
+        run: python scripts/service_smoke.py

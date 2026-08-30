@@ -299,7 +299,7 @@ EngramDB/
 - `scripts/sglang_ple_smoke.py` —— 真实 SGLang 模型类 `install_sglang_ple` 验证
 - `scripts/vllm_embedding_ab.py` —— vLLM 真实类内存/磁盘 embedding A/B
 - `scripts/wsl_cold_view_bench.py` —— 冷缓存顺序/随机视图 A/B
-- `scripts/service_smoke.py` —— 多表 + Arrow IPC + 最小服务 smoke
+- `scripts/service_smoke.py` —— 多表 + Arrow IPC + JSON/二进制最小服务 smoke
 
 ---
 
@@ -319,4 +319,4 @@ EngramDB/
 > - vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均通过 `install_vllm_ple` / `install_sglang_ple` 类级 patch 及 `DiskPleEmbedding` 前向验证（Session 9）。
 > - 访问序视图 `view build --keys` + 校验 + 冷盘顺序/随机 A/B 已在 WSL 跑通（Session 10/11），冷顺序 786MB/s vs 冷随机 86MB/s。
 > - vLLM 真实模型类 embedding A/B 已测（Session 12/13）：raw disk 235-268μs/call，加入 LRU 后降到 14-23μs/call。
-> - 多表 `Database`、Arrow helpers、最小 TCP 服务（含 `fetch_arrow`）已跑通（Session 14）。
+> - 多表 `Database`、Arrow helpers、JSON + 二进制 Arrow IPC 服务（含 `fetch_raw` / `fetch_arrow`）已跑通（Session 14/15）。

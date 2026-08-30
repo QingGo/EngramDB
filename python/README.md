@@ -135,7 +135,9 @@ table = store_fetch_arrow(store, [0, 1, 2])
 ipc = table_to_ipc_bytes(table)   # Arrow IPC stream bytes
 ```
 
-最小 TCP/JSON 服务（当前为原型）：
+最小服务（当前为原型，提供两种 wire 模式）：
+
+JSON 模式：
 
 ```python
 from engramdb import Database
@@ -145,12 +147,32 @@ server = EngramDBServer(Database("path/to/tables-root"), host="127.0.0.1", port=
 server.serve_forever()
 ```
 
+二进制模式（长度前缀 + 1-byte kind，`fetch_raw` 直接返回原始字节，
+`fetch_arrow` 直接返回 Arrow IPC stream，不需要 base64 包装）：
+
+```python
+from engramdb import Database, EngramDBBinaryServer, EngramDBClient
+
+server = EngramDBBinaryServer(
+    Database("path/to/tables-root"),
+    host="127.0.0.1",
+    port=8765,
+)
+server.serve_forever()
+
+# 客户端
+with EngramDBClient("127.0.0.1", 8765) as client:
+    tables = client.list_tables()
+    raw = client.fetch_raw("alpha", [0, 1, 2], shards=1, rows_per_shard=100, width=256)
+    ipc = client.fetch_arrow("alpha", [0, 1, 2], shards=1, rows_per_shard=100, width=256)
+```
+
 服务命令包括：
 
 - `ping`
 - `list_tables`
-- `fetch`
-- `fetch_arrow`（返回 base64 封装的 Arrow IPC bytes）
+- `fetch` / `fetch_raw`
+- `fetch_arrow`（JSON 模式返回 base64 封装的 Arrow IPC；二进制模式返回裸 Arrow IPC stream）
 - `view_read`
 
 > 注意：PyO3 `Store` 是不可跨线程共享的 `unsendable` 对象，因此服务端 `Database.fetch`

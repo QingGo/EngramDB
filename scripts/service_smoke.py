@@ -8,7 +8,8 @@ import threading
 from pathlib import Path
 
 from engramdb import Database
-from engramdb.server import EngramDBServer
+from engramdb.server import EngramDBServer, EngramDBBinaryServer
+from engramdb.service_client import EngramDBClient
 
 
 def make_table(root: Path, name: str, rows: int = 4, width: int = 8) -> None:
@@ -93,6 +94,37 @@ def main() -> None:
 
         server.shutdown()
         server.server_close()
+
+        # Length-prefixed binary service: raw fetch and optional Arrow IPC.
+        bserver = EngramDBBinaryServer(db, host="127.0.0.1", port=0)
+        bthread = threading.Thread(target=bserver.serve_forever, daemon=True)
+        bthread.start()
+        bhost, bport = bserver.server_address
+
+        with EngramDBClient(bhost, bport) as client:
+            assert client.ping()
+            assert client.list_tables() == ["alpha", "beta"]
+            raw_bin = client.fetch_raw("alpha", [0, 2], 1, 4, 8)
+            assert raw_bin == db.fetch(
+                "alpha", [0, 2], shards=1, rows_per_shard=4, width=8
+            )
+            try:
+                import pyarrow as pa
+                ipc_bin = client.fetch_arrow("alpha", [0, 2], 1, 4, 8)
+                with pa.ipc.open_stream(ipc_bin) as reader:
+                    arrow_table = reader.read_all()
+                assert arrow_table.num_rows == 2
+                print(
+                    "Binary Server Arrow OK:",
+                    arrow_table.num_rows,
+                    arrow_table.column_names,
+                )
+            except ImportError:
+                print("Binary Server Arrow skipped: pyarrow not available")
+            print("Binary Server OK: ping/list_tables/fetch_raw")
+
+        bserver.shutdown()
+        bserver.server_close()
         db.close()
         print("SERVICE_SMOKE_OK")
 
