@@ -98,6 +98,7 @@ def main() -> None:
     ap.add_argument("--new-tokens", type=int, default=64)
     ap.add_argument("--cache-size", type=int, default=4096)
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--csv", default="", help="optional CSV output path")
     args = ap.parse_args()
 
     seq = [int(x) for x in args.seq.split(",")]
@@ -105,8 +106,10 @@ def main() -> None:
     hidden = model.config.hidden_size
     write_store(model, args.store)
 
+    results: list[tuple[str, float, int]] = []
     tok_s, tok = bench(model, seq, args.new_tokens, reps=args.reps)
     print(f"memory: new_tokens={tok} tok/s={tok_s:.2f}")
+    results.append(("memory", tok_s, tok))
 
     for label, cache_size in (("raw", 0), ("lru", args.cache_size)):
         disk_model, store = load_disk_model(args.model, args.store, hidden, cache_size)
@@ -116,8 +119,16 @@ def main() -> None:
                 f"disk({label},cache={cache_size}): "
                 f"new_tokens={tok_disk} tok/s={tok_s_disk:.2f}"
             )
+            results.append((f"disk-{label}-cache{cache_size}", tok_s_disk, tok_disk))
         finally:
             store.close()
+
+    if args.csv:
+        with open(args.csv, "w", encoding="utf-8") as f:
+            f.write("label,tok_s,new_tokens\n")
+            for label, tok_s, tok in results:
+                f.write(f"{label},{tok_s:.6f},{tok}\n")
+        print(f"csv written: {args.csv}")
 
 
 if __name__ == "__main__":
