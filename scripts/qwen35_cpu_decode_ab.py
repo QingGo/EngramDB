@@ -112,7 +112,7 @@ def bench(
     warmup: int = 1,
     reps: int = 7,
     embedding: Any | None = None,
-) -> tuple[dict[str, float], int]:
+) -> tuple[dict[str, float], int, list[int]]:
     """Run a deterministic decode benchmark and return stats + generated tokens."""
     model.eval()
     input_ids = torch.tensor([seq])
@@ -136,7 +136,7 @@ def bench(
             dt = time.time() - t0
             times.append(dt)
             tok = out.shape[-1] - input_ids.shape[-1]
-    return summarize_times(times, tok), tok
+    return summarize_times(times, tok), tok, out[0].tolist()
 
 
 def load_disk_model(
@@ -188,6 +188,8 @@ def main() -> None:
                     help="use an existing filled store instead of truncating a sparse placeholder")
     ap.add_argument("--shuffle", action="store_true",
                     help="shuffle memory/raw/lru run order to reduce order bias")
+    ap.add_argument("--check-bit-exact", action="store_true",
+                    help="compare disk generation output against the memory reference")
     ap.add_argument("--max-raw-slowdown", type=float, default=None,
                     help="fail if raw disk median is slower than memory by more than this fraction, e.g. 0.5 = 50%%")
     ap.add_argument("--max-lru-slowdown", type=float, default=None,
@@ -219,10 +221,15 @@ def main() -> None:
         create_sparse_store(args.store, vocab, width)
 
     results: list[dict[str, Any]] = []
+    ref_tokens: list[int] | None = None
     variants: list[tuple[str, int | None]] = [("memory", None), ("raw", 0), ("lru", args.cache_size)]
     if args.shuffle:
         random.Random(args.seed).shuffle(variants)
         print(f"shuffled variant order: {[v[0] for v in variants]}")
+    if args.check_bit_exact:
+        # Keep the memory reference first so every disk variant can be compared.
+        variants = [("memory", None)] + [v for v in variants if v[0] != "memory"]
+        print("check-bit-exact forces memory first")
 
     for label, cache_size in variants:
         if label == "memory":
@@ -232,7 +239,7 @@ def main() -> None:
                 low_cpu_mem_usage=True,
                 dtype=torch.float32,
             )
-            mem_stats, tok = bench(model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps)
+            mem_stats, tok, ref_tokens = bench(model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps)
             print(f"memory: new_tokens={tok} median={mem_stats['median_s']:.4f}s "
                   f"median_tok/s={mem_stats['median_tok_s']:.2f} p90_tok/s={mem_stats['p90_tok_s']:.2f}")
             results.append({
@@ -257,7 +264,7 @@ def main() -> None:
         )
         try:
             disk_embed = disk_model.get_input_embeddings()
-            disk_stats, disk_tok = bench(
+            disk_stats, disk_tok, disk_tokens = bench(
                 disk_model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps,
                 embedding=disk_embed,
             )
@@ -267,6 +274,10 @@ def main() -> None:
                 hit_rate = embed_stats["hits"] / (embed_stats["hits"] + embed_stats["misses"])
             fetch_ms = embed_stats.get("fetch_s", 0.0) * 1000.0
             convert_ms = embed_stats.get("convert_s", 0.0) * 1000.0
+            bit_exact = None
+            if args.check_bit_exact and ref_tokens is not None:
+                bit_exact = list(ref_tokens) == list(disk_tokens)
+                print(f"  bit_exact={bit_exact} memory_len={len(ref_tokens)} disk_len={len(disk_tokens)}")
             print(f"disk({label},cache={cache_size}): new_tokens={disk_tok} "
                   f"median={disk_stats['median_s']:.4f}s "
                   f"median_tok/s={disk_stats['median_tok_s']:.2f} "
@@ -293,6 +304,7 @@ def main() -> None:
                 "evictions": embed_stats.get("evictions", 0),
                 "fetch_ms": fetch_ms,
                 "convert_ms": convert_ms,
+                "bit_exact": bit_exact if bit_exact is not None else "",
                 **disk_stats,
             })
         finally:
@@ -319,7 +331,7 @@ def main() -> None:
             "median_s", "p90_s", "mean_s", "min_s", "max_s",
             "median_tok_s", "p90_tok_s", "mean_tok_s", "best_tok_s", "worst_tok_s",
             "calls", "hits", "misses", "hit_rate", "inserts", "evictions",
-            "fetch_ms", "convert_ms",
+            "fetch_ms", "convert_ms", "bit_exact",
             "raw_slowdown", "lru_slowdown",
         ]
         Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
