@@ -281,6 +281,7 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 | S4-6 | 真实 `EngramLayer` forward（Python 3.10 + torch 2.9 本地轮 + engram-peft 源码） | ✅ `engram_layer_check` 通过 | 磁盘版 MultiHeadEmbedding 已进入真实 Engram 层前向路径 |
 | S4-7 | TinyLlama 全模型 E2E（Python 3.12 + torch 2.2.2 + RMSNorm fallback） | ✅ 磁盘版 Engram 层完成 forward，并生成短文本 | `examples/engram_tinyllama_e2e.py` 已跑通 |
 | S4-8 | PyO3 原生扩展 `engramdb-pyo3` | ✅ 构建并 import 成功；Python 包优先加载 PyO3，ctypes 作回退 | 使用 `/tmp/cargo-home` + RUSTFLAGS dynamic_lookup 绕过本机 cargo 缓存写入限制 |
+| S4-9 | `view verify` 抽样校验 | ✅ 新增 CLI 子命令和 `verify_view` API，单测覆盖 | 对齐 T3 的“构建后自校验”方向 |
 
 ## 3. 坑 / 环境注意
 

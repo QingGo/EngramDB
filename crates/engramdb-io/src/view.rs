@@ -574,6 +574,59 @@ pub fn lat_view(
     Ok(())
 }
 
+/// 校验视图：用 keys（每 gram 连续 16 个 rowid）从源表重新 gather，和视图记录逐字节比对。
+/// 默认抽样 1000 个 gram；`sub_grams` 可显式指定检查数量。
+pub fn verify_view(
+    batch: &BadgeGather,
+    view_file: &Path,
+    keys: Option<&[u64]>,
+    sub_grams: usize,
+) -> std::io::Result<()> {
+    let reader = ViewReader::open(view_file)?;
+    let n = reader.len();
+    if n == 0 {
+        return Err(std::io::Error::other("视图为空"));
+    }
+    let keys = keys.unwrap_or(&[]);
+    if keys.is_empty() {
+        return Err(std::io::Error::other(
+            "verify 需要 keys 文件（每 gram 连续 16 个 rowid）",
+        ));
+    }
+    let key_grams = keys.len() / HEAD_W as usize;
+    if key_grams < n {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("keys 文件只有 {key_grams} grams，不足以覆盖视图 {n} grams"),
+        ));
+    }
+    let total = n.min(key_grams);
+    let check = if sub_grams > 0 {
+        sub_grams.min(total)
+    } else {
+        total.min(1000)
+    };
+    let slot = reader.slot_bytes() as usize;
+    let mut view_buf = vec![0u8; slot];
+    let mut src_buf = vec![0u8; RECORD_BYTES as usize];
+    for gi in 0..check {
+        let start = gi * HEAD_W as usize;
+        let rowids = &keys[start..start + HEAD_W as usize];
+        batch
+            .gather_pp(rowids, &mut src_buf, 8)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let got = reader.read_record(gi, &mut view_buf)?;
+        if got < RECORD_BYTES as usize || view_buf[..RECORD_BYTES as usize] != src_buf[..] {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("view record {gi} does not match source rows"),
+            ));
+        }
+    }
+    println!("view verified: checked {check}/{total} grams, slot={slot}B, all match");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,6 +668,8 @@ mod tests {
         vr.read_records(&[1, 0], &mut two).unwrap();
         // record 1 begins with row 16 value 16
         assert_eq!(two[0], 16);
+
+        verify_view(&bg, &view_path, Some(&keys), 0).unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
     }

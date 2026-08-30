@@ -524,20 +524,22 @@ fn _keep_serde(_p: &Path) {
     let _ = serde_json::Value::Null;
 }
 
-/// view <build|bench|lat> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
+/// view <build|bench|lat|verify> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
 /// 用法：
 ///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS]
 ///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
 ///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
+///   engramdb view verify <rows_dir> <view.bin> [--keys K] [--sub N]
 fn cmd_view(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let Some(sub) = rest.next() else {
-        return Err("view 需要子命令 build|bench|lat".into());
+        return Err("view 需要子命令 build|bench|lat|verify".into());
     };
     let it = rest;
     match sub.as_str() {
         "build" => cmd_view_build(it),
         "bench" => cmd_view_bench(it),
         "lat" => cmd_view_lat(it),
+        "verify" => cmd_view_verify(it),
         _ => Err(format!("unknown view subcommand: {sub}")),
     }
 }
@@ -711,4 +713,34 @@ fn cmd_view_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     }
     view::lat_view(&view_file, threads, warm, cold, sub_grams, slot_bytes)
         .map_err(|e| e.to_string())
+}
+
+fn cmd_view_verify(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
+    let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let mut keys_path: Option<PathBuf> = None;
+    let mut sub_grams = 0usize;
+    let mut backend_name: Option<String> = None;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--keys" => keys_path = Some(PathBuf::from(rest.next().ok_or("keys 路径")?)),
+            "--sub" => {
+                sub_grams = rest
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--backend" => backend_name = Some(rest.next().ok_or("backend")?),
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let layout = layout_for_dir(&rows_dir)?;
+    let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)
+        .map_err(|e| e.to_string())?;
+    let keys = match &keys_path {
+        Some(kf) => Some(view::read_keys(kf).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    view::verify_view(&batch, &view_file, keys.as_deref(), sub_grams).map_err(|e| e.to_string())
 }
