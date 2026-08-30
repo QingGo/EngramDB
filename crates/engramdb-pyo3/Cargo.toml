@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "PyO3 bindings for EngramDB (native extension)"
+repository = "https://github.com/QingGo/EngramDB"
 
 [lib]
 name = "_engramdb"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.24.2", features = ["extension-module"] }
+pyo3 = { version = "0.24.2", features = ["extension-module", "abi3-py310"] }
 engramdb-core = { path = "../engramdb-core" }
 engramdb-io = { path = "../engramdb-io" }
