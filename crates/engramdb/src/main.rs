@@ -526,7 +526,7 @@ fn _keep_serde(_p: &Path) {
 
 /// view <build|bench|lat|verify> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
 /// 用法：
-///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS]
+///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS] [--verify]
 ///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
 ///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
 ///   engramdb view verify <rows_dir> <view.bin> [--keys K] [--sub N]
@@ -569,6 +569,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let mut slot_bytes: u64 = 2560;
     let mut backend_name: Option<String> = None;
     let mut keys_in: Option<PathBuf> = None;
+    let mut verify = false;
     let mut it = rest;
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -581,6 +582,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
             }
             "--backend" => backend_name = Some(it.next().ok_or("backend")?),
             "--keys" => keys_in = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
+            "--verify" => verify = true,
             "--seed" => {
                 let _ = it.next();
             }
@@ -613,6 +615,10 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     } else {
         let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
             .map_err(|e| e.to_string())?;
+    }
+    if verify {
+        let keys = view::read_keys(&keys_out).map_err(|e| e.to_string())?;
+        view::verify_view(&batch, &view_out, Some(&keys), 0).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
