@@ -278,3 +278,85 @@
 5. ✅ **存储产品化（原型）**：多表 `Database`、Arrow helpers、最小 TCP/JSON 服务已落地并 smoke 通过（Session 14）；下一步做 Arrow IPC wire、并发/认证、CLI 收敛。
 6. **发布自动化加固**：release-assets 资产断言、全平台 wheel 自动验证、版本/文档同步检查。
 
+
+---
+
+## 10. 第六轮复盘（2026-08-30 后段：真实引擎验证 + 性能锚点 + 服务/多表/Arrow 原型）
+
+### 10.1 本轮目标与结果
+
+本轮不再停留在“存储面已达标”的结论上，而是把工作推进到：
+
+- 真实 vLLM/SGLang 模型类验证；
+- 访问序视图冷盘收益实测；
+- PLE 数据面 A/B；
+- 多表 / Arrow / 最小服务原型。
+
+结果：
+
+| 成果 | 状态 |
+|---|---|
+| vLLM 0.28.0 + SGLang 0.5.9 真实 `Qwen3ForCausalLM` 类级/实例级 hook | ✅ |
+| `DiskPleEmbedding.forward` 在真实框架模型类上可运行 | ✅ |
+| 访问序视图构建、校验、冷盘顺序/随机 A/B | ✅ 786 vs 86 MB/s ≈ 9.1× |
+| vLLM 真实类 embedding A/B | ✅ raw disk 235-268μs，LRU 后 14-23μs |
+| `DiskPleEmbedding` 行级 LRU 缓存 | ✅ |
+| 多表 `Database` | ✅ |
+| Arrow helper（Table / IPC bytes） | ✅ |
+| 最小 TCP/JSON 服务（含 `fetch_arrow`） | ✅ |
+
+### 10.2 本轮新发现的技术债
+
+| # | 债 | 现状 | 处置 |
+|---|---|---|---|
+| V8 | PyO3 `Store` 是 `unsendable`，服务端不能跨线程共享 | 服务端目前每请求新开 Store；并发扩展受限 | Rust 侧提供线程安全 store 句柄 / 每线程连接池 |
+| V9 | 服务仍是 JSON + base64，不是真正二进制 Arrow IPC wire | `fetch_arrow` 已返回 Arrow bytes，但外层是 base64 | 改为 length-prefix binary protocol，并保留 JSON 兼容入口 |
+| V10 | GPU 路径被 torch/Pascal 兼容性卡住 | GTX1070 sm_61 与 vLLM/SGLang 当前 torch cu130/cu128 不兼容 | 换 cu121/cu126 老 torch 或走 llama.cpp/CPU 完成 E2E |
+| V11 | 小文件冷读多线程反而更慢 | 8t 冷顺序 49MB/s < 1t 786MB/s | 冷读需要顺序流调度，不能盲目并行；大表/真实介质再定 |
+| V12 | 多表/服务只是 Python 原型，Rust CLI/格式未收敛 | 缺少 table_id、manifest、CLI serve | 下一阶段把 table_id/serve 收敛到 Rust，Python 只做薄封装 |
+| V13 | 自 v0.2.4 后有实质代码变更（LRU、服务、多表），未发布 | 当前 master 领先 PyPI | 准备 v0.2.5，增强 release preflight 和 Python 新模块 smoke |
+| V14 | 首未命中仍走 raw disk，未做预热/Tier | LRU 只解决热重复访问 | 增加 Tier 缓存、PREFETCH/WARM、冷启动调度 |
+| V15 | 模型类/属性名仍靠手填 | 只有 `Qwen3ForCausalLM` / `model.embed_tokens` 等已知样例 | 按模型 config 自动发现 PLE 属性，或提供配置映射/entry-point |
+
+### 10.3 借鉴增量（本轮新增）
+
+| 来源 | 借鉴 | 如何不冲突 |
+|---|---|---|
+| DuckDB / SQLite | 嵌入式、目录即库、manifest、Arrow 输出、每线程连接资源 | 我们只取“嵌入式数据库形态”，不做执行引擎/SQL |
+| PyArrow | Arrow Table / IPC stream 作为批次数据契约 | 我们只把它当作存储读取的零拷贝输出协议 |
+| Redis/Memcached | LRU/TTL、连接池、线程模型 | 用于 `DiskPleEmbedding` 缓存与服务端资源管理 |
+| SGLang #36567 / vLLM #54070 | 页对齐、dedup、pinned staging、async H2D、PREWARM | 继续作为引擎侧参考，但我们保持引擎无关数据面 |
+| llama.cpp | TENSOR_READ_LAZY、阈值、硬件 A/B | 只在部署与阈值层面借鉴，不复制推理内核 |
+| PyPA / GHA | Trusted Publishing、矩阵构建、preflight、资产完整性 | 用于发布，不改变产品语义 |
+
+### 10.4 下一阶段计划（v0.3→v0.4 修正版）
+
+1. **发布 v0.2.5**
+   - 包含 LRU、多表、Arrow helpers、最小服务；
+   - Python wheel smoke 扩展：Database / Arrow（可选）/ server / LRU；
+   - 保持 Rust 存储核心不变。
+
+2. **真实 PLE 端到端性能闭环（V4/V10）**
+   - 优先 CPU 完整 serving 的 tok/s A/B（小模型 + 真实 PLE 表或大合成表）；
+   - 其次尝试 GTX1070 可用 torch（cu121/cu126）下的 GPU A/B；
+   - 若 GPU 不可行，以 llama.cpp CPU/GPU 路径作为替代验收。
+
+3. **服务化/多表/Arrow 从原型变产品**
+   - Rust 侧：多表 table_id、manifest 完整性、Unix socket serve；
+   - Python 侧：二进制 Arrow IPC wire、连接复用、线程安全句柄；
+   - 性能门禁：embedded vs server ≤2%（≤32KB 批往返）。
+
+4. **顺序化/冷读调度**
+   - 真实大表冷态复测；
+   - 自适应“顺序流优先”多线程策略；
+   - 与 `StreamingPlanner` / Tier 预取打通。
+
+5. **引擎接入深化**
+   - vLLM/SGLang 完整 serving 中启用 PLE disk path；
+   - 自动发现模型 PLE 属性；
+   - 性能 A/B：功能一致 + 差距 ≤5%。
+
+6. **长期**
+   - 上游 patch / 贡献；
+   - llama.cpp 文件格式/C ABI 接入；
+   - 保持“不修改上游源码”的薄层适配哲学。
