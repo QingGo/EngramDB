@@ -55,6 +55,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   ✅ v0.2.2 已发布，额外包含 `engramdb.sglang` / `engramdb.vllm_plugin` 适配原型；
   ✅ v0.2.3 已发布，修复 release-assets 重复上传问题，GitHub Release 含 4 平台二进制 + Python 包；
   ✅ v0.2.4 已发布，包含“不改源码”的类级 PLE patch hook（`install_vllm_ple` / `install_sglang_ple`）；
+  📦 v0.2.5 已完成本地 bump（包含 LRU、多表、Arrow helpers、JSON+二进制最小服务、扩展 wheel smoke）；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）；
@@ -70,7 +71,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **真实引擎模型类验证已闭环（Session 9）**：vLLM 0.28.0 与 SGLang 0.5.9 的真实
   `Qwen3ForCausalLM` 均通过类级/实例级 patch，`DiskPleEmbedding` 前向成功。
   **访问序视图已在 WSL 验证（Session 10/11）**：`view build --keys`、校验与冷盘 A/B 均跑通；冷顺序 785.8MB/s vs 冷随机 86.0MB/s（约 9.1×）。
-  **多表/Arrow/最小服务原型已落地（Session 14）**：`Database`、`arrow_utils`、TCP/JSON server（含 `fetch_arrow`）均通过 smoke。
+  **多表/Arrow/最小服务原型已落地（Session 14/15）**：`Database`、`arrow_utils`、TCP/JSON server（含 `fetch_arrow`）、二进制 length-prefix server + `EngramDBClient` 均通过 smoke。
   **vLLM embedding A/B 已测（Session 12/13）**：raw disk 235-268μs/call；已实现行级 LRU 后降到 14-23μs/call。`DiskPleEmbedding` 首未命中仍走 raw disk，Tier/预热待做（V7）。
 
 ## 4. 机器与资产（重要）

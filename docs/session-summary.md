@@ -150,6 +150,8 @@ SERVICE_SMOKE_OK
 ## 6. 相关提交
 
 ```text
+1fbe60a release: bump v0.2.5
+5a07bf8 feat(python): add binary Arrow IPC service protocol and expand wheel smoke
 0321ff7 docs(roadmap): add sixth-round systematic retrospect and updated debts/plan
 6a59cbf docs(python): document multi-table, Arrow, and minimal service usage
 b983677 feat(python): add fetch_arrow command to minimal service
