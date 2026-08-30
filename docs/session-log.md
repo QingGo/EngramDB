@@ -1489,3 +1489,53 @@ V74–V85，详见 `docs/roadmap.md` Section 18.3。
 4. Rust/PyO3 热路径（C）
 5. 引擎 serving A/B + Store 线程安全（D）
 6. 固化 e2e 环境 + 统一版本收编
+
+
+# Session 26 尝试与踩坑记录
+
+## 1. 尝试
+
+- 直接向 engram-peft / qwen35-ple 的本地 `.git` 提交
+- 用 `/tmp` 可写镜像 clone 提交并推送到 GitHub
+- 在多个 Python 环境尝试真实 FP8 e2e
+- 使用 `run_m0_smoke.py --e2e`，但完整 engram-peft 依赖过重
+- 新写 `run_real_fp8_e2e.py` 用子模块加载绕过 TRL/datasets
+- 手工从 uv cache / conda 环境复制纯 Python 依赖到 `/tmp/pylibs`
+- 修改 qwen35-ple CI 加入跨仓 checkout
+- 新增 `official_loader` / `qwen4_ple_custom_loader.py` dry-run
+- 实际跑通真实 FP8 e2e：`REAL_FP8_E2E_OK`
+
+## 2. 踩坑
+
+| 坑 | 处理 |
+|---|---|
+| `.git` 不可写 | 使用可写镜像 clone 后 push |
+| `import engram_peft` 需要 TRL/datasets | 只加载 config/model 子模块 |
+| transformers 4.57 不认识 qwen3_5 | 改用 transformers 5.9 环境 |
+| Python 3.10 缺 typing.override | 用 typing_extensions 补 |
+| 很多 venv 没有 pip | 手动复制 uv cache 包 + dist-info |
+| 混入不同 Python 版本 site-packages 导致 NumPy 崩 | 只复制纯 Python 包，不混 C 扩展 |
+| 写 `outputs/` 被拒绝 | 输出到 `/tmp` |
+| `--load-model` 仍未真正跳过 PLE 大分配 | 下一步在 from_config 前 patch 官方 ngram 类 |
+
+## 3. 关键结果
+
+```text
+非 PLE tensor: 151960
+PLE ngram tensor: 129
+REAL_FP8_E2E_OK
+elapsed ~9.6s
+logits finite
+generated shape [1, 10]
+```
+
+## 4. 交付物
+
+- engram-peft master: `dc74c85`
+- qwen35-ple main: `a5ca602`
+- EngramDB master: `52a282c`
+- 文档：
+  - `docs/roadmap.md` Section 18
+  - `docs/session-summary.md` Session 26
+  - 本文件
+  - `docs/handoff.md` 已同步
