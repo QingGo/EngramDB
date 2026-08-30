@@ -585,3 +585,152 @@
   `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`。
 - 确认 Qwen3.5-0.8B 不含 PLE，后续真实 PLE 性能验证应使用 Qwen4Exp/Qwen3.8 真模型，而不是 0.8B 玩具。
 - V30 状态：已能自动发现真实 PLE 属性；下一步是使用该路径构造 disk-backed PLE adapter。
+
+## 14. 第十轮系统性思考（Session 20：从“能跑”到“可信、可重叠、可服务”）
+
+### 14.1 终极目标再锚定
+
+一句话：
+
+> **让 DeepSeek Engram / Qwen PLE 这类“确定性哈希 n-gram 记忆表”成为任何模型、训练器和推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。**
+
+用户视角的终极价值：
+
+```text
+模型不需要把几十 GB 的 PLE 表塞进 RAM/VRAM
+训练/推理引擎只需要一个薄 adapter
+性能接近内存，且功能 bit-exact
+可以嵌入式，也可以服务化
+不修改上游源码
+```
+
+可验收的终点：
+
+| 指标 | 目标 |
+|---|---|
+| 真实 PLE 表 bit-exact | ✅ 必须 |
+| 真实服务引擎端到端差距 vs 内存 PLE | ≤5% |
+| 嵌入式 vs 服务端 | ≤2% |
+| CPU/GPU 双路径 | CPU 先行，GPU 等待兼容 |
+| 可复现性 | 固定输入 + 中位数 + CSV + 阈值 |
+| 形态 | Rust 核心 + Python/引擎薄 adapter + 可选服务 |
+
+明确不做：
+
+- 不做通用向量检索/ANN
+- 不做 SQL 执行引擎
+- 不做通用 KV 数据库
+- 不 fork 修改 vLLM/SGLang/llama.cpp 上游
+- 不让 Python 原型成为最终产品核心
+
+### 14.2 本轮/近期会话发现的技术债（V33 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V33 | Qwen3.5-0.8B 不是真实 PLE 模型，只是普通 `embed_tokens` | 当前 bit-exact 证明的是“磁盘 embedding 替换”，不是真实 PLE 语义 | 已定位真实 PLE 在 Qwen4Exp/Qwen3.8：`layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`；下一步做真实 PLE adapter |
+| V34 | LRU 没有命中率指标；单序列 decode 无复用，LRU 反而比 raw 慢 | 无法判断 cache 是否有价值；可能引入无谓 overhead | 增加 hit rate / 每 token rowid 重复率统计；只有命中率有证据时才启用 |
+| V35 | DiskPleEmbedding 是同步 Python 薄层，无原生 gather、无异步预取 | memory vs disk 差距不全是磁盘 I/O，还包含 Python adapter 和关键路径同步开销 | 先做分阶段计时分离 fetch/adapter/compute；再下沉 Rust/PyO3 原生 gather + 预取 |
+| V36 | 基线仍是单序列、短 token、固定顺序 memory→raw→LRU、5 reps | 有 order bias 和 WSL 噪声，不能形成稳定阈值 | 多序列、多 seed、随机化顺序、更长生成、多次中位数；CSV 带机器元数据 |
+| V37 | bit-exact 是独立脚本，未合入 A/B 主流程 | 以后跑性能可能忘记验证功能 | 让 A/B 默认附带 bit-exact 检查 |
+| V38 | 真实 PLE 表尚未接入任何真实模型 E2E | 最重要的目标路径还没有闭环 | 用 Qwen4Exp 的真实 PLE shard + keygen 做 store 级 bit-exact，再做 adapter 级 |
+| V39 | v0.2.6 后 master 已累计可信基线、PLE discovery、bit-exact 等 | 版本再次领先，发布线分叉 | 尽快 v0.2.7 收编；之后小步发布 |
+| V40 | Rust 服务仍无 Arrow IPC、Unix socket、认证、限流、连接池、线程安全句柄 | 服务面仍是原型 | 保持 v0.3 主线，但现在优先真实数据面与性能路径 |
+| V41 | 基线只在 WSL 单机产生，没有跨平台和介质元数据 | 数字不能跨机器解释 | 在 CSV 中加入 `host/os/disk/store_file` 等列；可复跑 macOS/Linux |
+| V42 | 没有精细 instrumentation，无法定位 memory/raw 差距来源 | 容易把 Python adapter 开销误判为磁盘慢 | 增加 `--profile-embedding` 输出 fetch/convert/compute 分段 |
+| V43 | 真实模型不能进 CI，也没有 nightly real-model job | 真实回归只能手动 | 建独立 nightly/手动 job，CI 继续跑合成/小模型 |
+
+### 14.3 借鉴矩阵（第十轮增量）
+
+| 来源 | 借什么 | 不借什么 | 对应 EngramDB 目标 |
+|---|---|---|---|
+| **DuckDB / SQLite** | 目录即库、manifest、integrity check、每线程资源、嵌入式优先 | 不借 SQL/关系模型 | 存储库形态、可校验、可嵌入 |
+| **vLLM / SGLang** | batching、PagedAttention 的确定性 rowid 提前量、engine adapter 模式 | 不借推理内核/调度实现 | 实现“预取/重叠”和“薄插入” |
+| **llama.cpp** | CPU 优先、单二进制、GGUF/C ABI、严谨基准文化 | 不重写推理/量化 | 快速 CPU 验证、C ABI 接入 |
+| **DiskANN** | 冷数据顺序化、滑窗、tier 分层、预取 | 不借近邻图/向量检索 | 解决 PLE 冷读与随机 IO 问题 |
+| **Redis / Memcached** | LRU/TTL、连接协议、连接池、认证/限流 | 不借通用 KV 语义 | 服务化资源管理与缓存治理 |
+| **MLPerf / fio** | 固定输入、固定命令、中位数、阈值、cache-mode、CSV | 不做 benchmark-only 产品 | 让性能结论可回归 |
+| **PyArrow / Arrow IPC** | 数据契约、零拷贝批次、跨语言边界 | 不借查询/执行 | 服务与引擎之间的高效数据面 |
+| **RocksDB / FoundationDB** | 不可变段、checksum、文件版本、原子发布 | 不借 LSM/事务复杂度 | 大表静态发布与完整性 |
+| **HuggingFace Transformers** | 标准模型目录、config/权重发现、from_pretrained 复现 | 不借模型格式定义 | 自动发现真实 PLE 属性 |
+
+关键不冲突原则：
+
+- 我们只做“确定性 n-gram 表”的存储和访问，不越界到查询、检索、推理。
+- 所有引擎适配都是薄 patch/adapter，不 copy 或 fork 上游。
+- 所有借鉴都必须落到“可复现实验”或“可校验代码”，不能只停留在概念。
+
+### 14.4 开发计划（分阶段、带验收）
+
+#### Phase 0：测量硬化（立即，1–2 个迭代）
+- [ ] 多序列、多 seed、随机化 memory/raw/lru 顺序
+- [ ] `reps>=7`；输出 median/p90/CI
+- [ ] 增加 `--profile-embedding`，分离 EngramDB fetch / Python convert / transformer compute
+- [ ] LRU 增加 hit rate / rowid 重复率
+- [ ] bit-exact 合入 A/B 主流程
+- [ ] CSV 增加 host/os/disk/seed/seq 等元数据
+- [ ] v0.2.7 发布，收编当前 master
+
+**退出标准**：
+- 同一个数字在两次独立 run 中不会因顺序或噪声颠倒结论。
+- 能明确回答：memory vs raw 的差距里，多少是磁盘 I/O，多少是 Python adapter。
+
+#### Phase 1：真实 PLE 数据面（核心）
+- [ ] 用 `ple_discovery` + 真实 Qwen4Exp PLE shard 构造 EngramDB store
+- [ ] Store fetch 与 safetensors 原始 shard 做 bit-exact
+- [ ] 用 keygen rowid 抽样验证真实 PLE 行读取正确
+- [ ] 实现 `patch_real_ple`：自动找到 `model.language_model.layers.*.ple` 并替换
+- [ ] 在真实 PLE 小批量前向/生成上做功能 A/B
+
+**退出标准**：
+- 真实 PLE 行读 bit-exact。
+- 至少一个真实 PLE 层能用 EngramDB 数据面完成前向，输出与内存一致。
+
+#### Phase 2：性能架构（决定能否达到 ≤5%）
+- [ ] Rust/PyO3 原生 `DiskPleEmbedding`，去掉 Python 热路径
+- [ ] 根据 rowid 确定性实现“下一 token 预取”，与当前 transformer 计算重叠
+- [ ] 批量 gather：一次 fetch 多 token/多请求所需行
+- [ ] LRU/Tier 只在高命中率场景启用
+- [ ] 冷态真实 PLE 表 A/B
+
+**退出标准**：
+- 端到端差距 ≤5%（真实 PLE 或真实模型场景）。
+- 在无复用场景下，LRU 不劣于 raw。
+- 预取确实把磁盘延迟从关键路径移走。
+
+#### Phase 3：真实服务引擎 A/B
+- [ ] vLLM / SGLang / llama.cpp 加载含真实 PLE 的模型
+- [ ] EngramDB 替换 PLE 数据面
+- [ ] serving 级 A/B，目标 ≤5%
+- [ ] CPU 先行；GPU 等 torch/驱动兼容后补
+
+#### Phase 4：Rust 服务产品化
+- [ ] Unix socket
+- [ ] Arrow IPC / 零拷贝 raw
+- [ ] 每线程 store 句柄 / 连接池
+- [ ] 认证 / 限流 / 协议版本
+- [ ] embedded vs server ≤2%
+- [ ] manifest checksum / 原子发布
+
+#### Phase 5：长期维护
+- [ ] 真实模型 nightly/manual job
+- [ ] 跨机器基线 + 环境元数据
+- [ ] 自动发现 + 注册表
+- [ ] C ABI / GGUF 方向探索
+- [ ] 保持“数据不进 git，代码/脚本/基线进 git”
+
+### 14.5 稳定前进的五条纪律（第十轮强化）
+
+1. **一个结论 = 一个可复现脚本 + 一个 CSV + 一个阈值**  
+   没有固定输入、中位数、CSV 的性能数字只是观察，不是结论。
+
+2. **任何 cache 必须先有命中率证据**  
+   没有命中率，就没有资格谈 LRU/Tier 收益。
+
+3. **真实 PLE 优先于 toy model**  
+   Qwen3.5-0.8B 只用于打通流程；真正的验收必须落在 Qwen4Exp/Qwen3.8 的真实 PLE 表上。
+
+4. **Rust 为核，Python 只做薄 shell**  
+   Python 原型用来验证语义和快速实验，热路径最终必须下沉 Rust/PyO3。
+
+5. **版本和功能同源，发布要小步**  
+   每完成一个真实闭环就尽快 bump/tag，避免 master 长期领先于发布版。

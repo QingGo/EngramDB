@@ -321,3 +321,17 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
   - `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`
   - `ple_embed_dim=2560`、`ngram_size=3`、`split_ngram_parts=128`、`heads_per_ngram=8`
 - Qwen3.5-0.8B 无 PLE，所以当前 A/B 是普通 embedding 替换，不是真实 PLE 语义。
+
+## 9. Session 20：系统性思考
+
+- 在 roadmap 中新增第十轮系统性复盘（第 14 节）。
+- 重新锚定终极目标与可验收指标。
+- 列出本轮新发现的技术债 V33–V43。
+- 制定分阶段计划：
+  - Phase 0 测量硬化
+  - Phase 1 真实 PLE 数据面
+  - Phase 2 性能架构（原生 gather + 预取 + LRU 命中率）
+  - Phase 3 真实服务引擎 A/B
+  - Phase 4 Rust 服务产品化
+  - Phase 5 长期维护
+- 明确核心判断：先做真实 PLE + 可重叠性能，再做服务化；LRU 必须有命中率证据。

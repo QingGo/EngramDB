@@ -1131,3 +1131,31 @@ GATE PASS: decode baseline thresholds satisfied
   - `heads_per_ngram=8`
   - 128 个 ngram embedding shard 权重
 - `Qwen3.5-0.8B` 不含 PLE/Engram 表，因此之前真实模型 A/B 仍属于“普通 input embedding 磁盘替换”，不是真实 PLE 语义。
+
+# Session 20 复盘（2026-08-30 后段：系统性思考与真实 PLE 路径）
+
+## 1. 为什么做这次系统性思考
+
+在完成可信基线和 bit-exact 后，需要回答：
+
+- 我们距离终极目标还有多远？
+- 哪些是真正的技术债，哪些只是“能跑”的噪音？
+- 应该先做什么，才能稳而不乱地接近目标？
+
+## 2. 关键结论
+
+- 终极目标不变：磁盘优先的确定性 n-gram/PLE 存储基础设施，像 DuckDB 之于分析数据库。
+- 当前最重要的缺口不是服务化，而是 **真实 PLE 数据面 + 可重叠的性能路径**。
+- Qwen3.5-0.8B 没有 PLE；真实 PLE 在 Qwen4Exp/Qwen3.8 中，路径已定位。
+- 当前 memory vs raw 差距中，很可能包含 Python adapter 同步开销，不能简单归因于磁盘慢。
+- LRU 目前没有命中率证据，短无复用场景下反而更慢。
+
+## 3. 已产出
+
+- `docs/roadmap.md` 新增第 14 节：
+  - 终极目标与验收指标
+  - 新技术债 V33–V43
+  - 第十轮借鉴矩阵
+  - Phase 0–5 开发计划与退出标准
+  - 五条稳定前进纪律
+
