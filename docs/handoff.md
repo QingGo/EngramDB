@@ -77,6 +77,8 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **CPU 小模型 E2E decode A/B 首曲线已获得（Session 16）**：`scripts/cpu_tiny_decode_ab.py`，memory vs disk raw vs disk LRU；原始磁盘约慢 16–24%，LRU 基本拉回。
   **真实 Qwen3.5-0.8B CPU E2E A/B 已跑通（Session 18）**：`scripts/qwen35_cpu_decode_ab.py`，模型软链于 `data/Qwen3.5-0.8B`；原始磁盘通常慢 20%+，LRU 在短序列下优势尚不明显。
     **可信 CPU decode 基线与真实权重 bit-exact 已闭环（Session 19）**：固定 seed/reps>=5/median+p90；`probes/cpu_tiny_baseline.csv`、`probes/qwen35_cpu_baseline.csv`、`scripts/decode_baseline_check.py` 已入库；`scripts/qwen35_bit_exact.py` 实机 `BIT_EXACT_PASS`；真实权重 store 下 Qwen3.5 raw 慢 13.0%、LRU 慢 19.2%。
+  **真实 PLE 自动发现已定位（Session 19 增补）**：`python/engramdb/ple_discovery.py` + `scripts/inspect_ple_attributes.py`；真 Qwen3.8/Qwen4Exp 的 PLE 表路径为 `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`，而 Qwen3.5-0.8B 没有 PLE。
+
 
 
 ## 4. 机器与资产（重要）

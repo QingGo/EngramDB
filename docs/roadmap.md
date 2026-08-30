@@ -577,3 +577,11 @@
 - V26 闭合：可信 CPU 基线已建立；仍需在更多序列长度/输入上积累。
 - V28 闭合：真实模型准备脚本已写。
 - V29/V30/V31/V32 仍开放。
+
+### 13.5 真实 PLE 自动发现（Session 19 增补）
+
+- 新增 `python/engramdb/ple_discovery.py` 与 `scripts/inspect_ple_attributes.py`。
+- 在真正的 Qwen3.8-Flash-Next / Qwen4Exp 模型中发现 PLE 表：
+  `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`。
+- 确认 Qwen3.5-0.8B 不含 PLE，后续真实 PLE 性能验证应使用 Qwen4Exp/Qwen3.8 真模型，而不是 0.8B 玩具。
+- V30 状态：已能自动发现真实 PLE 属性；下一步是使用该路径构造 disk-backed PLE adapter。

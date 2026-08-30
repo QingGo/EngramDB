@@ -1113,3 +1113,21 @@ GATE PASS: decode baseline thresholds satisfied
   - 把 bit-exact 直接合并进 A/B 脚本作为自动步骤；
   - vLLM/SGLang/llama.cpp serving 级 A/B；
   - v0.2.7 发布收编。
+
+# Session 19 增补（2026-08-30 后段：自动发现真实 PLE 表属性）
+
+在可信基线与 bit-exact 之后，补做了真实 PLE 元数据定位：
+
+- `python/engramdb/ple_discovery.py`：纯元数据发现模块，不加载权重；
+- `scripts/inspect_ple_attributes.py`：命令行快速检查真实模型是否含 PLE；
+- 在 `Qwen3.8-Flash-Next / Qwen4Exp`（`/Volumes/My Passport/qwen38-ple`）中发现真实 PLE：
+  - 属性路径：
+    `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_{shard}.weight`
+  - `ple_layer_ids=[2]`（权重层实际为 1，因内部索引偏移）
+  - `ple_embed_dim=2560`
+  - `ngram_size=3`
+  - `ngram_vocab_size_base=20000000`
+  - `split_ngram_parts=128`
+  - `heads_per_ngram=8`
+  - 128 个 ngram embedding shard 权重
+- `Qwen3.5-0.8B` 不含 PLE/Engram 表，因此之前真实模型 A/B 仍属于“普通 input embedding 磁盘替换”，不是真实 PLE 语义。

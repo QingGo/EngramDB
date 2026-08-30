@@ -313,3 +313,11 @@ feat(bench): add real-weight store fill and Qwen3.5 bit-exact check
 feat(scripts): add real Qwen3.5 model prep helper
 docs(session): record Session 19 trustworthy baseline and bit-exact progress
 ```
+
+## 8. Session 19 增补：真实 PLE 自动发现
+
+- 新增 `python/engramdb/ple_discovery.py`、`scripts/inspect_ple_attributes.py`。
+- 在 Qwen3.8-Flash-Next / Qwen4Exp 中定位真实 PLE：
+  - `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`
+  - `ple_embed_dim=2560`、`ngram_size=3`、`split_ngram_parts=128`、`heads_per_ngram=8`
+- Qwen3.5-0.8B 无 PLE，所以当前 A/B 是普通 embedding 替换，不是真实 PLE 语义。
