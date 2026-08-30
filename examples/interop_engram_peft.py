@@ -159,6 +159,71 @@ def self_check() -> None:
     store.close()
     print("self_check OK: disk-backed MultiHeadEmbedding matches in-memory indexing")
 
+def engram_layer_check() -> None:
+    """Run a real EngramLayer forward with the disk-backed MultiHeadEmbedding.
+
+    This exercises the actual engram_peft code path (EngramLayer -> gating ->
+    short_conv) while the embedding rows are read from an EngramDB Store.
+    """
+    # Python 3.10/3.11 compatibility: `typing.override` is only in 3.12+.
+    try:
+        import typing
+        import typing_extensions
+        if not hasattr(typing, "override"):
+            typing.override = typing_extensions.override
+    except Exception:
+        pass
+
+    try:
+        from engram_peft import EngramConfig, EngramLayer
+    except Exception as exc:  # pragma: no cover - optional dependency
+        print(f"engram_layer_check skipped (engram_peft unavailable: {exc})")
+        return
+
+    hidden_size = 32
+    embedding_dim = 64
+    ngram_sizes = [2, 3]
+    n_head_per_ngram = 2
+    total_heads = len(ngram_sizes) * n_head_per_ngram
+    per_head = embedding_dim // total_heads
+    primes = [4, 5, 7, 11]
+    total = sum(primes)
+    row_width = per_head * 4  # float32
+
+    store, directory = build_demo_store(total, row_width)
+    table = torch.arange(total * per_head, dtype=torch.float32).reshape(total, per_head)
+    with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+        for value in table.reshape(-1).tolist():
+            f.write(struct.pack("<f", value))
+
+    install_disk_multi_head_embedding(store)
+
+    config = EngramConfig(
+        hidden_size=hidden_size,
+        embedding_dim=embedding_dim,
+        ngram_sizes=ngram_sizes,
+        n_head_per_ngram=n_head_per_ngram,
+        target_layers=[0],
+        engram_vocab_size_per_ngram=[20, 20],
+        compressed_vocab_size=10,
+        pad_id=0,
+    )
+    layer = EngramLayer(config=config, layer_id=0, primes=primes, compressor=None)
+
+    hidden = torch.randn(2, 3, hidden_size)
+    hashes = torch.tensor(
+        [
+            [[0, 1, 2, 3], [1, 2, 3, 0], [2, 3, 0, 1]],
+            [[3, 0, 1, 2], [0, 1, 2, 3], [1, 2, 3, 0]],
+        ]
+    )
+    out = layer(hidden_states=hidden, engram_hash_indices=hashes)
+    assert out.shape == hidden.shape, (out.shape, hidden.shape)
+    store.close()
+    print("engram_layer_check OK: real EngramLayer forward with disk-backed embeddings")
+
+
 
 if __name__ == "__main__":
     self_check()
+    engram_layer_check()

@@ -278,6 +278,7 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 | S4-3 | 新增 `engramdb-python` C ABI cdylib | ✅ 构建通过 | 只依赖 workspace 已有 crate，无新增外部依赖 |
 | S4-4 | Python `engramdb.Store` / `View` ctypes 包装 | ✅ Store fetch 与 View read 冒烟通过 | 返回 bytes，Python 侧自行转 torch |
 | S4-5 | `examples/interop_engram_peft.py` 磁盘版 `DiskMultiHeadEmbedding` | ✅ self_check 通过 | 输出与直接查表逐元素一致 |
+| S4-6 | 真实 `EngramLayer` forward（Python 3.10 + torch 2.9 本地轮 + engram-peft 源码） | ✅ `engram_layer_check` 通过 | 磁盘版 MultiHeadEmbedding 已进入真实 Engram 层前向路径 |
 
 ## 3. 坑 / 环境注意
 
@@ -296,7 +297,7 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 
 ## 5. 下一步
 
-- 在可用 Python+torch 环境里导入真实 `engram-peft`，替换 `MultiHeadEmbedding` 后跑一个
-  小型 `EngramLayer` forward / 小模型生成。
+- 已跑通 `EngramLayer` 前向；下一步是加载一个小型 base model（如 TinyLlama），
+  通过 `get_engram_model` + 磁盘版 `MultiHeadEmbedding` 跑真实文本生成。
 - 之后再把 C ABI 升级为正式 PyO3 发布链，并接 vLLM/SGLang/llama.cpp 的兼容层。
 
