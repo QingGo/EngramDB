@@ -1,4 +1,4 @@
-//! P4 v2：Store-P 视图构建器 + 视图全表吞吐基准（真表，M1.5-B）。
+//! P4 v2/v4：Store-P 视图构建器 + 吞吐/延迟双基准（真表，M1.5-B）。
 //!
 //! build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 4096|2560]
 //!   真表行存储 → 物化视图：每 gram 16 头行（2560B）连续存入 slot（4096 = 4KB 对齐槽，
@@ -6,6 +6,10 @@
 //! bench <rows_dir> <view.bin> <keys.txt> [--threads 8 --iters 3]
 //!   路径 A（原始 16 行 scatter）+ 路径 B（视图单记录读）时间/吞吐/字节放大，
 //!   并按 P4 口径输出 CSV 行（name,rows,rows_per_s,mb_per_s,ampl）。
+//!
+//! lat <view.bin> [--sub N] [--threads 1|8] [--warm] [--slot B]
+//!   延迟分布：随机序单记录读，逐次独立计时 → p50/p95/p99/max/mean（μs）。
+//!   --warm 先全文件顺序预读（热档）；缺省即冷档（新进程 first-access）。
 //!
 //! 复现（P4 判定口径）：`p4view build data/real-rows <N> <view.bin> <keys.txt>`
 //! `p4view bench data/real-rows <view.bin> <keys.txt>`
@@ -31,6 +35,7 @@ fn main() {
     let out = match cmd.as_str() {
         "build" => cmd_build(args),
         "bench" => cmd_bench(args),
+        "lat" => cmd_lat(args),
         _ => Err(format!("unknown {cmd}")),
     };
     match out {
@@ -145,6 +150,118 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         view_out.display()
     );
     Ok(())
+}
+
+/// 延迟分布探针（P4 验收关键项）。
+/// 随机序单记录读 × N（每查独立计时）→ p50/p95/p99/max/mean（μs）。
+fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let mut threads: usize = 8;
+    let mut warm = false;
+    let mut sub_grams: usize = 0; // 0 = 全量
+    let mut slot_bytes: u64 = 0; // 0 = manifest
+    let mut it = rest;
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--threads" => threads = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--warm" => warm = true,
+            "--sub" => sub_grams = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--slot" => slot_bytes = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    if slot_bytes == 0 {
+        let mp = view_file.with_extension("manifest.json");
+        if mp.exists() {
+            let m: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&mp).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            slot_bytes = m["slot_bytes"].as_u64().unwrap_or(RECORD_BYTES);
+        } else {
+            slot_bytes = RECORD_BYTES;
+        }
+    }
+    let vf = std::fs::File::open(&view_file).map_err(|e| e.to_string())?;
+    let meta = vf.metadata().map_err(|e| e.to_string())?;
+    let n = (meta.len() / slot_bytes) as usize;
+    let n_grams = if sub_grams > 0 { n.min(sub_grams) } else { n };
+    if n_grams == 0 {
+        return Err("视图为空".into());
+    }
+    if warm {
+        // 全文件顺序预读（把文件全拉进页缓存）
+        let mut buf = vec![0u8; 8 << 20];
+        let mut off: u64 = 0;
+        let f = vf.try_clone().map_err(|e| e.to_string())?;
+        while off < meta.len() {
+            let want = (buf.len() as u64).min(meta.len() - off) as usize;
+            let rd = f.read_at(&mut buf[..want], off).map_err(|e| e.to_string())?;
+            if rd == 0 {
+                break;
+            }
+            off += rd as u64;
+        }
+    }
+    // 随机访问序（固定 seed，跨线程共享序列由各线程错位切片保持覆盖）
+    let order = rand_order(n_grams, 0xFEED_BEEF_0D0F_1E2C);
+    let view_ref = &vf;
+    let per_thread = |tid: usize| -> Vec<u32> {
+        let t = std::time::Instant::now();
+        let mut buf = vec![0u8; slot_bytes as usize];
+        let mut out = Vec::new();
+        let stride = order.len() / threads;
+        let lo = tid * stride;
+        let hi = if tid + 1 == threads { order.len() } else { lo + stride };
+        for &rec in &order[lo..hi] {
+            let t0 = std::time::Instant::now();
+            let _ = view_ref.read_exact_at(&mut buf, rec * slot_bytes);
+            let ns = t0.elapsed().as_nanos();
+            out.push(ns.min(u32::MAX as u128) as u32);
+        }
+        let _ = t;
+        out
+    };
+    let mut times: Vec<u32> = std::thread::scope(|sc| {
+        let mut h = Vec::new();
+        for tid in 0..threads {
+            h.push(sc.spawn(move || per_thread(tid)));
+        }
+        let mut all = Vec::with_capacity(n_grams);
+        for x in h {
+            all.extend(x.join().unwrap());
+        }
+        all
+    });
+    times.sort_unstable();
+    let p = |q: f64| -> f64 {
+        let idx = ((times.len() - 1) as f64 * q).round() as usize;
+        times[idx] as f64
+    };
+    let mean = times.iter().map(|&x| x as f64).sum::<f64>() / times.len() as f64;
+    let (p50, p95, p99, mx) = (p(0.50), p(0.95), p(0.99), times.last().copied().unwrap_or(0) as f64);
+    let us = |ns: f64| ns / 1000.0;
+    println!(
+        "lat: n={n_grams} slot={slot_bytes} threads={threads} {} [μs] p50={:.2} p95={:.2} p99={:.2} max={:.2} mean={:.2}",
+        if warm { "warm" } else { "cold" },
+        us(p50), us(p95), us(p99), us(mx), us(mean)
+    );
+    println!("latency_us,p50,p95,p99,max,mean,{},{},{},{},{}
+", us(p50), us(p95), us(p99), us(mx), us(mean));
+    Ok(())
+}
+
+fn rand_order(n: usize, seed: u64) -> Vec<u64> {
+    let mut st = seed;
+    let mut v: Vec<u64> = (0..n as u64).collect();
+    // Fisher-Yates（xorshift64）
+    for i in (1..n).rev() {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        let j = (st % (i as u64 + 1)) as usize;
+        v.swap(i, j);
+    }
+    v
 }
 
 fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
