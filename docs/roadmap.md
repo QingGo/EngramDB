@@ -226,8 +226,8 @@
 1. ✅ 发 `0.2.1`：PageReader / PleDiskGather / 多平台 wheel。
 2. ✅ 增加 Python CI smoke。
 3. ✅ 实现 `IoUringPageReader`（Linux）。
-4. 准备 SGLang 替换 patch。
-5. 准备 vLLM 插件原型。
+4. 🔶 准备 SGLang 替换 patch：已有 `SGLangPageReader` 和 patch sketch，待上游源码/实机验证。
+5. 🔶 准备 vLLM 插件原型：已有 `DiskPleEmbedding` / `patch_named_embedding`，待接入真实模型验证。
 6. 在目标硬件跑真实 PLE 端到端。
 7. 性能优化放在端到端验证之后。
 
