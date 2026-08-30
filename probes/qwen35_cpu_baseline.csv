@@ -1,4 +1,4 @@
-label,cache_size,seed,reps,new_tokens,median_s,p90_s,mean_s,min_s,max_s,median_tok_s,p90_tok_s,mean_tok_s,best_tok_s,worst_tok_s,raw_slowdown,lru_slowdown
-memory,0,42,5,8,1.704703,1.724828,1.697714,1.655481,1.724900,4.692901,4.638144,4.712218,4.832432,4.637949,0.130372,0.191790
-disk-raw-cache0,0,42,5,8,1.926948,2.397445,2.049277,1.754451,2.694496,4.151644,3.336886,3.903815,4.559831,2.969015,0.130372,
-disk-lru-cache4096,4096,42,5,8,2.031647,2.227748,2.081985,1.941727,2.300878,3.937692,3.591070,3.842487,4.120043,3.476934,,0.191790
+label,cache_size,seed,reps,new_tokens,host,platform,python,torch,store_path,median_s,p90_s,mean_s,min_s,max_s,median_tok_s,p90_tok_s,mean_tok_s,best_tok_s,worst_tok_s,calls,hits,misses,hit_rate,inserts,evictions,fetch_ms,convert_ms,raw_slowdown,lru_slowdown
+memory,0,42,5,8,DESKTOP-VI1IC4Q,Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39,3.12.3,2.13.0+cu130,,2.048961,2.374145,2.082829,1.731020,2.521987,3.904418,3.369634,3.840930,4.621552,3.172101,,,,,,,,,0.000000,0.000000
+disk-raw-cache0,0,42,5,8,DESKTOP-VI1IC4Q,Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39,3.12.3,2.13.0+cu130,/tmp/qwen35-real-store,1.784059,1.995278,1.817018,1.554394,2.006422,4.484156,4.009467,4.402819,5.146699,3.987197,40.000000,0.000000,60.000000,0.000000,0.000000,0.000000,25.169995,1.280800,0.000000,
+disk-lru-cache4096,4096,42,5,8,DESKTOP-VI1IC4Q,Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39,3.12.3,2.13.0+cu130,/tmp/qwen35-real-store,1.971413,2.534283,2.024168,1.551785,2.632059,4.058004,3.156711,3.952240,5.155353,3.039445,40.000000,53.000000,7.000000,0.883333,7.000000,0.000000,2.367000,1.153800,,0.000000

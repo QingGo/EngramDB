@@ -10,6 +10,7 @@ example ``embed_tokens_per_layer`` on Qwen/Gemma-style models).
 from __future__ import annotations
 
 from collections import OrderedDict
+import time
 from typing import Any
 
 try:
@@ -50,6 +51,31 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.cache_size = int(cache_size)
         self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
         self._cache: OrderedDict[int, bytes] = OrderedDict()
+        self._stats: dict[str, float] = {
+            "calls": 0.0,
+            "hits": 0.0,
+            "misses": 0.0,
+            "inserts": 0.0,
+            "evictions": 0.0,
+            "fetch_s": 0.0,
+            "convert_s": 0.0,
+        }
+
+    def reset_stats(self) -> None:
+        """Reset performance counters used by A/B benchmarks."""
+        self._stats = {
+            "calls": 0.0,
+            "hits": 0.0,
+            "misses": 0.0,
+            "inserts": 0.0,
+            "evictions": 0.0,
+            "fetch_s": 0.0,
+            "convert_s": 0.0,
+        }
+
+    def get_stats(self) -> dict[str, float]:
+        """Return a copy of the performance counters."""
+        return dict(self._stats)
 
     def _get_missing(self, flat: list[int]) -> dict[int, bytes]:
         """Fetch uncached rows in batch and return a rowid -> bytes map.
@@ -61,12 +87,19 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         missing: list[int] = []
         seen: set[int] = set()
         for r in flat:
+            if r in self._cache:
+                self._stats["hits"] += 1.0
+            else:
+                self._stats["misses"] += 1.0
             if r not in self._cache and r not in seen:
                 seen.add(r)
                 missing.append(r)
+        self._stats["calls"] += 1.0
         if not missing:
             return {}
+        t0 = time.perf_counter()
         raw = self.store.fetch(missing)
+        self._stats["fetch_s"] += time.perf_counter() - t0
         expected = len(missing) * self.row_bytes
         if len(raw) != expected:
             raise RuntimeError(
@@ -77,8 +110,10 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             fetched[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
         if self.cache_size > 0:
             self._cache.update(fetched)
+            self._stats["inserts"] += float(len(fetched))
             while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
+                self._stats["evictions"] += 1.0
         return fetched
 
     def forward(self, indices: Any) -> Any:
@@ -86,6 +121,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             raise RuntimeError("DiskPleEmbedding.forward requires PyTorch")
         flat = indices.reshape(-1).cpu().tolist()
         fetched = self._get_missing(flat)
+        t0 = time.perf_counter()
         if self.cache_size <= 0:
             # Raw no-cache path: every requested row is in `fetched` because the
             # cache is intentionally empty on every call.
@@ -100,6 +136,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
                 f"{expected * self.dtype.itemsize}"
             )
         data = torch.frombuffer(bytearray(raw), dtype=self.dtype)
+        self._stats["convert_s"] += time.perf_counter() - t0
         return data.reshape(*indices.shape, self.embedding_dim)
 
 
