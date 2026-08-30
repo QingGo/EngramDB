@@ -66,6 +66,15 @@ impl IoBackend for PreadvBackend {
 pub trait IoBackend: Send + Sync + 'static {
     fn read_exact_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<()>;
     fn read_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<usize>;
+
+    /// 批量定位读（默认逐条回退——逐条语义等价，覆盖者可批式提交）。
+    /// 每个 req 必须以 `read_exact_at` 语义填满（长度不足报错）。
+    fn read_many(&self, f: &File, reqs: &mut [(u64, &mut [u8])]) -> io::Result<()> {
+        for (off, buf) in reqs.iter_mut() {
+            self.read_exact_at(f, buf, *off)?;
+        }
+        Ok(())
+    }
 }
 
 /// 平台默认后端。**保持 preadv**（可插拔实验：显式传 UringBackend）。
@@ -83,6 +92,86 @@ pub fn default_backend() -> Box<dyn IoBackend> {
 /// 展开），完全批量化（一次 submit N 个 SQE）留 batch API 演进（M1.5+）。
 #[cfg(target_os = "linux")]
 pub struct UringBackend;
+
+/// 批量 io_uring 后端：read_many = 一次 submit N SQE + 整体 wait（逐请求 user_data 索回）。
+/// M2 的"正路"实现——per-call UringBackend 已被 benchmark 判为无增益（-17%）。
+#[cfg(target_os = "linux")]
+pub struct UringBatchBackend;
+
+#[cfg(target_os = "linux")]
+impl IoBackend for UringBatchBackend {
+    fn read_exact_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<()> {
+        platform_read_exact_at(f, buf, off)
+    }
+    fn read_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+        platform_read_at(f, buf, off)
+    }
+    fn read_many(&self, f: &File, reqs: &mut [(u64, &mut [u8])]) -> io::Result<()> {
+        let _ = uring_batch_read(f, reqs)?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn uring_batch_read(f: &File, reqs: &mut [(u64, &mut [u8])]) -> io::Result<usize> {
+    const DEPTH: u32 = 256;
+    use std::os::fd::AsRawFd;
+    URING.with(|sl| {
+        let mut r = sl.borrow_mut();
+        if r.is_none() {
+            let ring = io_uring::IoUring::new(DEPTH)
+                .map_err(|e| io::Error::other(format!("IoUring::new: {e}")))?;
+            *r = Some(ring);
+        }
+        let ring = r.as_mut().unwrap();
+        let fd = f.as_raw_fd();
+        let mut total = 0usize;
+        for chunk in reqs.chunks_mut(DEPTH as usize) {
+            let expect: Vec<(usize, usize)> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, (_, b))| (i, b.len()))
+                .collect();
+            for (i, (off, buf)) in chunk.iter_mut().enumerate() {
+                let sqe = io_uring::opcode::Read::new(
+                    io_uring::types::Fd(fd),
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
+                )
+                .offset(*off);
+                let sqe = sqe.build().user_data(i as u64);
+                unsafe {
+                    ring.submission()
+                        .push(&sqe)
+                        .map_err(|e| io::Error::other(format!("SQ push: {e}")))?;
+                }
+            }
+            let n = chunk.len() as u32;
+            ring.submit_and_wait(n)
+                .map_err(|e| io::Error::other(format!("submit_and_wait: {e}")))?;
+            for _ in 0..n {
+                let cqe = ring
+                    .completion()
+                    .next()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "no cqe"))?;
+                let res = cqe.result();
+                let idx = cqe.user_data() as usize;
+                let elen = expect.get(idx).map(|x| x.1).unwrap_or(0);
+                if res < 0 {
+                    return Err(io::Error::from_raw_os_error(-res));
+                }
+                if (res as usize) != elen {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("read_many: short read {res} < {elen}"),
+                    ));
+                }
+                total += res as usize;
+            }
+        }
+        Ok(total)
+    })
+}
 
 #[cfg(target_os = "linux")]
 thread_local! {

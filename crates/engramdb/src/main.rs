@@ -547,6 +547,8 @@ fn backend_for(name: Option<String>) -> Result<Box<dyn IoBackend>, String> {
         None | Some("preadv") => Ok(default_backend()),
         #[cfg(target_os = "linux")]
         Some("uring") => Ok(Box::new(engramdb_io::backend::UringBackend)),
+        #[cfg(target_os = "linux")]
+        Some("uring-batch") => Ok(Box::new(engramdb_io::backend::UringBatchBackend)),
         #[cfg(not(target_os = "linux"))]
         Some("uring") => Err("uring 后端仅 Linux 可用（当前平台不可用）".into()),
         Some(other) => Err(format!("unknown backend: {other}")),
