@@ -313,8 +313,8 @@
 | V9 | 服务原为 JSON + base64，不是真正二进制 Arrow IPC wire | 已新增 length-prefix binary protocol + `EngramDBClient`，`fetch_raw`/`fetch_arrow` 均可裸字节返回 | 继续做连接复用、认证、线程安全句柄与性能门禁 |
 | V10 | GPU 路径被 torch/Pascal 兼容性卡住 | GTX1070 sm_61 与 vLLM/SGLang 当前 torch cu130/cu128 不兼容 | 换 cu121/cu126 老 torch 或走 llama.cpp/CPU 完成 E2E |
 | V11 | 小文件冷读多线程反而更慢 | 8t 冷顺序 49MB/s < 1t 786MB/s | 冷读需要顺序流调度，不能盲目并行；大表/真实介质再定 |
-| V12 | 多表/服务只是 Python 原型，Rust CLI/格式未收敛 | 缺少 table_id、manifest、CLI serve | 下一阶段把 table_id/serve 收敛到 Rust，Python 只做薄封装 |
-| V13 | 自 v0.2.4 后有实质代码变更（LRU、服务、多表），未发布 | 当前 master 领先 PyPI | 准备 v0.2.5，增强 release preflight 和 Python 新模块 smoke |
+| V12 | 多表/服务 Python 原型开始向 Rust 收敛；首批 `tables` + JSON `serve` 已落地 | Rust 仍缺 Arrow IPC、Unix socket、table_id 深度、manifest 完整性校验 | 继续在 Rust 侧补齐服务化与多表产品面 |
+| V13 | v0.2.5 已发布 | ✅ PyPI/GitHub Release 已包含新功能 | 后续版本继续走 bump + preflight 流水线 |
 | V14 | 首未命中仍走 raw disk，未做预热/Tier | LRU 只解决热重复访问 | 增加 Tier 缓存、PREFETCH/WARM、冷启动调度 |
 | V15 | 模型类/属性名仍靠手填 | 只有 `Qwen3ForCausalLM` / `model.embed_tokens` 等已知样例 | 按模型 config 自动发现 PLE 属性，或提供配置映射/entry-point |
 
@@ -331,18 +331,18 @@
 
 ### 10.4 下一阶段计划（v0.3→v0.4 修正版）
 
-1. **发布 v0.2.5（接近就绪）**
-   - 包含 LRU、多表、Arrow helpers、JSON + 二进制最小服务；
-   - Python wheel smoke 扩展已完成：Database / Arrow（可选）/ server / LRU，并已加入 CI；
-   - 保持 Rust 存储核心不变。
+1. **发布 v0.2.5（已完成）**
+   - ✅ PyPI 已发布，macOS/Windows/Linux wheel 构建与安装 smoke 通过；
+   - Python wheel smoke 扩展已完成：Database / Arrow / server / LRU，并已加入 CI。
 
 2. **真实 PLE 端到端性能闭环（V4/V10）**
-   - 优先 CPU 完整 serving 的 tok/s A/B（小模型 + 真实 PLE 表或大合成表）；
+   - ✅ 已获得 CPU 小模型首批端到端 decode 曲线（`scripts/cpu_tiny_decode_ab.py`）；
+   - 继续：CPU 完整 serving（vLLM/SGLang）或更高保真大模型 A/B；
    - 其次尝试 GTX1070 可用 torch（cu121/cu126）下的 GPU A/B；
    - 若 GPU 不可行，以 llama.cpp CPU/GPU 路径作为替代验收。
 
 3. **服务化/多表/Arrow 从原型变产品**
-   - Rust 侧：多表 table_id、manifest 完整性、Unix socket serve；
+   - Rust 侧：首批 `tables` + JSON `serve` 已落地；继续补 table_id、manifest 完整性、Arrow IPC、Unix socket；
    - Python 侧：二进制 Arrow IPC wire 已落地，继续做连接复用、线程安全句柄、认证；
    - 性能门禁：embedded vs server ≤2%（≤32KB 批往返）。
 

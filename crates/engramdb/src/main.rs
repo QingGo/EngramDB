@@ -23,6 +23,7 @@ use engramdb_io::backend::{default_backend, IoBackend};
 use engramdb_io::batch::BadgeGather;
 use engramdb_io::view;
 
+mod serve;
 mod workload;
 
 use workload::{gen_tokens, AgentStats, Mode};
@@ -58,7 +59,7 @@ fn layout_for_dir(dir: &Path) -> Result<Layout, String> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
-        println!("usage: engramdb <build|index|gather|verify|bench-real|warm> [args...]");
+        println!("usage: engramdb <build|index|gather|verify|bench-real|warm|view|prep|tables|serve> [args...]");
         return;
     };
     let rest = args;
@@ -71,6 +72,8 @@ fn main() {
         "warm" => cmd_warm(rest),
         "view" => cmd_view(rest),
         "prep" => cmd_prep(rest),
+        "tables" => cmd_tables(rest),
+        "serve" => cmd_serve(rest),
         _ => Err(format!("unknown command: {cmd}")),
     };
     if let Err(e) = out {
@@ -477,6 +480,39 @@ fn cmd_prep(rest: impl Iterator<Item = String>) -> Result<(), String> {
 }
 
 /// 读取 np.save 原生 u32 数组（P2 语料导出格式，与 p2rowid 同源）。
+
+/// tables <root>：列出多表根目录下的所有 EngramDB 表。
+fn cmd_tables(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let root = PathBuf::from(rest.next().ok_or("需要 <root>")?);
+    let tables = serve::list_tables(&root)?;
+    let out = serde_json::json!({ "tables": tables });
+    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    Ok(())
+}
+
+/// serve <root> [--host 127.0.0.1] [--port 8765]：最小 JSON TCP 服务。
+/// 支持 ping / list_tables / fetch（多表按目录解析，优先读 manifest）。
+fn cmd_serve(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let root = PathBuf::from(rest.next().ok_or("需要 <root>")?);
+    let mut host = "127.0.0.1".to_string();
+    let mut port: u16 = 8765;
+    let mut it = rest;
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--host" => host = it.next().ok_or("host 值")?,
+            "--port" => {
+                port = it
+                    .next()
+                    .ok_or("port 值")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            other => return Err(format!("未知参数 {other}")),
+        }
+    }
+    serve::run(&root, &host, port)
+}
+
 fn read_tokens_npy(path: &Path) -> Result<Vec<u32>, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
     if data.len() < 8 || &data[0..6] != b"\x93NUMPY" {

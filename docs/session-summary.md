@@ -1,7 +1,7 @@
 # 本 Session 综合整理（2026-08-30 后段）
 
 > 本文件是对本轮主要工作的单一入口摘要。详细分 session 复盘见
-> `docs/session-log.md` Session 8–15；战略复盘与债务表见
+> `docs/session-log.md` Session 8–16；战略复盘与债务表见
 > `docs/roadmap.md` Section 10。
 
 ## 1. 尝试过什么
@@ -25,6 +25,9 @@
 | 15 | 实现 Arrow Table / IPC helper | ✅ |
 | 16 | 实现最小 TCP/JSON 服务 + `fetch_arrow` | ✅ smoke 通过 |
 | 17 | 实现二进制 length-prefix 服务 + `EngramDBClient` | ✅ smoke 通过 |
+| 18 | 验证 PyPI 上真实的 `engramdb-python==0.2.5` macOS wheel | ✅ 安装+smoke 全绿 |
+| 19 | Rust 侧首批多表 / manifest / `serve` 收敛 | ✅ `tables` + JSON `serve` 可用 |
+| 20 | CPU 小模型端到端 decode A/B（memory vs disk raw vs LRU） | ✅ 首次拿到曲线 |
 
 ## 2. 踩过的坑
 
@@ -119,24 +122,24 @@ SERVICE_SMOKE_OK
 | V9 | 服务已有二进制 Arrow IPC wire（length-prefix），但尚无连接复用/认证/线程安全句柄 | 二进制数据传输面已闭环，生产级服务面仍待做 |
 | V10 | GPU 路径被 torch/Pascal 兼容性卡住 | GTX1070 sm_61 无法使用当前 cu130/cu128 |
 | V11 | 小文件冷读多线程反而更慢 | 冷读需要顺序流调度，不能盲目并行 |
-| V12 | 多表/服务只是 Python 原型 | Rust CLI、manifest、table_id、serve 未收敛 |
-| V13 | 自 v0.2.4 后有实质代码变更但未发布 | 新功能未进入 PyPI |
+| V12 | 多表/服务 Python 原型已开始向 Rust 收敛；Rust `tables`/`serve` 首批可用 | 尚缺 Arrow IPC、Unix socket、table_id 深度、完整性校验 |
+| V13 | v0.2.5 已发布 | ✅ PyPI/GitHub Release 已包含新功能 |
 | V14 | 首未命中仍走 raw disk | LRU 只解决热路径，冷启动/预热/Tier 未做 |
 | V15 | 模型 PLE 属性仍靠手填 | 需要自动发现或配置映射 |
-| V4 | 完整 decode tok/s A/B 未闭环 | 最大悬空性能门禁 |
+| V4 | 完整服务引擎 decode A/B 未闭环，但 CPU 小模型首条 E2E 曲线已获得 | 继续向 vLLM/SGLang serving 收敛 |
 
 ## 5. 计划要完成的部分
 
 ### 近期
 
-1. 发布 v0.2.5，包含 LRU、多表、Arrow helpers、JSON + 二进制最小服务。
+1. ~~发布 v0.2.5~~ → 已完成（PyPI + GitHub Release）。
 2. ~~扩展 Python wheel smoke，覆盖 Database / Arrow / server / LRU~~ → 已完成，并进入 CI。
-3. CPU 完整 serving 做 PLE decode A/B。
+3. CPU 小模型 E2E decode A/B 已获得首批曲线；继续做 vLLM/SGLang serving 或更高保真 CPU 基准。
 4. 尝试兼容 GTX1070 的 torch 构建做 GPU A/B。
 
 ### 中期
 
-5. Rust 侧多表 table_id、manifest 完整性、`serve`。
+5. Rust 侧首批多表/`serve` 已落地；继续补 table_id、manifest 完整性、Arrow IPC、Unix socket。
 6. 服务在已有二进制 Arrow IPC wire 基础上继续做连接复用、认证、线程安全句柄、性能门禁。
 7. 冷读顺序流调度与 `StreamingPlanner` / Tier 预取打通。
 8. 自动发现模型 PLE 属性。

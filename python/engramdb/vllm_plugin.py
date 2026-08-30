@@ -51,8 +51,13 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
         self._cache: OrderedDict[int, bytes] = OrderedDict()
 
-    def _get_missing(self, flat: list[int]) -> None:
-        """Fetch uncached rows in batch and store them in the LRU cache."""
+    def _get_missing(self, flat: list[int]) -> dict[int, bytes]:
+        """Fetch uncached rows in batch and return a rowid -> bytes map.
+
+        When ``cache_size`` is positive, the rows are also stored in the LRU
+        cache.  A cache size of zero intentionally disables caching, which is
+        useful for raw-disk A/B benchmarks.
+        """
         missing: list[int] = []
         seen: set[int] = set()
         for r in flat:
@@ -60,24 +65,33 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
                 seen.add(r)
                 missing.append(r)
         if not missing:
-            return
+            return {}
         raw = self.store.fetch(missing)
         expected = len(missing) * self.row_bytes
         if len(raw) != expected:
             raise RuntimeError(
                 f"EngramDB fetch returned {len(raw)} bytes, expected {expected}"
             )
+        fetched: dict[int, bytes] = {}
         for i, rowid in enumerate(missing):
-            self._cache[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
-            if len(self._cache) > self.cache_size:
+            fetched[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
+        if self.cache_size > 0:
+            self._cache.update(fetched)
+            while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
+        return fetched
 
     def forward(self, indices: Any) -> Any:
         if torch is None:
             raise RuntimeError("DiskPleEmbedding.forward requires PyTorch")
         flat = indices.reshape(-1).cpu().tolist()
-        self._get_missing(flat)
-        raw = b"".join(self._cache[r] for r in flat)
+        fetched = self._get_missing(flat)
+        if self.cache_size <= 0:
+            # Raw no-cache path: every requested row is in `fetched` because the
+            # cache is intentionally empty on every call.
+            raw = b"".join(fetched[r] for r in flat)
+        else:
+            raw = b"".join(self._cache[r] for r in flat)
         expected = int(indices.numel()) * self.embedding_dim
 
         if len(raw) != expected * self.dtype.itemsize:

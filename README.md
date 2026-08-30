@@ -300,6 +300,7 @@ EngramDB/
 - `scripts/vllm_embedding_ab.py` —— vLLM 真实类内存/磁盘 embedding A/B
 - `scripts/wsl_cold_view_bench.py` —— 冷缓存顺序/随机视图 A/B
 - `scripts/service_smoke.py` —— 多表 + Arrow IPC + JSON/二进制最小服务 smoke
+- `scripts/cpu_tiny_decode_ab.py` —— CPU 小模型 memory / disk raw / disk LRU 端到端 decode A/B
 
 ---
 

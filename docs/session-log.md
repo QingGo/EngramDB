@@ -836,3 +836,65 @@ SERVICE_SMOKE_OK
   - Rust 侧线程安全句柄（V8）
   - `EngramDBBinaryServer` 性能门禁（embedded vs server ≤2%）
   - Rust 多表 / manifest / serve（V12）
+
+# Session 16 复盘（2026-08-30 后段：v0.2.5 实 wheel + Rust serve + CPU E2E A/B）
+
+## 1. v0.2.5 真实 wheel 验证
+
+- PyPI 已发布 `engramdb-python==0.2.5`（publish-pypi workflow 成功）。
+- 在本机使用 Python 3.12 安装 macOS x86_64 wheel：
+  - 版本 `0.2.5`
+  - PyO3 原生绑定
+  - `Database` / `EngramDBServer` / `EngramDBBinaryServer` / `EngramDBClient` 均可用
+- 在安装 wheel 后运行：
+  - `scripts/python_wheel_smoke.py`：通过（含 Database、JSON server、Arrow）
+  - `scripts/service_smoke.py`：通过（含二进制 `fetch_raw` / `fetch_arrow`）
+- 结论：v0.2.5 发布产物真实可安装、可运行。
+
+## 2. Rust 侧多表 / manifest / serve 收敛（第一批）
+
+新增 `crates/engramdb/src/serve.rs` 与 CLI 子命令：
+
+- `engramdb tables <root>`：扫描多表根目录，列出含 manifest 或 shard 文件的表。
+- `engramdb serve <root> --host 127.0.0.1 --port 8765`：
+  - 最小 JSON TCP 服务；
+  - `ping` / `list_tables` / `fetch`；
+  - `fetch` 优先读取表目录中的 `manifest.json` 推断布局，缺失时接受请求参数。
+- 单元测试：base64 编码、空目录表列举。
+- 本地端到端验证：
+  - `tables` 正确列出 `alpha`
+  - `serve` 的 `ping` / `list_tables` / `fetch` 均返回正确数据
+  - 带 manifest 的表可以只传 table+rowids，不需要手动传 layout 参数
+
+这是 Rust 侧多表/服务化的第一批收敛；后续继续做 Arrow IPC、Unix socket、线程安全句柄、完整性校验。
+
+## 3. CPU 端到端 decode A/B（第一版）
+
+在 WSL + vLLM venv 中创建极小的 Qwen3 模型：
+
+- hidden=32，vocab=128，1 层，max_position_embeddings=128
+- 将输入 embedding 替换为 `DiskPleEmbedding`（磁盘 Store）
+- 使用 `model.generate` 跑真实 prefill + decode
+
+新增复现脚本：`scripts/cpu_tiny_decode_ab.py`
+
+多次运行代表性结果（96/128 tokens，CPU，WSL）：
+
+| 实现 | tok/s 范围 | 相对 memory |
+|---|---|---|
+| memory embedding | 253–603 | 1.00× |
+| disk raw（cache=0） | 213–490 | 约 0.76–0.84× |
+| disk LRU（cache=4096） | 249–488 | 约 0.79–1.03× |
+
+结论：
+
+- 首次拿到 CPU 小模型端到端 decode 曲线，不再是单纯 embedding micro A/B。
+- 原始磁盘路径在无缓存时约慢 16–24%；
+- LRU 热路径基本拉回内存水平，波动主要来自 WSL/CPU 噪声；
+- 仍不是 vLLM/SGLang 完整 serving 基准，下一步继续朝真实服务引擎收敛。
+
+## 4. 顺手修复
+
+- `DiskPleEmbedding` 现在允许 `cache_size=0`：
+  - 之前 `cache_size=0` 会先写入 LRU 后立即淘汰，导致 forward 取缓存时 KeyError；
+  - 修复后 `cache_size=0` 显式走 raw no-cache 路径，可用于 A/B 和调试。
