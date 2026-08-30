@@ -187,6 +187,9 @@ if not _USING_PYO3:
             _USING_CTYPES = True
 
 
+from .tables import Database
+
+
 def __repr__() -> str:
     backend = "pyo3" if _USING_PYO3 else ("ctypes" if _USING_CTYPES else "unavailable")
     return f"<engramdb {__version__} {backend} bindings>"

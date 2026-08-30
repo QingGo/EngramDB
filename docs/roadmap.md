@@ -275,6 +275,6 @@
 2. ✅ **真实引擎接入（功能面）**：已完成（Session 9），vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均验证通过；剩余为完整 serving + 性能 A/B。
 3. **端到端性能**：CPU 小模型 PLE decode ≥50 tok/s，或 GPU A/B ≤5%。
 4. ✅ **顺序化视图 / 访问序调度（核心验证）**：已完成冷盘 A/B（Session 11），1 线程 786 vs 86 MB/s，约 9.1×；下一步做真实大表冷态复测和多线程冷读调度。
-5. **存储产品化**：多表、manifest 完整性、服务化/Arrow IPC、CLI 收敛。
+5. ✅ **存储产品化（原型）**：多表 `Database`、Arrow helpers、最小 TCP/JSON 服务已落地并 smoke 通过（Session 14）；下一步做 Arrow IPC wire、并发/认证、CLI 收敛。
 6. **发布自动化加固**：release-assets 资产断言、全平台 wheel 自动验证、版本/文档同步检查。
 

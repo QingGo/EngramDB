@@ -737,3 +737,44 @@ SGLANG_PLE_VERIFY_OK
 - 没有 Tier/TTL 策略，只有固定行数 LRU；
 - 尚未做完整 decode tok/s；
 - GPU 路径仍受 GTX1070 sm_61 兼容性限制。
+
+# Session 14 复盘（2026-08-30 后段：多表 + Arrow + 最小服务原型）
+
+## 1. 目标
+
+把“服务化、多表、Arrow IPC”从纯路线图落到可运行原型。
+
+## 2. 新增模块
+
+| 模块 | 作用 |
+|---|---|
+| `python/engramdb/tables.py` | `Database`：多表目录注册、`list_tables`、按表 `fetch` |
+| `python/engramdb/arrow_utils.py` | `store_fetch_arrow` / `view_read_arrow` / `table_to_ipc_bytes`（可选 pyarrow） |
+| `python/engramdb/server.py` | 最小 TCP/JSON 服务：`ping` / `list_tables` / `fetch` / `view_read` |
+| `scripts/service_smoke.py` | 多表 + Arrow IPC + 服务端到端 smoke |
+
+## 3. 关键实现约束
+
+- PyO3 的 `Store` 是 `unsendable`，不能跨线程共享。
+- 因此服务端 `Database.fetch` 每次在当前线程新开 `Store`，用完即关。
+- 这是“每请求独立 store”的原型权衡；后续如果要共享连接，需要 Rust 侧提供可跨线程的安全句柄或线程池。
+
+## 4. 验证结果
+
+```text
+Database OK: ['alpha', 'beta'] b'\x01...'
+Arrow OK: 2 ['rowid', 'row'] ipc_bytes 416
+Server OK: ping / list_tables / fetch 全部通过
+SERVICE_SMOKE_OK
+```
+
+## 5. 状态
+
+- 多表：✅ 原型可用
+- Arrow IPC：✅ 可生成 pyarrow Table 和 IPC bytes
+- 服务化：✅ 最小 TCP/JSON 服务可跑
+- 待做：
+  - 真正的 Arrow IPC wire protocol（当前服务仍返回 JSON+base64）
+  - 认证/并发/连接复用
+  - 调度、预取、stats 遥测
+  - 与 vLLM/SGLang 真正通过服务读取 PLE（当前仍是嵌入式直接调用）
