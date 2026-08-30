@@ -78,7 +78,15 @@ def test_store_and_vllm_gather() -> None:
 
 
 def main() -> None:
-    assert engramdb.__version__.startswith("0.2.1"), engramdb.__version__
+    from importlib.metadata import version as _dist_version
+
+    try:
+        dist_version = _dist_version("engramdb-python")
+    except Exception:
+        dist_version = engramdb.__version__
+    assert engramdb.__version__ == dist_version, (
+        f"module {engramdb.__version__} != dist {dist_version}"
+    )
     # Importing every public integration surface catches missing/renamed symbols.
     from engramdb.vllm import PleDiskGather  # noqa: F401
     from engramdb import sglang  # noqa: F401
