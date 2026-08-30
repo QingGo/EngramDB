@@ -81,44 +81,51 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let layout = lay();
     let batch = BadgeGather::open(&rows_dir, &layout).map_err(|e| e.to_string())?;
 
+    // 流式分块构建（内存受限）：每 chunk 500K grams；rng 状态跨 chunk 连续
+    const CHUNK_G: usize = 500_000;
     let spec = engramdb_keygen::PleSpec::real();
     let mut rng_state: u64 = 0xDEAD_BEEF_1234_5678;
     let mut keys_file = File::create(&keys_out).map_err(|e| e.to_string())?;
     let mut view = File::create(&view_out).map_err(|e| e.to_string())?;
-    let mut rowids = Vec::with_capacity(n * 16);
-    for _ in 0..n {
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let a = (rng_state % 248_320) as u32;
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let b = (rng_state % 248_320) as u32;
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let c = (rng_state % 248_320) as u32;
-        let ids = spec.rowids_for_seq(&[a, b, c]);
-        for &r in &ids[0] {
-            rowids.push(r as u64);
-        }
-    }
-    let mut out = vec![0u8; rowids.len() * ROW_BYTES as usize];
     let t0 = std::time::Instant::now();
-    batch
-        .gather_pp(&rowids, &mut out, 8)
-        .map_err(|e| e.to_string())?;
     let mut slot = vec![0u8; slot_bytes as usize];
-    for i in 0..n {
-        let rec = &out[i * 16 * ROW_BYTES as usize..(i + 1) * 16 * ROW_BYTES as usize];
-        slot[..rec.len()].copy_from_slice(rec);
-        view.write_all(&slot).map_err(|e| e.to_string())?;
+    let mut done = 0usize;
+    while done < n {
+        let m = CHUNK_G.min(n - done);
+        let mut rowids = Vec::with_capacity(m * HEAD_W as usize);
+        for _ in 0..m {
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let a = (rng_state % 248_320) as u32;
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let b = (rng_state % 248_320) as u32;
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let c = (rng_state % 248_320) as u32;
+            let ids = spec.rowids_for_seq(&[a, b, c]);
+            for &r in &ids[0] {
+                rowids.push(r as u64);
+            }
+        }
+        let mut out = vec![0u8; rowids.len() * ROW_BYTES as usize];
+        batch
+            .gather_pp(&rowids, &mut out, 8)
+            .map_err(|e| e.to_string())?;
+        for i in 0..m {
+            let rec = &out[i * 16 * ROW_BYTES as usize..(i + 1) * 16 * ROW_BYTES as usize];
+            slot[..rec.len()].copy_from_slice(rec);
+            view.write_all(&slot).map_err(|e| e.to_string())?;
+        }
+        for &r in &rowids {
+            writeln!(keys_file, "{r}").map_err(|e| e.to_string())?;
+        }
+        done += m;
     }
     let build_s = t0.elapsed().as_secs_f64();
-    for &r in &rowids {
-        writeln!(keys_file, "{r}").map_err(|e| e.to_string())?;
-    }
     view.sync_all().map_err(|e| e.to_string())?;
     let manifest = serde_json::json!({
         "grans": n,
@@ -127,10 +134,10 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         "record_bytes": RECORD_BYTES,
         "build_seconds": build_s,
         "build_mb_s": (n as f64 * slot_bytes as f64 / 1e6) / build_s,
-        "rows": rowids.len(),
+        "rows": n as u64 * HEAD_W,
         "source": rows_dir.to_string_lossy(),
     });
-    let mp = view_out.with_file_name("view-manifest.json");
+    let mp = view_out.with_extension("manifest.json");
     std::fs::write(&mp, serde_json::to_vec_pretty(&manifest).unwrap())
         .map_err(|e| e.to_string())?;
     println!(
@@ -143,14 +150,25 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
 fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
     let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
-    let keys_file = PathBuf::from(rest.next().ok_or("keys.txt")?);
     let mut threads = 8usize;
+    let mut keys_file: Option<PathBuf> = None;
+    let mut sub_grams: usize = 0; // 0 = 全量
     let mut slot_bytes: u64 = 0; // 0 = 从 view-manifest.json 读（默认）
     let mut it = rest;
     while let Some(a) = it.next() {
         match a.as_str() {
             "--threads" => {
                 threads = it
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--keys" => {
+                keys_file = Some(PathBuf::from(it.next().ok_or("keys 路径")?))
+            }
+            "--sub" => {
+                sub_grams = it
                     .next()
                     .ok_or("v")?
                     .parse()
@@ -166,13 +184,15 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
             _ => return Err(format!("未知参数 {a}")),
         }
     }
+    let mut grans_from_manifest: Option<u64> = None;
     if slot_bytes == 0 {
-        let mp = view_file.with_file_name("view-manifest.json");
+        let mp = view_file.with_extension("manifest.json");
         if mp.exists() {
             let m: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&mp).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
             slot_bytes = m["slot_bytes"].as_u64().unwrap_or(4096);
+            grans_from_manifest = m["grans"].as_u64();
         } else {
             slot_bytes = 4096;
         }
@@ -181,31 +201,46 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let layout = lay();
     let batch = BadgeGather::open(&rows_dir, &layout).map_err(|e| e.to_string())?;
 
-    let mut keys = Vec::new();
-    for l in BufReader::new(std::fs::File::open(&keys_file).map_err(|e| e.to_string())?)
-        .lines()
-        .map_while(Result::ok)
-    {
-        let l = l.trim();
-        if !l.is_empty() {
-            keys.push(
-                l.parse::<u64>()
-                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
-            );
+    let mut keys: Vec<u64> = Vec::new();
+    if let Some(kf) = &keys_file {
+        for l in BufReader::new(std::fs::File::open(kf).map_err(|e| e.to_string())?)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let l = l.trim();
+            if !l.is_empty() {
+                keys.push(
+                    l.parse::<u64>()
+                        .map_err(|e: std::num::ParseIntError| e.to_string())?,
+                );
+            }
         }
     }
-    let n_grams = keys.len() / HEAD_W as usize;
+    let mut n_grams = if !keys.is_empty() {
+        keys.len() / HEAD_W as usize
+    } else {
+        grans_from_manifest.unwrap_or_default() as usize
+    };
+    if sub_grams > 0 {
+        n_grams = n_grams.min(sub_grams);
+    }
+    keys.truncate(n_grams * HEAD_W as usize);
     let w = layout.width as usize;
+    if n_grams == 0 {
+        return Err("无 keys 且 manifest 缺 grans".into());
+    }
 
-    // ---- A: 16 行 scatter ----
+    // ---- A: 16 行 scatter（无 keys 时跳过：纯视图口径） ----
     let mut out_a = vec![0u8; keys.len() * w];
-    let t0 = std::time::Instant::now();
-    batch
-        .gather_pp(&keys, &mut out_a, 8)
-        .map_err(|e| e.to_string())?;
-    let _dt_a = t0.elapsed();
-    let pages_a = unique_pages(&keys, &layout);
-    println!("A unique 4KiB pages: {} (rows {})", pages_a, keys.len());
+    if !keys.is_empty() {
+        let t0 = std::time::Instant::now();
+        batch
+            .gather_pp(&keys, &mut out_a, 8)
+            .map_err(|e| e.to_string())?;
+        let _dt_a = t0.elapsed();
+        let p = unique_pages(&keys, &layout);
+        println!("A unique 4KiB pages: {} (rows {})", p, keys.len());
+    }
 
     // ---- B: view 单记录读 ----
     let vf = std::fs::File::open(&view_file).map_err(|e| e.to_string())?;
@@ -245,20 +280,18 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     csv.push_str(&report("B", n_grams as u64 * HEAD_W, dt_b));
     let dt_b2 = run_par(threads);
     csv.push_str(&report("B", n_grams as u64 * HEAD_W, dt_b2));
-    let t3 = std::time::Instant::now();
-    batch
-        .gather_pp(&keys, &mut out_a, 8)
-        .map_err(|e| e.to_string())?;
-    let dt_a2 = t3.elapsed();
-    csv.push_str(&report("A", keys.len() as u64, dt_a2));
+    if !keys.is_empty() {
+        let t3 = std::time::Instant::now();
+        batch
+            .gather_pp(&keys, &mut out_a, 8)
+            .map_err(|e| e.to_string())?;
+        let dt_a2 = t3.elapsed();
+        csv.push_str(&report("A", keys.len() as u64, dt_a2));
+    }
 
-    let ba = keys.len() as u64 * ROW_BYTES;
-    let ra_a = pages_a as u64 * 4096;
-    let ra_b = n_grams as u64 * slot_bytes;
     csv.push_str(&format!(
-        "amplification,A,{},B,{}\n",
-        ra_a as f64 / ba as f64,
-        ra_b as f64 / ba as f64
+        "amplification,B,{}\n",
+        slot_bytes as f64 / RECORD_BYTES as f64
     ));
     println!("{csv}");
     Ok(())
