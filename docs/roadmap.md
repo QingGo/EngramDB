@@ -255,7 +255,7 @@
 | V3 | 模型类名/属性名需要用户手动传入 | 缺少自动发现或配置化 | 增加按模型名/配置映射表，或提供 entry-point 注册 |
 | V4 | 端到端性能契约仍未闭环 | 存储面已达标，应用面缺 | WSL+GPU/CPU 实机 PLE decode 曲线 |
 | V5 | 发布工程仍偏人工 | 已修 release-assets，但需要更完整的 preflight/回滚 | 后续接入自动 release 检查 + release notes 资产完整性断言 |
-| V6 | 顺序化视图/访问序调度 | 🔶 访问序视图构建/校验/读取已在 WSL 验证（Session 10）；冷盘顺序化收益仍待 O_DIRECT/fadvise A/B | 先跑冷态 A/B，再定调度器 |
+| V6 | 顺序化视图/访问序调度 | ✅ 核心已验证：冷顺序 785.8MB/s vs 冷随机 86.0MB/s ≈ 9.1×（Session 11） | 剩余为大表复测、冷多线程策略与调度器落地 |
 
 ### 9.3 借鉴增量
 
@@ -273,7 +273,7 @@
 1. ✅ **真实 Linux 验证**：已完成（Session 8），树莓派 aarch64 + WSL2 x86_64 均通过 v0.2.4 wheel smoke。
 2. ✅ **真实引擎接入（功能面）**：已完成（Session 9），vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均验证通过；剩余为完整 serving + 性能 A/B。
 3. **端到端性能**：CPU 小模型 PLE decode ≥50 tok/s，或 GPU A/B ≤5%。
-4. **顺序化视图 / 访问序调度**：访问序构建/读取已验证（Session 10）；下一步做冷盘随机 vs 顺序 A/B，兑现 88.7MB/s → 数百 MB/s 的冷态提升。
+4. ✅ **顺序化视图 / 访问序调度（核心验证）**：已完成冷盘 A/B（Session 11），1 线程 786 vs 86 MB/s，约 9.1×；下一步做真实大表冷态复测和多线程冷读调度。
 5. **存储产品化**：多表、manifest 完整性、服务化/Arrow IPC、CLI 收敛。
 6. **发布自动化加固**：release-assets 资产断言、全平台 wheel 自动验证、版本/文档同步检查。
 

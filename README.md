@@ -307,10 +307,10 @@ EngramDB/
 当前最重要缺口：
 
 1. 完成真实 vLLM/SGLang serving 中的 PLE 端到端 tok/s 验收（功能 hook 已在真实模型类上验证）；
-2. 完成顺序化视图的冷盘 A/B 与调度，兑现全表随机 88.7MB/s → 数百 MB/s 的潜在提升（访问序构建/读取已在 WSL 验证）；
+2. 完成顺序化视图的大表冷态复测与多线程冷读调度（核心收益已验证：WSL 冷顺序 786MB/s vs 冷随机 86MB/s，约 9.1×）；
 3. 服务化与多表形态。
 
 > 已闭环：
 > - 树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel 完整冒烟。
 > - vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均通过 `install_vllm_ple` / `install_sglang_ple` 类级 patch 及 `DiskPleEmbedding` 前向验证（Session 9）。
-> - 访问序视图 `view build --keys` + 校验 + 顺序/随机读已在 WSL 跑通（Session 10）。
+> - 访问序视图 `view build --keys` + 校验 + 冷盘顺序/随机 A/B 已在 WSL 跑通（Session 10/11），冷顺序 786MB/s vs 冷随机 86MB/s。
