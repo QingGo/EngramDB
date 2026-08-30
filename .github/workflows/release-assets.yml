@@ -65,11 +65,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install maturin with zig support
+        run: python -m pip install "maturin[zig]"
       - name: build python package
         run: |
           cd python
-          uv build .
+          maturin sdist --out dist
+          maturin build --release --out dist --compatibility manylinux2014 --zig
       - name: upload
         uses: actions/upload-artifact@v4
         with:
@@ -90,5 +95,5 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            assets/engramdb*
+            assets/engramdb-*
             assets/engramdb_python*
