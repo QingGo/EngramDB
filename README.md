@@ -291,6 +291,7 @@ EngramDB/
 - `docs/engine-integration.md` —— vLLM / SGLang / llama.cpp 接入调研
 - `docs/upstream-patches.md` —— SGLang/vLLM 不改源码的接入补丁草图
 - `docs/session-log.md` —— 分 session 复盘
+- `docs/session-summary.md` —— 本 session 综合整理（尝试/坑/完成/问题/计划）
 - `docs/licenses.md` —— 许可与合规边界
 - `scripts/gate.sh` —— 本地门禁
 - `scripts/linux_verify.sh` —— Linux/WSL/树莓派 wheel 实机冒烟

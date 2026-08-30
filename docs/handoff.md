@@ -3,7 +3,8 @@
 > 你接手的是 **EngramDB** —— 一个由我（zengyingqing）持续构建的磁盘优先存储引擎项目。
 > 以下信息令你拥有与前任会话等价的最新状态；开始工作前请先阅读仓库根目录与 `docs/`（本文件
 > 为唯一权威快速入口，细节见 `docs/design.md`、`docs/roadmap.md`、`docs/session-log.md`、
-> `docs/portable-dev.md`、`docs/linux-setup.md`、`probes/p4_view_notes.md`）。
+> `docs/session-summary.md`、`docs/portable-dev.md`、`docs/linux-setup.md`、
+> `probes/p4_view_notes.md`）。
 
 ## 0. 不要做的事（先看）
 - **不要**改写已知结论/参数不提问：槽位 2560B、io_uring 性能面已定案（见 §5/§9），
