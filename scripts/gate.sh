@@ -22,6 +22,11 @@ if [[ -d data/real-rows ]]; then
       echo "  [gate] FAIL: 无 p4view 二进制或构建失败（先 cargo build --release -p engramdb-bench --bin p4view）"
       exit 1
     fi
+    echo "  [gate] verify 20k view ..."
+    if ! target/release/p4view verify data/real-rows "$V" --keys /tmp/mtrl-gate-keys.txt --sub 100 >/dev/null 2>&1; then
+      echo "  [gate] FAIL: 视图抽样校验不通过"
+      exit 1
+    fi
     RAW=$(target/release/p4view bench data/real-rows "$V" probes/view-keys-20k.txt --threads 8 2>/dev/null)
     OUT=$(echo "$RAW" | grep -E "^B,|^A,")
     B8=$(echo "$OUT" | sed -n '2p')
