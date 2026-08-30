@@ -7,17 +7,59 @@
 
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::FileExt;
 
+/// 跨平台定位读：unix=pread（`read_at`），windows=OVERLAPPED-free 的 `seek_read`
+/// （逻辑等价 pread：设置文件指针后读回塞回原指针语义由 OS 处理）。
+pub fn platform_read_at(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    platform_read_at_impl(f, buf, off)
+}
+
+#[cfg(unix)]
+fn platform_read_at_impl(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    f.read_at(buf, off)
+}
+
+#[cfg(windows)]
+fn platform_read_at_impl(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    f.seek_read(buf, off)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_read_at_impl(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    let mut f2 = f.try_clone()?;
+    use std::io::{Read, Seek, SeekFrom};
+    f2.seek(SeekFrom::Start(off))?;
+    f2.read(buf)
+}
+
+/// 跨平台"填满读"（EOF 报错），供非 trait 调用方复用。
+pub fn platform_read_exact_at(f: &File, buf: &mut [u8], off: u64) -> io::Result<()> {
+    let mut done = 0usize;
+    while done < buf.len() {
+        let n = platform_read_at(f, &mut buf[done..], off + done as u64)?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read_exact_at: eof inside buffer",
+            ));
+        }
+        done += n;
+    }
+    Ok(())
+}
+
+/// 标准库定位读后端（unix=pread / windows=seek_read，语义等同；名随历史保留 preadv）。
 pub struct PreadvBackend;
 
 impl IoBackend for PreadvBackend {
     fn read_exact_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<()> {
-        f.read_exact_at(buf, off)
+        platform_read_exact_at(f, buf, off)
     }
 
     fn read_at(&self, f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
-        f.read_at(buf, off)
+        platform_read_at(f, buf, off)
     }
 }
 

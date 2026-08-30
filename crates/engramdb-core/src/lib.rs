@@ -8,6 +8,7 @@
 pub mod count_index;
 pub mod fnv;
 pub mod layout;
+#[cfg(unix)]
 pub mod store;
 
 pub use count_index::CountIndex;

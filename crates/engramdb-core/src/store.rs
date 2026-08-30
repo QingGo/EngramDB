@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Store-I 的批量 gather：分片文件 + 行号 → 组装 `[n, width]` 缓冲区。
 //!
 //! 最小实现：每个 shard 一个文件，`read_at` 按 badge 读取并拷贝行。

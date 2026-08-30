@@ -10,9 +10,9 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 
+use crate::backend::{platform_read_at, platform_read_exact_at};
 use crate::batch::BadgeGather;
 use engramdb_core::layout::Layout;
 
@@ -222,7 +222,7 @@ pub fn bench_view(
                 sc.spawn(move || {
                     let mut buf = vec![0u8; slot_bytes as usize];
                     for &rec in slice {
-                        let _ = fb.read_exact_at(&mut buf, rec * slot_bytes);
+                        let _ = platform_read_exact_at(fb, &mut buf, rec * slot_bytes);
                     }
                 });
             }
@@ -304,7 +304,7 @@ pub fn lat_view(
         let f = vf.try_clone()?;
         while off < meta.len() {
             let want = (buf.len() as u64).min(meta.len() - off) as usize;
-            let rd = f.read_at(&mut buf[..want], off)?;
+            let rd = platform_read_at(&f, &mut buf[..want], off)?;
             if rd == 0 {
                 break;
             }
@@ -339,7 +339,7 @@ pub fn lat_view(
                     );
                 }
             }
-            let _ = view_ref.read_exact_at(&mut buf, rec * slot_bytes);
+            let _ = platform_read_exact_at(view_ref, &mut buf, rec * slot_bytes);
             out.push(t0.elapsed().as_nanos().min(u32::MAX as u128) as u32);
         }
         out

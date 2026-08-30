@@ -5,10 +5,20 @@
 use std::path::Path;
 use std::time::Instant;
 
+#[cfg(unix)]
 use engramdb_core::layout::Layout;
+#[cfg(unix)]
 use engramdb_core::store::ShardedStore;
+#[cfg(unix)]
 use engramdb_keygen::PleSpec;
 
+#[cfg(windows)]
+fn main() {
+    eprintln!("engramdb-bench: M0 探针仅 unix 平台（需要 ShardedStore）；请用 engramdb view/p4view 探针组");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut dir = String::from("data/mock-qwen38-ple");
