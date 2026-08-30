@@ -514,3 +514,149 @@ V60–V73，核心包括：release gate、README 收编、兄弟侧配置、Rust
 Phase 0 发布稳定 → Phase A 配置即用 → Phase B 完整模型 E2E → Phase C Rust 性能 → Phase D 服务化。
 
 详见 `docs/roadmap.md` 第 17 节。
+
+## 17. Session 24 综合整理（v0.2.8 发布 + 工程稳定化 + 文档刷新）
+
+### 17.1 本轮计划
+
+本轮的核心目标不是“再验证一个正确性点”，而是：
+
+1. 修复 v0.2.7 暴露的 CI 失败；
+2. 补齐 Phase A 中 EngramDB 自己负责的部分：
+   - 自动读取真实 checkpoint 的 `weight_scale`
+   - Python `rowids_for_seq()` 公共 API
+   - PyO3 native rowids
+   - C ABI smoke 进 CI
+3. 发布一个干净的 v0.2.8；
+4. 刷新 README，补上 Rust / Python 已发布库的安装与使用方法；
+5. 做系统性思考，明确后续最稳的发展路径。
+
+### 17.2 本轮发现
+
+- **功能正确不等于可发布**  
+  C ABI、bit-exact、真实 PLE 都已验证，但 v0.2.7 仍因 rustfmt 和无 torch 环境导入失败。
+
+- **Python 核心包必须轻依赖**  
+  不是所有用户都装 PyTorch；Store、rowids、discovery、服务必须能在纯 Python 环境使用。
+
+- **文档与版本会分叉**  
+  v0.2.8 tag 后 README 才更新，说明文档应纳入版本收口，而不是发布后补写。
+
+- **兄弟侧“配置即用”仍未闭环**  
+  EngramDB 侧已准备好，但 engram-peft 消费 `table_source`、qwen35-ple 真实 FP8 路径仍属于兄弟仓库动作。
+
+- **发布工程需要本地一键 gate**  
+  CI 在远端失败才被发现，成本太高；应在 bump/push 前本地跑完整 release gate。
+
+### 17.3 做的尝试
+
+- 本地复现 CI：
+  - `cargo fmt --all --check`
+  - `cargo test --workspace`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `python_wheel_smoke.py`
+  - `service_smoke.py`
+  - `c_abi_smoke.py`
+  - `decode_baseline_check.py`
+- 验证无 torch 环境下的 Python 包导入。
+- 用真实 Qwen checkpoint 验证：
+  - `discover_ple()`
+  - `load_ple_weight_scale()`
+  - 实际读取到的 `weight_scale=0.00019931793212890625`
+- 验证 rowids 三路一致：
+  - PyO3 native
+  - C ABI
+  - 纯 Python fallback
+- 刷新根 README 与 `python/README.md`，补安装与真实 PLE 用法。
+
+### 17.4 踩过的坑
+
+| 坑 | 处理 |
+|---|---|
+| `engramdb-keygen` import 顺序不符合 rustfmt | 调整 import 顺序，`cargo fmt` 通过 |
+| `__init__.py` eager import `DiskPleNGramEmbedding` 强制加载 torch | 改为 lazy attribute import；`ple_adapter` 可选 torch |
+| `ple_adapter` 无 torch 时 `nn.Module` 不存在 | 用 dummy `nn` 让模块可导入；后续应改为更干净 plugin/stub |
+| 本地 PyO3 构建缺 `-undefined dynamic_lookup` | 使用 `RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup"` |
+| 发布后才发现 README 未更新 | 在 master 补文档，下版必须把 README 与代码同一 commit 收编 |
+| 真实 checkpoint 的 `weight_scale` 是 BF16 而不是 F32 | 实现 BF16/F16/F32 标量读取 |
+| `discover_ple()` 读取超大 safetensors index 两次 | 功能可用，后续可缓存 index 或输出轻量 spec |
+
+### 17.5 完成的内容
+
+- ✅ 修复 v0.2.7 CI：
+  - rustfmt
+  - 无 torch Python 导入
+- ✅ `load_ple_weight_scale(model_dir)`
+- ✅ `discover_ple()` 自动附带 `weight_scale`
+- ✅ `disk_ple_from_discovery()` 自动使用 scale
+- ✅ `install_real_qwen_ple_embedding(store, model_dir=...)` 自动 scale
+- ✅ Python `engramdb.rowids_for_seq()`
+- ✅ PyO3 native `rowids_for_seq()` / `abi_version()`
+- ✅ C ABI smoke 脚本 + CI 接入
+- ✅ `python_wheel_smoke.py` 增加 rowids 回归
+- ✅ v0.2.8 发布并推送
+- ✅ 根 README / python README 刷新
+- ✅ roadmap 第 17 节系统性思考
+- ✅ session-log / session-summary / handoff 更新
+
+### 17.6 未完成的内容
+
+- ❌ `scripts/release_gate.sh` 尚未创建
+- ❌ 最新 README 尚未进入 v0.2.8 发布物（需下版收编）
+- ❌ `install_real_qwen_ple_embedding` 仍保留无 model_dir 时的硬编码 fallback
+- ❌ `rowids_for_seq()` 纯 Python fallback 仍使用固定 multipliers
+- ❌ engram-peft 自动消费 `table_source`
+- ❌ qwen35-ple 真实 e2e 切 FP8 wrapper
+- ❌ Rust native PLE gather + dequant 热路径
+- ❌ 完整模型 E2E（官方类 + 磁盘 PLE）
+- ❌ vLLM / SGLang / llama.cpp serving A/B
+- ❌ `ENG_DEEPSEEK_V1` C ABI
+- ❌ Python Store 线程安全/连接复用
+
+### 17.7 当前状态
+
+```text
+v0.2.8 已发布
+master 已包含 README 刷新 + 系统性思考
+本地所有 gate 全绿
+工作区干净
+```
+
+### 17.8 未来计划
+
+#### Phase 0：发布与工程稳定（最高优先）
+- 创建 `scripts/release_gate.sh`
+- 把 README 收编进下一版本
+- 去掉静默硬编码 scale fallback
+- `rowids_for_seq()` 支持 `info` / `multipliers`
+- README 示例自动化
+
+#### Phase A：兄弟项目配置即用
+- engram-peft `table_source` 自动注入
+- qwen35-ple 真实 FP8 路径
+- 跨仓契约 smoke 进兄弟 CI
+
+#### Phase B：真实模型 E2E
+- custom loader / skip ngram_embedding
+- 官方模型类验证
+- 大内存/云环境 A/B
+
+#### Phase C：Rust 性能路径
+- native rowid + gather + dequant
+- 预取重叠
+- 真实 PLE 性能矩阵
+
+#### Phase D：服务化 / 推理引擎
+- vLLM / SGLang / llama.cpp serving A/B
+- Store 线程安全 / 连接复用
+- Arrow IPC 服务化 / 认证 / 发布形态
+
+### 17.9 本轮纪律
+
+1. 发布正确性与功能正确性同等重要。
+2. 核心 Python 包必须保持轻依赖。
+3. 文档与版本必须同点收编。
+4. 跨仓正确性以 golden / C ABI 守门。
+5. 性能最终必须下沉 Rust。
+6. 配置驱动优先于手动调用。
+
