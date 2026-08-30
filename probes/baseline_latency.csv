@@ -1,0 +1,13 @@
+name,n,p50_us,p95_us,p99_us,max_us,mean_us
+view20k-warm-1t,20000,0.75,1.13,1.38,18.7,0.78
+view20k-warm-8t,20000,4.75,8.25,12.29,2254.8,6.16
+viewfull100k-warm-1t,100000,0.875,1.375,1.58,51.7,0.94
+viewfull100k-warm-8t,100000,5.17,8.46,11.25,4350.0,6.79
+# 口径: p4view lat <view> [--threads 1|8] [--warm]; 2560B 紧凑槽单记录读, 随机序, 每查独立计时
+# 注: mac 页缓存下"cold"≈温(采样半命中); 绝对冷需 Linux O_DIRECT/io_uring(M2) 后复测
+# Linux 真冷档（WSL2 Ubuntu x86_64 @ VHDX/SSD, vhdx 根盘; --cold = 每 slot fadvise DONTNEED 后立即读）
+view1_6g-warm-1t,50000,2.00,3.10,7.11,224.6,2.29
+view1_6g-cold-1t,50000,3.70,5.10,6.71,924.6,4.10
+view1_6g-cold-8t,50000,4.90,6.00,7.71,18354.3,8.03
+view51m-cold-1t,20000,3.50,4.60,5.40,355.8,3.71
+view51m-cold-8t,20000,4.70,5.60,6.40,4927.4,6.12

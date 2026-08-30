@@ -26,3 +26,4 @@ venv/
 # logs
 *.log
 /download.log
+!probes/baseline_*.csv

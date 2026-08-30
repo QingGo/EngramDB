@@ -1,0 +1,10 @@
+name,rows,rows_per_s,mb_per_s
+B8t-warm-200k,3200000,4497441,719.6
+B8t-warm-20k-gate,320000,17465104,2794.4
+B8t-cold-full-1m,16000000,554294,88.7
+A8t-warm-200k,3200000,1378328,220.5
+amplification-B-2560,1.00
+amplification-A-scatter,16.1
+# 判定口径: ampl_B<=1.05 且 B8t(warm)>=2xA8t(warm)（结构收益, 机器无关）
+# 冷/热并报: warm=页面缓存内, cold=51GB 视图 <<RAM 时随机序真实汇率
+# p4view bench: --keys 可选; B-only 模式支持全表抽样（--sub N grams）

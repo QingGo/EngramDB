@@ -17,6 +17,8 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::FileExt;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 use engramdb_core::layout::Layout;
@@ -158,6 +160,7 @@ fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
     let mut threads: usize = 8;
     let mut warm = false;
+    let mut cold_parse = false;
     let mut sub_grams: usize = 0; // 0 = 全量
     let mut slot_bytes: u64 = 0; // 0 = manifest
     let mut it = rest;
@@ -165,10 +168,20 @@ fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         match a.as_str() {
             "--threads" => threads = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
             "--warm" => warm = true,
+            "--cold" => cold_parse = true,
             "--sub" => sub_grams = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
             "--slot" => slot_bytes = it.next().ok_or("v")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
             _ => return Err(format!("未知参数 {a}")),
         }
+    }
+    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "linux")]
+    let cold = cold_parse;
+    #[cfg(not(target_os = "linux"))]
+    let _cold = cold_parse;
+    #[cfg(not(target_os = "linux"))]
+    if cold_parse {
+        eprintln!("warn: --cold 仅 Linux 有效（需 posix_fadvise DONTNEED）");
     }
     if slot_bytes == 0 {
         let mp = view_file.with_extension("manifest.json");
@@ -205,6 +218,10 @@ fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     // 随机访问序（固定 seed，跨线程共享序列由各线程错位切片保持覆盖）
     let order = rand_order(n_grams, 0xFEED_BEEF_0D0F_1E2C);
     let view_ref = &vf;
+    #[cfg(target_os = "linux")]
+    let cold = cold_parse;
+    #[cfg(not(target_os = "linux"))]
+    let _cold = cold_parse;
     let per_thread = |tid: usize| -> Vec<u32> {
         let t = std::time::Instant::now();
         let mut buf = vec![0u8; slot_bytes as usize];
@@ -214,6 +231,18 @@ fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         let hi = if tid + 1 == threads { order.len() } else { lo + stride };
         for &rec in &order[lo..hi] {
             let t0 = std::time::Instant::now();
+#[cfg(target_os = "linux")]
+            if cold {
+                // Linux 真冷：读前对该 slot 丢弃页缓存（DONTNEED），绕过 warm 语义
+                unsafe {
+                    libc::posix_fadvise(
+                        view_ref.as_raw_fd(),
+                        (rec * slot_bytes) as i64,
+                        slot_bytes as i64,
+                        libc::POSIX_FADV_DONTNEED,
+                    );
+                }
+            }
             let _ = view_ref.read_exact_at(&mut buf, rec * slot_bytes);
             let ns = t0.elapsed().as_nanos();
             out.push(ns.min(u32::MAX as u128) as u32);

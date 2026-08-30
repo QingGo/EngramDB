@@ -7,6 +7,7 @@ description = "M0 probe bench harness (P1-P6)"
 
 [dependencies]
 serde_json = "1"
+libc = "0.2"
 engramdb-keygen = { path = "../engramdb-keygen" }
 engramdb-core = { path = "../engramdb-core" }
 engramdb-io = { path = "../engramdb-io" }
