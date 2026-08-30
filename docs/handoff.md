@@ -87,6 +87,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **Session 25（当前开发，未发布）**：新增 `scripts/release_gate.sh` 并接入 `bump.sh` 默认前置；`discover_ple()` 自动读取 `layer_multipliers`（一次索引读取同时取 scale/multipliers）；`rowids_for_seq()` 支持 `info`/`multipliers`；`install_real_qwen_ple_embedding` 无来源时改为显式 warning；README/Python README 同步；`python_wheel_smoke.py` 增加 safetensors I64、discovery、自定义 multipliers 回归。
   **Phase A 兄弟侧推进（Session 25 后半）**：engram-peft 新增 `table_store_path` / `table_model_dir` / `table_shards` / `table_rows_per_shard` / `table_width` / `table_dtype` / `table_scale` / `table_cache_size` 配置，并在 `get_engram_model()` 中自动打开 Store 并注入 Disk MultiHeadEmbedding；已直接推 engram-peft master。qwen35-ple 新增 `to_engram_config()` YAML 桥接，`run_m0_smoke.py --e2e` 自动走真实 FP8 注入（`--ple-model-dir`），README 已补充配置即用示例；qwen35-ple main 已更新。跨仓契约 smoke 已加入 qwen35-ple CI（checkout EngramDB + engram-peft）。
   **Phase B 真实 PLE e2e（Session 25 末）**：新增 `engramdb.official_loader`（过滤 ngram shard + 磁盘 PLE 安装）和 `qwen4_ple_custom_loader.py` dry-run/完整加载入口；新增 `run_real_fp8_e2e.py` 轻量版真实 FP8 e2e，并已在本机跑通：Qwen3.5-0.8B + 真实 128-shard Store-I + 配置驱动自动注入，`REAL_FP8_E2E_OK`（约 9.6s，logits 有限、生成 shape 1x10）。官方 Qwen4Exp 模型类验证仍待大内存/新版 transformers 环境。
+  **Session 26 系统性思考（第十四轮）**：复盘本轮“配置即用 + 真实 FP8 e2e + Phase B 初步”；新增 V74–V85；明确下一步最高优先级是官方 Qwen4Exp 加载前 patch ngram 占位、官方类 bit-exact、真实 memory/disk A/B，随后 Rust 热路径与服务化。完整版见 roadmap Section 18。
 
 
 

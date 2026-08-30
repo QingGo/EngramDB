@@ -1195,7 +1195,7 @@ PLE_STORE_BIT_EXACT_PASS
 
 ## 4. 意义
 
-这是首个“真实 PLE 表 + EngramDB Store”的位级闭环验证。  
+这是首个“真实 PLE 表 + EngramDB Store”的位级闭环验证。
 修复前，多分片真实 PLE 数据面即使“能跑”，返回的也是错误行；修复后才有资格继续做真实 PLE adapter 和端到端性能。
 
 # Session 20 增补 2：真实 Qwen4Exp PLE layer bit-exact + 磁盘适配器
@@ -1458,3 +1458,34 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
 - README 最终收编需等下个版本 bump。
 - README 核心示例全量化 smoke 仍需继续。
 - 官方 Qwen4Exp 模型类实机验证与 memory/disk A/B 仍待大内存/新版 transformers 环境。
+
+
+# Session 26 系统性思考（第十四轮）
+
+## 1. 本轮定位
+
+从“功能可发布”进入“真实数据面可运行、但尚未官方类验收”的阶段：
+
+- Phase A：配置即用闭环 ✅
+- Phase B：真实 FP8 e2e 首次跑通 ✅
+- Phase B：官方 Qwen4Exp 完整模型 + 性能 A/B 未闭环 ❌
+
+## 2. 核心认识
+
+1. **“能跑”不是验收**：真实 FP8 e2e 证明了真实表 + 自动注入可运行，但还不是官方 Qwen4Exp 完整模型。
+2. **加载绕过未真正完成**：`official_loader` 目前主要是过滤与替换，尚未在 `from_config` 前用轻量占位避免 200GB+ 分配。
+3. **可复现性不足**：真实 e2e 是依靠本机已有库和临时 PYTHONPATH 跑通的，交付前必须固化环境。
+4. **性能契约仍悬空**：没有 memory vs disk A/B，没有 hit-rate / fetch / convert 分段。
+
+## 3. 技术债
+
+V74–V85，详见 `docs/roadmap.md` Section 18.3。
+
+## 4. 下一步
+
+1. 官方 Qwen4Exp 加载前 patch ngram embedding（B1）
+2. 官方类 bit-exact（B2）
+3. 真实 memory vs disk A/B（B3）
+4. Rust/PyO3 热路径（C）
+5. 引擎 serving A/B + Store 线程安全（D）
+6. 固化 e2e 环境 + 统一版本收编

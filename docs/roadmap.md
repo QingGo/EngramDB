@@ -720,19 +720,19 @@
 
 ### 14.5 稳定前进的五条纪律（第十轮强化）
 
-1. **一个结论 = 一个可复现脚本 + 一个 CSV + 一个阈值**  
+1. **一个结论 = 一个可复现脚本 + 一个 CSV + 一个阈值**
    没有固定输入、中位数、CSV 的性能数字只是观察，不是结论。
 
-2. **任何 cache 必须先有命中率证据**  
+2. **任何 cache 必须先有命中率证据**
    没有命中率，就没有资格谈 LRU/Tier 收益。
 
-3. **真实 PLE 优先于 toy model**  
+3. **真实 PLE 优先于 toy model**
    Qwen3.5-0.8B 只用于打通流程；真正的验收必须落在 Qwen4Exp/Qwen3.8 的真实 PLE 表上。
 
-4. **Rust 为核，Python 只做薄 shell**  
+4. **Rust 为核，Python 只做薄 shell**
    Python 原型用来验证语义和快速实验，热路径最终必须下沉 Rust/PyO3。
 
-5. **版本和功能同源，发布要小步**  
+5. **版本和功能同源，发布要小步**
    每完成一个真实闭环就尽快 bump/tag，避免 master 长期领先于发布版。
 
 ### 14.6 Session 20 增补：真实 PLE Store 位级验证
@@ -867,16 +867,16 @@
 
 ### 15.6 本轮纪律强化
 
-1. **不能把“自实现数学验证”当成“官方模型验证”**  
+1. **不能把“自实现数学验证”当成“官方模型验证”**
    还要在官方模型类中验证一次，才算真正闭环。
 
-2. **大表不能因为“能跑”就认为正确**  
+2. **大表不能因为“能跑”就认为正确**
    多分片、跨 shard、FP8 量化、EOS 边界都必须有 bit-exact 测试。
 
-3. **环境限制不是技术债的终点，但要显式记录**  
+3. **环境限制不是技术债的终点，但要显式记录**
    完整模型 E2E 没做就是没做，不能假装闭环。
 
-4. **继续坚持 Rust 为核**  
+4. **继续坚持 Rust 为核**
    Python adapter 是语义验证和快速实验，不是最终性能产品。
 
 5. **所有性能结论最终必须落在真实 PLE + 固定基准上**。
@@ -1055,19 +1055,19 @@ LLM-CompileForge  推理 runtime（后续）
 
 关键发现：
 
-1. **“功能已正确”不等于“可发布”**  
-   C ABI、bit-exact、真实 PLE 都已验证，但 CI 仍会因 import 顺序和可选依赖问题失败。  
+1. **“功能已正确”不等于“可发布”**
+   C ABI、bit-exact、真实 PLE 都已验证，但 CI 仍会因 import 顺序和可选依赖问题失败。
    说明发布工程和正确性工程必须同时管理。
 
-2. **无 torch 环境是 Python 包的基本输入**  
-   不是所有用户都装 PyTorch；核心 Store/rowids/discovery 必须能在纯 Python 环境使用。  
+2. **无 torch 环境是 Python 包的基本输入**
+   不是所有用户都装 PyTorch；核心 Store/rowids/discovery 必须能在纯 Python 环境使用。
    这次修复建立了“核心轻依赖、PyTorch adapter 按需加载”的边界。
 
-3. **文档与版本已经开始分叉**  
-   v0.2.8 tag 后 README 才更新，意味着 PyPI 上 v0.2.8 的长描述可能不是最新。  
+3. **文档与版本已经开始分叉**
+   v0.2.8 tag 后 README 才更新，意味着 PyPI 上 v0.2.8 的长描述可能不是最新。
    需要把文档更新纳入版本收口，而不是 release 后补写。
 
-4. **兄弟侧“配置即用”仍未完成**  
+4. **兄弟侧“配置即用”仍未完成**
    EngramDB 这一侧已经准备好了，但 engram-peft 消费 `table_source`、qwen35-ple 真实脚本切换仍是外部仓库动作。
 
 ### 17.4 本轮新技术债（V60 起）
@@ -1166,21 +1166,162 @@ LLM-CompileForge  推理 runtime（后续）
 
 ### 17.7 本轮纪律强化
 
-1. **正确性、性能、发布工程三者同等重要**  
+1. **正确性、性能、发布工程三者同等重要**
    不能只验证 bit-exact 就发版；还要保证 CI、文档、安装路径都闭环。
 
-2. **核心包必须轻依赖**  
+2. **核心包必须轻依赖**
    Store、rowids、discovery、服务不应被迫导入 PyTorch；PyTorch adapter 必须按需加载。
 
-3. **“配置即用”优先于“手动调用”**  
+3. **“配置即用”优先于“手动调用”**
    方便使用是基础设施的命门；兄弟侧自动消费配置比“提供更多函数”更重要。
 
-4. **跨仓正确性继续靠 golden / C ABI 守门**  
+4. **跨仓正确性继续靠 golden / C ABI 守门**
    不依赖各自仓库的偶然“能跑”。
 
-5. **性能最终必须下沉 Rust**  
+5. **性能最终必须下沉 Rust**
    Python 只做语义验证和编排，不能作为性能终点。
 
-6. **文档与版本必须同点收编**  
+6. **文档与版本必须同点收编**
    避免“代码已发布，README 还在旧版本”的分叉。
 
+
+# 18. 第十四轮系统性思考（Session 26：配置即用 + 真实 FP8 e2e + Phase B 初步）
+
+## 18.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类“确定性哈希 n-gram 记忆表”成为任何小模型、训练器、
+> 推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+三条不可妥协的轴线：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；EngramDB 参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录可嵌入 + 可服务；manifest 可校验；Arrow 零拷贝；engine 薄 adapter 不改上游 |
+| C. 科学契约 | 每个性能/正确性结论有真实 PLE + 固定输入 + CSV/阈值；bit-exact 必须官方类或 golden 双保险 |
+
+本轮后坐标：
+
+- 配置即用已从“设计字段”变成“可执行闭环”
+- 真实 FP8 Store-I 首次在真实小模型 e2e 中跑通
+- 但“完整官方 Qwen4Exp 模型加载 + 性能 A/B”仍未闭环
+
+## 18.2 当前坐标
+
+| 层 | 状态 |
+|---|---|
+| EngramDB 存储/rowid/发现/发布门禁 | ✅ 已闭环 |
+| engram-peft `table_source="engramdb:store"` 自动注入 | ✅ 已合入 master |
+| qwen35-ple YAML → EngramConfig 桥接 | ✅ |
+| 真实 FP8 Store-I e2e | ✅ 本机跑通（Qwen3.5-0.8B + 真实 128-shard） |
+| 跨仓 golden/契约 CI | ✅ 已入 qwen35-ple CI |
+| 官方 Qwen4Exp 完整模型加载 | ⚠️ 有 dry-run/代码路径，未实机 |
+| 官方 PLE 层 + DiskPleNGramEmbedding bit-exact | ⚠️ 已有自实现层 bit-exact，官方类未验证 |
+| memory vs disk 性能 A/B | ❌ |
+| Rust/PyO3 原生热路径 | ❌ |
+| vLLM/SGLang/llama.cpp serving A/B | ❌ |
+| Store 线程安全/连接复用 | ❌ |
+
+## 18.3 本轮新技术债（V74 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V74 | 真实 FP8 e2e 不是“官方 Qwen4Exp 完整模型” | 只证明“真实表 + engram-peft 配置驱动”可行，不能作为完整模型级验收 | 下一优先：官方 Qwen4Exp 模型类实机 |
+| V75 | `qwen4_ple_custom_loader.py --load-model` 仍可能在 `from_config` 阶段分配巨大 ngram embedding | 未真正绕过 200GB+ PLE 内存 | 在官方类构造前 patch `ngram_embedding` 为轻量占位，再加载非 shard 权重 |
+| V76 | `run_real_fp8_e2e.py` 依赖临时 PYTHONPATH/缓存库路径 | 不可复现，换机器/CI 不能直接跑 | 写可复现 venv/uv lock/安装脚本，或把必需轻量依赖正式化 |
+| V77 | `DiskPleNGramEmbedding` 内部自管理 history，未接 Transformers `Cache` | 多段、streaming、MTP 等边界可能不一致 | 接入官方 cache/conv_state 语义，或提供严格单段验证 + 明确限制 |
+| V78 | `table_source="engramdb:view"` 仍未实现 | 配置面只剩 store 一条路 | 后续实现 view reader 注入 |
+| V79 | 跨仓 CI 只覆盖轻量 hash golden | 未覆盖 engram-peft 运行时和官方类 | 增加运行时/官方类 smoke（环境允许时） |
+| V80 | 自动 store 注入在无 `model_dir`/`scale` 时静默选择 float32 路径 | 真实 FP8 行可能被错误解读 | 对 `PLE_QWEN_V1` 且未提供 scale/model_dir 时显式报错或强制要求 |
+| V81 | engram-peft 全局类 patch 绑定单个 store | 多模型/多服务并发不安全 | 改为实例级注入或线程安全 store 注册表 |
+| V82 | 尚无真实 memory vs disk A/B | 性能契约悬空 | 固定 seed/reps/token 数，输出 tok/s、hit-rate、fetch/convert 分段 |
+| V83 | engram-peft/qwen35-ple 未 bump、README 未随版本收编 | 发布物与代码分叉 | 下一版本统一 bump + README 同 commit |
+| V84 | Store 线程安全/连接复用仍未做 | 服务化/多请求不可靠 | Rust 侧安全句柄/每线程 store 池 |
+| V85 | 官方模型类需要新版 transformers + 大内存 | 本机无法完成官方类 A/B | 找大内存 Linux/云环境，或拉取支持 Qwen4Exp 的 transformers 镜像 |
+
+## 18.4 借鉴矩阵（本轮聚焦：如何不冲突地接近目标）
+
+| 来源 | 借什么 | 明确不借 | 为什么对我们有用 |
+|---|---|---|---|
+| **DuckDB** | 嵌入式、目录即库、manifest、Arrow 输出、可发布生态 | 不借 SQL/OLAP | 确立“存储基础设施”形态 |
+| **SQLite** | 单文件/便携、integrity check、每线程连接 | 不借关系模型/事务 | 让 Store 可校验、可嵌入 |
+| **HuggingFace Transformers** | `from_pretrained` 前置 hook、state_dict 过滤、构造后替换大模块 | 不重写模型定义 | 解决“完整模型加载时跳过 PLE 大表” |
+| **safetensors** | 分片 index、lazy scalar、metadata | 不借模型格式 | discovery 已有；后续可做 index 缓存 |
+| **vLLM / SGLang** | 模型加载 hook、权重替换、cache/offload、engine adapter | 不借推理内核 | 不改上游源码接入真实引擎 |
+| **llama.cpp** | CPU-first、顺序预热、单二进制、测量文化 | 不借 GGUF/推理 kernel | 用最低成本验证磁盘表可服务性 |
+| **Arrow/IPC** | 零拷贝批次、跨语言边界 | 不借查询/执行引擎 | 服务化时传输原始行/e_t |
+| **DiskANN / Memcached** | LRU、冷热分层、预取、命中率指标 | 不借 ANN/通用 KV | 优化在线读路径，并且必须带命中率证据 |
+| **MLPerf / fio** | 固定输入、固定命令、阈值、CSV、cache-mode | 不借领域指标 | 所有性能结论可回归 |
+| **RocksDB / FoundationDB** | 不可变段、checksum、原子发布 | 不借 LSM/分布式事务 | 大表发布可靠、可回滚 |
+| **engram-peft / qwen35-ple** | 配置驱动、跨仓 golden、契约测试、编排 | 不借训练/评测/存储实现 | 让我们真正做到“配置即用” |
+| **PyPA / maturin / abi3** | wheel 矩阵、abi3、Trusted Publishing | 不借 Python 框架 | 降低安装门槛 |
+
+关键不冲突原则：
+
+- 我们只做 PLE/Engram 的**存储、布局、读取、服务化**，不做模型/训练/推理内核。
+- 所有引擎接入都是**薄 adapter / hook / patch**，不 fork 上游。
+- 所有“快”的结论必须来自**真实 PLE + 固定基准**。
+- 跨仓改动只走**契约 + golden**，避免四仓互相踩脚。
+
+## 18.5 开发计划（按“先可信、再性能、再服务”排序）
+
+### Phase B1：官方模型加载不分配大 PLE 表（最高优先）
+- [ ] 在 `AutoConfig.from_pretrained` / `from_config` 前 patch 官方 `Qwen4ExpTextNGramEmbedding` 构造，使用轻量占位。
+- [ ] 用 safetensors index 过滤 `ngram_embedding.shard_*` / `ngram_embedding.weight`，只加载非 PLE 权重。
+- [ ] 加载完模型后调用 `install_disk_ple_in_official_model` 替换所有 PLE 模块。
+- [ ] 验证：峰值内存不包含 200GB+ PLE 表，且模型可 forward。
+
+**退出标准**：官方 Qwen4Exp 模型在不加载 PLE 大表的情况下完成构造和加载。
+
+### Phase B2：官方类 bit-exact
+- [ ] 在官方 `Qwen4ExpTextPLELayer` / `Qwen4ExpTextNGramEmbedding` 中替换 `DiskPleNGramEmbedding`。
+- [ ] 用小批量真实 token 与内存 PLE 层输出做 max-abs 对比。
+- [ ] 覆盖 EOS 重置、多段输入、batch、MTP/streaming 边界。
+
+**退出标准**：官方类 + 磁盘 adapter 与官方内存路径 bit-exact。
+
+### Phase B3：真实 A/B
+- [ ] 固定输入、固定 seed、多次重复，输出 memory vs disk tok/s。
+- [ ] 记录 hit-rate、fetch/convert 分段、LRU 开关。
+- [ ] 落 CSV + 阈值门禁。
+
+**退出标准**：有真实 PLE 模型的性能数据，能判断是否达到 ≤5% 目标。
+
+### Phase C：Rust / PyO3 热路径
+- [ ] native rowid + gather + dequant。
+- [ ] 预取与 transformer 计算重叠。
+- [ ] 冷/热、批大小、并发矩阵。
+
+**退出标准**：磁盘 PLE 热路径不再依赖 Python 逐行转换；性能结论可复现。
+
+### Phase D：服务化 / 推理引擎
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] Store 线程安全句柄/连接池。
+- [ ] Arrow IPC 服务化、认证、发布形态。
+
+**退出标准**：至少一个真实引擎不改源码使用 EngramDB PLE，且有 serving 性能数据。
+
+### 工程稳定性
+- [ ] 把 `run_real_fp8_e2e.py` 的临时依赖路径固化为可复现 env（uv lock / 安装脚本 / Dockerfile）。
+- [ ] engram-peft、qwen35-ple、EngramDB 下版本统一 bump，README 同点收编。
+- [ ] 将完整官方类/运行时 smoke 纳入可用环境 CI 或 nightly。
+
+## 18.6 本轮纪律强化
+
+1. **“能跑”不等于“验收通过”**
+   真实 FP8 e2e 跑通只是功能里程碑；官方类和性能数据才是验收。
+
+2. **先绕开内存分配，再谈加载**
+   如果不能证明完整模型加载不分配 200GB+ PLE 表，就不能算 Phase B 完成。
+
+3. **性能结论必须带 hit-rate 和分段计时**
+   否则无法区分磁盘慢、Python adapter 慢还是引擎慢。
+
+4. **可复现环境优先于临时 hack**
+   使用 `/tmp/pylibs` 或手工 PYTHONPATH 只能在开发机上成立，不能成为交付形态。
+
+5. **跨仓改动继续只走契约和 golden**
+   功能可以快速迭代，但语义正确性必须由可验证契约守住。
+
+6. **版本、文档、代码同点收编**
+   避免“代码已经推进，发布物和 README 还停在上一版”。

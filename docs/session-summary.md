@@ -533,19 +533,19 @@ Phase 0 发布稳定 → Phase A 配置即用 → Phase B 完整模型 E2E → P
 
 ### 17.2 本轮发现
 
-- **功能正确不等于可发布**  
+- **功能正确不等于可发布**
   C ABI、bit-exact、真实 PLE 都已验证，但 v0.2.7 仍因 rustfmt 和无 torch 环境导入失败。
 
-- **Python 核心包必须轻依赖**  
+- **Python 核心包必须轻依赖**
   不是所有用户都装 PyTorch；Store、rowids、discovery、服务必须能在纯 Python 环境使用。
 
-- **文档与版本会分叉**  
+- **文档与版本会分叉**
   v0.2.8 tag 后 README 才更新，说明文档应纳入版本收口，而不是发布后补写。
 
-- **兄弟侧“配置即用”仍未闭环**  
+- **兄弟侧“配置即用”仍未闭环**
   EngramDB 侧已准备好，但 engram-peft 消费 `table_source`、qwen35-ple 真实 FP8 路径仍属于兄弟仓库动作。
 
-- **发布工程需要本地一键 gate**  
+- **发布工程需要本地一键 gate**
   CI 在远端失败才被发现，成本太高；应在 bump/push 前本地跑完整 release gate。
 
 ### 17.3 做的尝试
@@ -661,3 +661,48 @@ master 已包含 README 刷新 + 系统性思考
 5. 性能最终必须下沉 Rust。
 6. 配置驱动优先于手动调用。
 
+
+
+# Session 26 系统性思考（第十四轮：配置即用 + 真实 FP8 e2e + Phase B 初步）
+
+> 完整版见 `docs/roadmap.md` Section 18。
+
+## 1. 终极目标
+
+不变：
+
+> 让 DeepSeek Engram / Qwen PLE 成为任何小模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+本轮后最重要的进展是：**配置即用从设计字段变成可执行闭环**，并且**真实 FP8 Store-I 首次在真实小模型 e2e 中跑通**。
+
+## 2. 本轮技术债（V74–V85）
+
+- 真实 FP8 e2e 不是官方 Qwen4Exp 完整模型
+- `--load-model` 仍可能分配巨大 ngram embedding
+- e2e 依赖临时手工依赖路径，不可复现
+- DiskPleNGramEmbedding 未接 Transformers Cache
+- `engramdb:view` 未实现
+- 跨仓 CI 仍只覆盖轻量 hash 契约
+- 自动注入在无 scale/model_dir 时可能误读 FP8
+- engram-peft 全局 patch 绑定单 store，多模型不安全
+- 无真实 memory vs disk A/B
+- 版本/README 未统一收编
+- Store 线程安全/连接复用未做
+
+## 3. 开发计划重点
+
+1. **Phase B1**：官方 Qwen4Exp 加载前 patch ngram 占位，真正绕过 200GB+ PLE 内存
+2. **Phase B2**：官方类 + DiskPleNGramEmbedding bit-exact
+3. **Phase B3**：真实 memory vs disk A/B（固定 seed/reps/CSV）
+4. **Phase C**：Rust/PyO3 native rowid + gather + dequant + 预取
+5. **Phase D**：vLLM/SGLang/llama.cpp serving A/B + Store 线程安全 + Arrow
+6. **工程**：固化 e2e 环境、统一 bump + README 收编、扩 runtime/官方类 CI
+
+## 4. 本轮纪律
+
+- “能跑”不等于“验收通过”
+- 先证明不分配 PLE 大表，再谈完整模型
+- 性能结论必须带 hit-rate 与分段计时
+- 可复现环境优先于临时 hack
+- 跨仓只走契约 + golden
+- 版本、文档、代码同点收编
