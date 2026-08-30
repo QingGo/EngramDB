@@ -113,6 +113,49 @@ install_disk_multi_head_embedding(store)
 # 之后再调用 engram-peft 的 get_engram_model(...) 即可让 Engram 层从磁盘读取 embedding
 ```
 
+## 多表 / Arrow / 最小服务原型
+
+多表按目录组织：
+
+```python
+from engramdb import Database
+
+db = Database("path/to/tables-root")
+print(db.list_tables())  # ["alpha", "beta"]
+
+raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
+```
+
+可选 Arrow 读取（需要 `pyarrow`）：
+
+```python
+from engramdb.arrow_utils import store_fetch_arrow, table_to_ipc_bytes
+
+table = store_fetch_arrow(store, [0, 1, 2])
+ipc = table_to_ipc_bytes(table)   # Arrow IPC stream bytes
+```
+
+最小 TCP/JSON 服务（当前为原型）：
+
+```python
+from engramdb import Database
+from engramdb.server import EngramDBServer
+
+server = EngramDBServer(Database("path/to/tables-root"), host="127.0.0.1", port=8765)
+server.serve_forever()
+```
+
+服务命令包括：
+
+- `ping`
+- `list_tables`
+- `fetch`
+- `fetch_arrow`（返回 base64 封装的 Arrow IPC bytes）
+- `view_read`
+
+> 注意：PyO3 `Store` 是不可跨线程共享的 `unsendable` 对象，因此服务端 `Database.fetch`
+> 会在每个请求所在线程新开 Store；多线程共享连接的后端需要 Rust 侧安全句柄或线程池。
+
 ## 定位（一句话）
 
 让"确定性哈希的 n-gram 记忆表"（Qwen PLE、DeepSeek Engram 等）像数据库一样落盘、建索引、预取、服务化——单机 CPU+NVMe 低延迟推理 / 高吞吐训练预处理。
