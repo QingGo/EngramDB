@@ -146,7 +146,7 @@ fn uring_batch_read(f: &File, reqs: &mut [(u64, &mut [u8])]) -> io::Result<usize
                         .map_err(|e| io::Error::other(format!("SQ push: {e}")))?;
                 }
             }
-            let n = chunk.len() as u32;
+            let n = chunk.len();
             ring.submit_and_wait(n)
                 .map_err(|e| io::Error::other(format!("submit_and_wait: {e}")))?;
             for _ in 0..n {

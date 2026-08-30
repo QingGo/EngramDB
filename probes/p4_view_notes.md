@@ -165,3 +165,18 @@ B8t=17.9M, A8t=1.34M, ampl_B=1.00 → PASS。基线 CSV: `probes/baseline_view.c
 
 **（含备注）**：fallocate 后随即读，页缓存会掺入（5.1GB 窗口读 10s）——本对比为"半冷"口径；
 绝对冷 vs 热的差值在 P4 v5（DONTNEED fadvise）已验证为 1.85x（SSD 物性），不改变结论方向。
+
+## P4 v9（2026-08-30：io_uring 批量提交 vs preadv——批量仍无赢面，M2 性能面定案）
+
+**WSL/VHDX 8t A 路径（320K 行，同 20K keys 随机序）**：
+| backend | A rows/s | 相对 |
+|---|---|---|
+| preadv | **929,911** | 1.00× |
+| uring per-call | 905,133（早起数据） | 0.97× |
+| **uring-batch (256 SQE)** | 874,196 | 0.94× |
+
+结论：**VHDX/桌面 SSD + 8t 下 preadv 已达 IO 上限**（内核页表路径最优）；io_uring 无论
+per-call 还是 batch 均无超赢。**M2 性能面定案：不追 io_uring 性能；保留 UringBackend/
+UringBatchBackend 作为可插拔语义实现（接口完整、可测），选默认 = preadv。**
+未来若目标介质为网络盘/io 密集内核受限环境（如 NVMe-of / cgroup 受限），再激活
+uring 批量路径（后端已就绪）。
