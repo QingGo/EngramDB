@@ -14,15 +14,22 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 ## 快速使用
 
 ```bash
-# 构建 PyO3 原生扩展（macOS Intel 需要 dynamic_lookup linker flag）
+# 方式 1：maturin 构建 wheel（推荐，直接产生可安装的 native wheel）
+cd python
+CARGO_HOME=/tmp/cargo-home RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
+  maturin build --release --interpreter python3
+
+# 方式 2：开发期内直接构建并复制到包目录
 CARGO_HOME=/tmp/cargo-home RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
   cargo build -p engramdb-pyo3 --release
 cp target/release/lib_engramdb.dylib python/engramdb/_engramdb.so
 
-# 或者构建 C-ABI 回退桥
-cargo build -p engramdb-python --release
+# 在 engram-peft 等项目中用 uv 添加本地开发依赖
+cd ~/code/engram-peft
+uv add --editable ../EngramDB/python
 
-PYTHONPATH=python python3 -c "import engramdb; print(engramdb.__version__)"
+# 发布到 PyPI 后可直接：
+# uv add engramdb-python
 ```
 
 ```python
