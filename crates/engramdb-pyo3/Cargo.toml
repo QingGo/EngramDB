@@ -1,6 +1,6 @@
 [package]
 name = "engramdb-pyo3"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "Apache-2.0"
 description = "PyO3 bindings for EngramDB (native extension)"
@@ -13,8 +13,8 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.24.2", features = ["extension-module", "abi3-py310"] }
 libc = "0.2"
-engramdb-core = { path = "../engramdb-core", version = "0.2.4" }
-engramdb-io = { path = "../engramdb-io", version = "0.2.4" }
+engramdb-core = { path = "../engramdb-core", version = "0.2.5" }
+engramdb-io = { path = "../engramdb-io", version = "0.2.5" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"
