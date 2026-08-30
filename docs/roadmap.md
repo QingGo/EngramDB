@@ -253,9 +253,10 @@
 | V1 | ~~没有在真实 Linux/WSL/树莓派上跑适配层~~ | ✅ 已关闭：树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 v0.2.4 wheel smoke | 已由 Session 8 验证，保留为发布前回归项 |
 | V2 | ~~没有在真实 vLLM/SGLang 模型类上验证 hook~~ | ✅ 已关闭：vLLM 0.28.0 + SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 类均通过类级/实例级 patch 与前向验证（Session 9） | 保留为发布前的引擎 smoke 回归项 |
 | V3 | 模型类名/属性名需要用户手动传入 | 缺少自动发现或配置化 | 增加按模型名/配置映射表，或提供 entry-point 注册 |
-| V4 | 端到端性能契约仍未闭环 | 存储面已达标，应用面缺 | WSL+GPU/CPU 实机 PLE decode 曲线 |
+| V4 | 端到端性能契约仍未闭环 | 🔶 已有真实 vLLM embedding A/B（Session 12/13）：raw disk 235-268μs/call，LRU 后 14-23μs/call；完整 decode 仍缺 | 做完整 serving decode 曲线与 GPU 路径 |
 | V5 | 发布工程仍偏人工 | 已修 release-assets，但需要更完整的 preflight/回滚 | 后续接入自动 release 检查 + release notes 资产完整性断言 |
 | V6 | 顺序化视图/访问序调度 | ✅ 核心已验证：冷顺序 785.8MB/s vs 冷随机 86.0MB/s ≈ 9.1×（Session 11） | 剩余为大表复测、冷多线程策略与调度器落地 |
+| V7 | `DiskPleEmbedding` 无缓存，raw disk 路径延迟偏高 | 🔶 已实现行级 LRU 缓存（Session 13）：重复访问从 235-268μs/call 降到 14-23μs/call；首未命中仍走 raw disk | 后续做 Tier/预热/冷启动预取 |
 
 ### 9.3 借鉴增量
 

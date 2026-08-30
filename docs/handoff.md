@@ -69,6 +69,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **真实引擎模型类验证已闭环（Session 9）**：vLLM 0.28.0 与 SGLang 0.5.9 的真实
   `Qwen3ForCausalLM` 均通过类级/实例级 patch，`DiskPleEmbedding` 前向成功。
   **访问序视图已在 WSL 验证（Session 10/11）**：`view build --keys`、校验与冷盘 A/B 均跑通；冷顺序 785.8MB/s vs 冷随机 86.0MB/s（约 9.1×）。
+  **vLLM embedding A/B 已测（Session 12/13）**：raw disk 235-268μs/call；已实现行级 LRU 后降到 14-23μs/call。`DiskPleEmbedding` 首未命中仍走 raw disk，Tier/预热待做（V7）。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

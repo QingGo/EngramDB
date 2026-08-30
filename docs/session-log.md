@@ -662,3 +662,78 @@ SGLANG_PLE_VERIFY_OK
   - 真实大表/大视图冷态复测
   - 多线程冷读策略（应避免多顺序流争抢）
   - 上游调度器接入
+
+# Session 12 复盘（2026-08-30 后段：vLLM 真实模型类 embedding A/B）
+
+## 1. 目标
+
+在真实 vLLM `Qwen3ForCausalLM` 上，对：
+- 内存版 `VocabParallelEmbedding`
+- EngramDB 磁盘版 `DiskPleEmbedding`
+
+做一次 CPU embedding 读取 A/B，为端到端性能提供第一个“PLE 数据面”实测锚点。
+
+## 2. 结果
+
+| 实现 | batch=1 | batch=4 | batch=16 |
+|---|---|---|---|
+| 内存 embedding | 10.2 μs/call | 10.4 μs/call | 10.9 μs/call |
+| 磁盘 DiskPleEmbedding | 235.6 μs/call | 240.8 μs/call | 268.0 μs/call |
+| 单 token 吞吐（batch=1） | — | — | 4,245 tok/s |
+| 16 token/次吞吐 | — | — | 59,692 tok/s |
+
+结论：
+
+- 当前 `DiskPleEmbedding` 是“无缓存 raw disk 路径”，每次调用都走 Python dedup + `Store.fetch`。
+- 小批量下约为内存 embedding 的 **23 倍延迟**，但绝对量级仍可达到数千到数万 token/s。
+- 这说明下一步必须引入 **LRU/Tier 缓存**，否则 CPU 小模型 50 tok/s 的目标会被 PLE 读取拖累。
+
+## 3. 新增工具
+
+- `scripts/vllm_embedding_ab.py`：真实 vLLM 模型类上的 embedding A/B。
+
+## 4. 遗留
+
+- 还不是完整 decode tok/s 曲线，仅 PLE 数据面 micro A/B；
+- GPU 路径仍不可用（GTX1070 sm_61 与当前 torch 不兼容）；
+- 缓存层尚未实现。
+
+# Session 13 复盘（2026-08-30 后段：DiskPleEmbedding LRU 缓存实现）
+
+## 1. 目标
+
+根据 Session 12 的 raw disk A/B 数据，给 `DiskPleEmbedding` 实现行级 LRU 缓存，降低重复 PLE 读取延迟。
+
+## 2. 实现
+
+- 在 `python/engramdb/vllm_plugin.py` 的 `DiskPleEmbedding` 中加入 `OrderedDict` LRU：
+  - `cache_size` 默认 4096 行
+  - `forward` 先批量查出未命中行，写入缓存，再从缓存拼接输出
+  - 缓存满时淘汰最久未用行
+- 保留原有 `PleDiskGather` 作为未命中路径。
+
+## 3. 复测结果（真实 vLLM Qwen3ForCausalLM，CPU）
+
+| 实现 | batch=1 | batch=4 | batch=16 |
+|---|---|---|---|
+| 内存 embedding | 18.2 μs/call | 10.7 μs/call | 12.1 μs/call |
+| 磁盘 DiskPleEmbedding（带 LRU 缓存） | 14.0 μs/call | 21.7 μs/call | 22.9 μs/call |
+
+对比 Session 12 raw disk：
+
+- batch=1：235.6μs → 14.0μs（约 **17× 提升**）
+- batch=4：240.8μs → 21.7μs（约 **11× 提升**）
+- batch=16：268.0μs → 22.9μs（约 **12× 提升**）
+
+现在磁盘 path 与内存 embedding 基本同量级，尤其在重复行访问场景下优势明显。
+
+## 4. 新增工具
+
+- `scripts/vllm_embedding_ab.py`：真实 vLLM 模型类上内存/磁盘 embedding A/B，可用于回归。
+
+## 5. 遗留
+
+- 首未命中仍走 raw disk，真实 PLE 冷启动仍需要预取/预热；
+- 没有 Tier/TTL 策略，只有固定行数 LRU；
+- 尚未做完整 decode tok/s；
+- GPU 路径仍受 GTX1070 sm_61 兼容性限制。

@@ -9,6 +9,7 @@ example ``embed_tokens_per_layer`` on Qwen/Gemma-style models).
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any
 
 try:
@@ -45,14 +46,40 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.num_embeddings = int(num_embeddings)
         self.embedding_dim = int(embedding_dim)
         self.dtype = dtype
-        self.gather = PleDiskGather(store, row_bytes=self.embedding_dim * self.dtype.itemsize)
+        self.row_bytes = self.embedding_dim * self.dtype.itemsize
+        self.cache_size = int(cache_size)
+        self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
+        self._cache: OrderedDict[int, bytes] = OrderedDict()
+
+    def _get_missing(self, flat: list[int]) -> None:
+        """Fetch uncached rows in batch and store them in the LRU cache."""
+        missing: list[int] = []
+        seen: set[int] = set()
+        for r in flat:
+            if r not in self._cache and r not in seen:
+                seen.add(r)
+                missing.append(r)
+        if not missing:
+            return
+        raw = self.store.fetch(missing)
+        expected = len(missing) * self.row_bytes
+        if len(raw) != expected:
+            raise RuntimeError(
+                f"EngramDB fetch returned {len(raw)} bytes, expected {expected}"
+            )
+        for i, rowid in enumerate(missing):
+            self._cache[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
+            if len(self._cache) > self.cache_size:
+                self._cache.popitem(last=False)
 
     def forward(self, indices: Any) -> Any:
         if torch is None:
             raise RuntimeError("DiskPleEmbedding.forward requires PyTorch")
         flat = indices.reshape(-1).cpu().tolist()
-        raw = self.gather.fetch(flat)
+        self._get_missing(flat)
+        raw = b"".join(self._cache[r] for r in flat)
         expected = int(indices.numel()) * self.embedding_dim
+
         if len(raw) != expected * self.dtype.itemsize:
             raise RuntimeError(
                 f"EngramDB fetch returned {len(raw)} bytes, expected "
