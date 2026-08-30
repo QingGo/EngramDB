@@ -3,7 +3,8 @@
 //!
 //! 复现（P4 判定口径）：`p4view build data/real-rows <N> <view.bin> <keys.txt>`
 //! `p4view bench data/real-rows <view.bin> <keys.txt>` / `p4view lat <view.bin> [--warm|--cold]`
-//! 产品面（同构）：`engramdb view build|bench|lat`。
+//! `p4view verify data/real-rows <view.bin> --keys <keys.txt>`
+//! 产品面（同构）：`engramdb view build|bench|lat|verify`。
 
 use std::path::PathBuf;
 
@@ -18,13 +19,14 @@ fn lay() -> Layout {
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
-        println!("usage: p4view <build|bench|lat> <...> [--slot 2560|4096]");
+        println!("usage: p4view <build|bench|lat|verify> <...> [--slot 2560|4096]");
         return;
     };
     let out = match cmd.as_str() {
         "build" => cmd_build(args),
         "bench" => cmd_bench(args),
         "lat" => cmd_lat(args),
+        "verify" => cmd_verify(args),
         _ => Err(format!("unknown {cmd}")),
     };
     if let Err(e) = out {
@@ -118,6 +120,33 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn cmd_verify(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let layout = lay();
+    let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
+    let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let mut keys_path: Option<PathBuf> = None;
+    let mut sub_grams = 0usize;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--keys" => keys_path = Some(PathBuf::from(rest.next().ok_or("keys 路径")?)),
+            "--sub" => {
+                sub_grams = rest
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let batch = BadgeGather::open(&rows_dir, &layout).map_err(|e| e.to_string())?;
+    let keys = match &keys_path {
+        Some(kf) => Some(view::read_keys(kf).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    view::verify_view(&batch, &view_file, keys.as_deref(), sub_grams).map_err(|e| e.to_string())
 }
 
 fn cmd_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
