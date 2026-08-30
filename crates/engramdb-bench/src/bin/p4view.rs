@@ -46,6 +46,7 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let view_out = PathBuf::from(rest.next().ok_or("view.bin")?);
     let keys_out = PathBuf::from(rest.next().ok_or("keys.txt")?);
     let mut slot_bytes: u64 = 4096;
+    let mut verify = false;
     let mut it = rest;
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -56,6 +57,7 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
                     .parse()
                     .map_err(|e: std::num::ParseIntError| e.to_string())?
             }
+            "--verify" => verify = true,
             "--seed" => {
                 let _ = it.next();
             }
@@ -65,6 +67,10 @@ fn cmd_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let batch = BadgeGather::open(&rows_dir, &layout).map_err(|e| e.to_string())?;
     let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
         .map_err(|e| e.to_string())?;
+    if verify {
+        let keys = view::read_keys(&keys_out).map_err(|e| e.to_string())?;
+        view::verify_view(&batch, &view_out, Some(&keys), 0).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
