@@ -1414,8 +1414,29 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
   - `discover_ple()` 返回 `weight_scale` + `layer_multipliers` ✅
   - native / custom multipliers 首 rowid 一致 ✅
 
-## 3. 遗留
+## 3. Phase A 兄弟侧推进（继续开发）
+
+- engram-peft：
+  - `EngramConfig` 新增 `table_store_path` / `table_model_dir` / `table_shards` /
+    `table_rows_per_shard` / `table_width` / `table_dtype` / `table_scale` /
+    `table_cache_size`。
+  - `get_engram_model()` 在构造 `EngramLayer` 前自动消费
+    `table_source="engramdb:store"`：打开 EngramDB Store 并安装 Disk
+    MultiHeadEmbedding；真实 PLE 检测到 `table_model_dir` / `table_scale` 时走
+    `install_real_qwen_ple_embedding`。
+  - 已推 GitHub feature branch：`feat/engramdb-table-source`。
+- qwen35-ple：
+  - `EngineConfig` 增加 `store_path` / `model_dir` / `shards` / `rows_per_shard` /
+    `width` / `scale` / `cache_size` 字段。
+  - 新增 `Qwen35PleConfig.to_engram_config()`，可直接从 YAML 桥接到
+    engram-peft `EngramConfig`。
+  - `run_m0_smoke.py --e2e` 改为配置驱动真实 FP8 注入，命令行增加
+    `--ple-model-dir`。
+  - README 增加“配置即用”与真实 FP8 e2e 示例。
+  - 已推 qwen35-ple main。
+
+## 4. 遗留
 
 - README 最终收编需等下个版本 bump。
 - README 核心示例全量化 smoke 仍需继续。
-- 兄弟项目 `table_source` 自动消费与真实 FP8 e2e 仍未做。
+- 跨仓契约 smoke 纳入兄弟项目 CI 仍待做。

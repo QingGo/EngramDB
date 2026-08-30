@@ -1127,8 +1127,8 @@ LLM-CompileForge  推理 runtime（后续）
 - 下一次 bump 前 README 与代码同一点提交。
 
 #### Phase A：兄弟项目“配置即用”
-- [ ] engram-peft：支持 `table_source="engramdb:store"` 自动调用 EngramDB 注入。
-- [ ] qwen35-ple：真实 e2e 改用 `install_real_qwen_ple_embedding(store, model_dir=...)`。
+- [x] engram-peft：支持 `table_source="engramdb:store"` 自动调用 EngramDB 注入（feature branch `feat/engramdb-table-source`）。
+- [x] qwen35-ple：真实 e2e 改用配置驱动的 `install_real_qwen_ple_embedding` 路径（`run_m0_smoke.py --e2e --ple-model-dir ...`）。
 - [ ] 跨仓契约 smoke 纳入兄弟项目 CI。
 
 **退出标准**：

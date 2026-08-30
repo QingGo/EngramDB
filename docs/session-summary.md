@@ -605,8 +605,8 @@ Phase 0 发布稳定 → Phase A 配置即用 → Phase B 完整模型 E2E → P
 - ❌ 最新 README 尚未进入 v0.2.8 发布物（需下版收编）
 - ✅ `install_real_qwen_ple_embedding` 无来源时改为显式 warning
 - ✅ `rowids_for_seq()` 现支持 `multipliers`/`info`，`discover_ple()` 自动读取 `layer_multipliers`
-- ❌ engram-peft 自动消费 `table_source`
-- ❌ qwen35-ple 真实 e2e 切 FP8 wrapper
+- ✅ engram-peft 自动消费 `table_source`（已推 feature branch）
+- ✅ qwen35-ple 真实 e2e 切 FP8 wrapper（`run_m0_smoke.py --e2e --ple-model-dir`）
 - ❌ Rust native PLE gather + dequant 热路径
 - ❌ 完整模型 E2E（官方类 + 磁盘 PLE）
 - ❌ vLLM / SGLang / llama.cpp serving A/B
@@ -632,9 +632,9 @@ master 已包含 README 刷新 + 系统性思考
 - 🔶 README 示例自动化（rowids/discovery/safetensors 已进 smoke，其余待补）
 
 #### Phase A：兄弟项目配置即用
-- engram-peft `table_source` 自动注入
-- qwen35-ple 真实 FP8 路径
-- 跨仓契约 smoke 进兄弟 CI
+- ✅ engram-peft `table_source` 自动注入（branch `feat/engramdb-table-source`）
+- ✅ qwen35-ple 真实 FP8 路径（M0 e2e 配置驱动）
+- 🔶 跨仓契约 smoke 进兄弟 CI
 
 #### Phase B：真实模型 E2E
 - custom loader / skip ngram_embedding
