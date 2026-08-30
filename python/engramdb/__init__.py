@@ -14,14 +14,17 @@ _USING_PYO3 = False
 _USING_CTYPES = False
 
 try:
-    from ._engramdb import Store, View, read_keys, PageReader
-except ImportError:
+    from ._engramdb import Store, View, read_keys
     try:
-        from ._engramdb import Store, View, read_keys
+        from ._engramdb import PageReader
     except ImportError:
-        pass
-    else:
-        _USING_PYO3 = True
+        PageReader = None  # type: ignore[assignment]
+    try:
+        from ._engramdb import IoUringPageReader
+    except ImportError:
+        IoUringPageReader = None  # type: ignore[assignment]
+except ImportError:
+    pass
 else:
     _USING_PYO3 = True
 

@@ -179,6 +179,124 @@ impl PageReader {
     }
 }
 
+/// Linux io_uring-backed page reader with the same Python API shape as
+/// SGLang's `IoUringReader.read_pages(fds, offsets)`.
+///
+/// This batches all requests in one ring submission per call (up to 256 at a
+/// time), which is the intended path for Linux inference hosts.  The ring is
+/// kept thread-local so repeated calls reuse the same io_uring instance.
+#[cfg(target_os = "linux")]
+#[pyclass]
+struct IoUringPageReader {
+    page_size: usize,
+}
+
+#[cfg(target_os = "linux")]
+#[pymethods]
+impl IoUringPageReader {
+    #[new]
+    #[pyo3(signature = (page_size=4096))]
+    fn new(page_size: usize) -> PyResult<Self> {
+        if page_size == 0 || !page_size.is_power_of_two() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "page_size must be a positive power of two",
+            ));
+        }
+        Ok(Self { page_size })
+    }
+
+    fn read_pages<'py>(
+        &self,
+        py: Python<'py>,
+        file_descriptors: Vec<i32>,
+        offsets: Vec<u64>,
+    ) -> PyResult<Vec<Py<PyBytes>>> {
+        if file_descriptors.len() != offsets.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "file_descriptors and offsets must have the same length",
+            ));
+        }
+
+        const DEPTH: u32 = 256;
+        let page_size = self.page_size;
+        let mut pages: Vec<Vec<u8>> = (0..file_descriptors.len())
+            .map(|_| vec![0u8; page_size])
+            .collect();
+
+        IO_URING_PAGE_READER.with(|sl| -> PyResult<()> {
+            let mut r = sl.borrow_mut();
+            if r.is_none() {
+                let ring = io_uring::IoUring::new(DEPTH).map_err(|e| {
+                    pyo3::exceptions::PyOSError::new_err(format!("IoUring::new: {e}"))
+                })?;
+                *r = Some(ring);
+            }
+            let ring = r.as_mut().unwrap();
+
+            let n = file_descriptors.len();
+            let mut start = 0usize;
+            while start < n {
+                let end = (start + DEPTH as usize).min(n);
+                let count = end - start;
+
+                for i in start..end {
+                    let sqe = io_uring::opcode::Read::new(
+                        io_uring::types::Fd(file_descriptors[i]),
+                        pages[i].as_mut_ptr(),
+                        pages[i].len() as u32,
+                    )
+                    .offset(offsets[i])
+                    .build()
+                    .user_data((i - start) as u64);
+                    unsafe {
+                        ring.submission().push(&sqe).map_err(|e| {
+                            pyo3::exceptions::PyOSError::new_err(format!("SQ push: {e}"))
+                        })?;
+                    }
+                }
+
+                ring.submit_and_wait(count).map_err(|e| {
+                    pyo3::exceptions::PyOSError::new_err(format!("submit_and_wait: {e}"))
+                })?;
+
+                for _ in 0..count {
+                    let cqe = ring.completion().next().ok_or_else(|| {
+                        pyo3::exceptions::PyOSError::new_err("no cqe for io_uring read")
+                    })?;
+                    let res = cqe.result();
+                    let idx = cqe.user_data() as usize;
+                    let page_idx = start + idx;
+                    if res < 0 {
+                        return Err(pyo3::exceptions::PyOSError::new_err(
+                            std::io::Error::from_raw_os_error(-res).to_string(),
+                        ));
+                    }
+                    if res == 0 {
+                        return Err(pyo3::exceptions::PyOSError::new_err(
+                            "EOF while reading page",
+                        ));
+                    }
+                    pages[page_idx].truncate(res as usize);
+                }
+
+                start = end;
+            }
+            Ok(())
+        })?;
+
+        Ok(pages
+            .into_iter()
+            .map(|p| PyBytes::new(py, &p).unbind())
+            .collect())
+    }
+}
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static IO_URING_PAGE_READER: std::cell::RefCell<Option<io_uring::IoUring>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[pyfunction]
 fn read_keys(path: &str) -> PyResult<Vec<u64>> {
     view::read_keys(Path::new(path))
@@ -191,6 +309,8 @@ fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<View>()?;
     #[cfg(unix)]
     m.add_class::<PageReader>()?;
+    #[cfg(target_os = "linux")]
+    m.add_class::<IoUringPageReader>()?;
     m.add_function(wrap_pyfunction!(read_keys, m)?)?;
     Ok(())
 }

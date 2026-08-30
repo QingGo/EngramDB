@@ -31,10 +31,28 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-  pypi:
+  build:
     needs: [preflight]
-    environment: pypi
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x86_64
+            build_args: --compatibility manylinux2014 --zig
+          - os: ubuntu-24.04-arm
+            artifact: linux-aarch64
+            build_args: --compatibility manylinux2014 --zig
+          - os: macos-15-intel
+            artifact: macos-x86_64
+            build_args: ""
+          - os: macos-15
+            artifact: macos-aarch64
+            build_args: ""
+          - os: windows-latest
+            artifact: windows-x86_64
+            build_args: ""
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,11 +60,46 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: install maturin with zig support
         run: python -m pip install "maturin[zig]"
-      - name: build sdist + wheel
+      - name: build wheel
+        run: |
+          cd python
+          maturin build --release --out dist ${{ matrix.build_args }}
+      - name: upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.artifact }}
+          path: python/dist/*
+
+  sdist:
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: install maturin
+        run: python -m pip install maturin
+      - name: build sdist
         run: |
           cd python
           maturin sdist --out dist
-          maturin build --release --out dist --compatibility manylinux2014 --zig
+      - name: upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist/*
+
+  pypi:
+    needs: [build, sdist]
+    environment: pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: show artifacts
+        run: ls -R dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python/dist
+          packages-dir: dist

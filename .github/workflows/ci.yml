@@ -27,3 +27,27 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: test
         run: cargo test --workspace
+
+  python-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: install maturin with zig support
+        run: python -m pip install "maturin[zig]"
+      - name: build wheel
+        run: |
+          cd python
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            maturin build --release --out dist --compatibility manylinux2014 --zig
+          else
+            maturin build --release --out dist
+          fi
+      - name: install wheel
+        run: python -m pip install --force-reinstall python/dist/*.whl
+      - name: run smoke
+        run: python scripts/python_wheel_smoke.py
