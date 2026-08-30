@@ -300,6 +300,22 @@ def test_discover_ple_metadata() -> None:
     print("discover_ple metadata OK")
 
 
+def test_official_loader_filter() -> None:
+    from engramdb.official_loader import filter_ngram_shard_state_dict
+
+    state = {
+        "model.language_model.layers.1.ple.key_proj.weight": "keep",
+        "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight": "drop",
+        "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight": "drop",
+        "model.language_model.layers.1.self_attn.q_proj.weight": "keep",
+    }
+    filtered = filter_ngram_shard_state_dict(state)
+    assert "model.language_model.layers.1.ple.key_proj.weight" in filtered
+    assert "model.language_model.layers.1.self_attn.q_proj.weight" in filtered
+    assert len(filtered) == 2
+    print("official_loader filter OK")
+
+
 def test_rowids_for_seq() -> None:
     rows = engramdb.rowids_for_seq([1000, 99999, 42])
     assert len(rows) == 3
@@ -351,6 +367,7 @@ def main() -> None:
     test_store_and_vllm_gather()
     test_safetensors_i64_reader()
     test_discover_ple_metadata()
+    test_official_loader_filter()
     test_rowids_for_seq()
     test_database_arrow_server()
     test_disk_ple_lru()

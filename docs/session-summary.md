@@ -632,14 +632,14 @@ master 已包含 README 刷新 + 系统性思考
 - 🔶 README 示例自动化（rowids/discovery/safetensors 已进 smoke，其余待补）
 
 #### Phase A：兄弟项目配置即用
-- ✅ engram-peft `table_source` 自动注入（branch `feat/engramdb-table-source`）
+- ✅ engram-peft `table_source` 自动注入（已直接推 master）
 - ✅ qwen35-ple 真实 FP8 路径（M0 e2e 配置驱动）
-- 🔶 跨仓契约 smoke 进兄弟 CI
+- ✅ 跨仓契约 smoke 已加入兄弟 CI（qwen35-ple checkout EngramDB + engram-peft）
 
 #### Phase B：真实模型 E2E
-- custom loader / skip ngram_embedding
-- 官方模型类验证
-- 大内存/云环境 A/B
+- ✅ custom loader / skip ngram_embedding（`engramdb.official_loader` + `qwen4_ple_custom_loader.py`）
+- 🔶 官方模型类验证（代码路径已就绪，待大内存环境实机跑）
+- ❌ 大内存/云环境 A/B
 
 #### Phase C：Rust 性能路径
 - native rowid + gather + dequant

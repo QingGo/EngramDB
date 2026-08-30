@@ -1136,8 +1136,8 @@ LLM-CompileForge  推理 runtime（后续）
 - qwen35-ple 真实 FP8 PLE 全链路跑通。
 
 #### Phase B：真实模型 E2E
-- [ ] 写 custom loader / from_pretrained hook，跳过 `ngram_embedding.shard_*` 大权重。
-- [ ] 在官方 `Qwen4ExpForCausalLM` 或等价类中替换真实 PLE。
+- [x] 写 custom loader / from_pretrained hook，跳过 `ngram_embedding.shard_*` 大权重（`engramdb.official_loader` + `qwen35-ple/scripts/qwen4_ple_custom_loader.py`）。
+- [ ] 在官方 `Qwen4ExpForCausalLM` 或等价类中替换真实 PLE 并实机验证（代码路径已就绪，待大内存环境）。
 - [ ] 找大内存 Linux / 云环境，跑 memory vs disk generate A/B。
 
 **退出标准**：
