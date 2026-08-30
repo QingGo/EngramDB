@@ -344,3 +344,16 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
   - 现在使用 shard 内局部偏移。
 - 新增回归测试 `gather_pp_multishard_uses_local_row_offsets`。
 - 真实 PLE 128 shard 抽样 100 行 SHA-256 完全一致，`PLE_STORE_BIT_EXACT_PASS`。
+
+## 11. Session 20 增补：真实 PLE Layer Bit-Exact + Adapter
+
+- 新增 `python/engramdb/ple_adapter.py`：
+  - `DiskPleNGramEmbedding` 磁盘 PLE adapter；
+  - 自动生成 PLE rowid；
+  - FP8 行反量化；
+  - 顺序 decode 最小历史。
+- 新增 `scripts/ple_layer_bit_exact.py`：
+  - 不加载完整大模型；
+  - 加载真实 PLE 层投影/卷积权重；
+  - 真实 PLE 层 forward 对比 raw-file vs EngramDB；
+  - 结果 `max_abs=0.0`，`PLE_LAYER_BIT_EXACT_PASS`。

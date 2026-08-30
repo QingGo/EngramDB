@@ -1197,3 +1197,33 @@ PLE_STORE_BIT_EXACT_PASS
 
 这是首个“真实 PLE 表 + EngramDB Store”的位级闭环验证。  
 修复前，多分片真实 PLE 数据面即使“能跑”，返回的也是错误行；修复后才有资格继续做真实 PLE adapter 和端到端性能。
+
+# Session 20 增补 2：真实 Qwen4Exp PLE layer bit-exact + 磁盘适配器
+
+## 1. 新增
+
+- `python/engramdb/ple_adapter.py`：
+  - `DiskPleNGramEmbedding`：磁盘版 Qwen PLE n-gram embedding；
+  - 保持官方 rowid 生成逻辑；
+  - 支持 FP8 行 * weight_scale 反量化；
+  - 维护最小 token history，可用于顺序 decode 冷路径。
+- `scripts/ple_layer_bit_exact.py`：
+  - 不加载完整 50GB+ 模型；
+  - 只加载 PLE 层的小型投影/卷积权重；
+  - 使用真实 PLE 128-shard rows 作为 EngramDB Store；
+  - 重新实现 PLE layer forward（projection + RMSNorm + grouped conv + gate）；
+  - 对比 raw-file reference 与 EngramDB disk path。
+
+## 2. 验证结果
+
+```text
+ref_out shape=(1, 5, 10240) dtype=torch.float32
+max_abs=0.000000e+00 allclose=True
+PLE_LAYER_BIT_EXACT_PASS
+```
+
+## 3. 意义
+
+- 真实 Qwen4Exp PLE 层的前向 bit-exact 已闭环。
+- 不需要把 200GB+ 的 ngram embedding 载入 RAM。
+- 下一步只有完整模型级 E2E 仍受整模型内存/资产限制。

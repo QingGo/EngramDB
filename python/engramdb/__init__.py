@@ -191,6 +191,7 @@ from .tables import Database
 from .server import EngramDBServer, EngramDBBinaryServer
 from .service_client import EngramDBClient
 from .ple_discovery import discover_ple
+from .ple_adapter import DiskPleNGramEmbedding
 
 
 def __repr__() -> str:

@@ -745,3 +745,18 @@
   - 增加回归测试。
 - 验证：100 个跨 shard 随机 rowid，SHA-256 完全一致，`PLE_STORE_BIT_EXACT_PASS`。
 - 这是真实 PLE 数据面闭环的第一步。
+
+### 14.7 Session 20 增补：真实 Qwen4Exp PLE layer bit-exact
+
+- 新增 `python/engramdb/ple_adapter.py`（`DiskPleNGramEmbedding`）：
+  - 磁盘 PLE n-gram embedding，FP8 行 + weight_scale 反量化；
+  - 支持顺序 decode 的最小历史状态。
+- 新增 `scripts/ple_layer_bit_exact.py`：
+  - 只加载 PLE 层小型权重，不加载完整大模型；
+  - 真实 PLE 层 forward 与 EngramDB disk path 位级一致。
+- 验证：
+  ```text
+  PLE_LAYER_BIT_EXACT_PASS
+  max_abs=0.0
+  ```
+- 完整模型级 E2E：仍受整模型内存/资产限制，属于后续真实机器任务。
