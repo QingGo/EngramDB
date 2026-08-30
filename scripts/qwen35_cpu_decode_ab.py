@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 import engramdb
 from engramdb.vllm_plugin import patch_named_embedding
@@ -186,6 +186,8 @@ def main() -> None:
                     help="optional CSV output path (default writes under probes/)")
     ap.add_argument("--no-create-store", action="store_true",
                     help="use an existing filled store instead of truncating a sparse placeholder")
+    ap.add_argument("--shuffle", action="store_true",
+                    help="shuffle memory/raw/lru run order to reduce order bias")
     ap.add_argument("--max-raw-slowdown", type=float, default=None,
                     help="fail if raw disk median is slower than memory by more than this fraction, e.g. 0.5 = 50%%")
     ap.add_argument("--max-lru-slowdown", type=float, default=None,
@@ -204,14 +206,12 @@ def main() -> None:
 
     print(f"seed={args.seed} seq={seq} new_tokens={args.new_tokens} reps={args.reps}")
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        local_files_only=True,
-        low_cpu_mem_usage=True,
-        dtype=torch.float32,
-    )
-    hidden = model.config.hidden_size
-    vocab = model.get_input_embeddings().num_embeddings
+    cfg = AutoConfig.from_pretrained(args.model, local_files_only=True)
+    text_cfg = getattr(cfg, "text_config", cfg)
+    hidden = getattr(text_cfg, "hidden_size", None)
+    vocab = getattr(text_cfg, "vocab_size", None)
+    if hidden is None or vocab is None:
+        raise SystemExit("could not determine hidden_size/vocab_size from config")
     width = hidden * 4
     if args.no_create_store:
         print(f"using existing store: {args.store}")
@@ -219,27 +219,41 @@ def main() -> None:
         create_sparse_store(args.store, vocab, width)
 
     results: list[dict[str, Any]] = []
-    mem_stats, tok = bench(model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps)
-    print(f"memory: new_tokens={tok} median={mem_stats['median_s']:.4f}s "
-          f"median_tok/s={mem_stats['median_tok_s']:.2f} p90_tok/s={mem_stats['p90_tok_s']:.2f}")
-    results.append({
-        "label": "memory",
-        "cache_size": 0,
-        "seed": args.seed,
-        "reps": args.reps,
-        "new_tokens": tok,
-        "host": socket.gethostname(),
-        "platform": platform.platform(),
-        "python": sys.version.split()[0],
-        "torch": torch.__version__,
-        "store_path": "",
-        **mem_stats,
-    })
-    del model
+    variants: list[tuple[str, int | None]] = [("memory", None), ("raw", 0), ("lru", args.cache_size)]
+    if args.shuffle:
+        random.Random(args.seed).shuffle(variants)
+        print(f"shuffled variant order: {[v[0] for v in variants]}")
 
-    for label, cache_size in (("raw", 0), ("lru", args.cache_size)):
+    for label, cache_size in variants:
+        if label == "memory":
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model,
+                local_files_only=True,
+                low_cpu_mem_usage=True,
+                dtype=torch.float32,
+            )
+            mem_stats, tok = bench(model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps)
+            print(f"memory: new_tokens={tok} median={mem_stats['median_s']:.4f}s "
+                  f"median_tok/s={mem_stats['median_tok_s']:.2f} p90_tok/s={mem_stats['p90_tok_s']:.2f}")
+            results.append({
+                "label": "memory",
+                "cache_size": 0,
+                "seed": args.seed,
+                "reps": args.reps,
+                "new_tokens": tok,
+                "host": socket.gethostname(),
+                "platform": platform.platform(),
+                "python": sys.version.split()[0],
+                "torch": torch.__version__,
+                "store_path": "",
+                "shuffle": bool(args.shuffle),
+                **mem_stats,
+            })
+            del model
+            continue
+
         disk_model, store = load_disk_model(
-            args.model, args.store, hidden, vocab, cache_size
+            args.model, args.store, hidden, vocab, int(cache_size or 0)
         )
         try:
             disk_embed = disk_model.get_input_embeddings()
@@ -270,6 +284,7 @@ def main() -> None:
                 "python": sys.version.split()[0],
                 "torch": torch.__version__,
                 "store_path": args.store,
+                "shuffle": bool(args.shuffle),
                 "calls": embed_stats.get("calls", 0),
                 "hits": embed_stats.get("hits", 0),
                 "misses": embed_stats.get("misses", 0),
@@ -300,7 +315,7 @@ def main() -> None:
     if args.csv:
         fields = [
             "label", "cache_size", "seed", "reps", "new_tokens",
-            "host", "platform", "python", "torch", "store_path",
+            "host", "platform", "python", "torch", "store_path", "shuffle",
             "median_s", "p90_s", "mean_s", "min_s", "max_s",
             "median_tok_s", "p90_tok_s", "mean_tok_s", "best_tok_s", "worst_tok_s",
             "calls", "hits", "misses", "hit_rate", "inserts", "evictions",

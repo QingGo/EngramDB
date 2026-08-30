@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import random
+import socket
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -97,11 +100,15 @@ def bench(
     new_tokens: int,
     warmup: int = 1,
     reps: int = 7,
+    embedding: Any | None = None,
 ) -> tuple[dict[str, float], int]:
     model.eval()
     input_ids = torch.tensor([seq])
     with torch.no_grad():
         model.generate(input_ids, max_new_tokens=warmup, do_sample=False, use_cache=True)
+
+    if embedding is not None and hasattr(embedding, "reset_stats"):
+        embedding.reset_stats()
 
     times: list[float] = []
     tok = 0
@@ -193,25 +200,53 @@ def main() -> None:
         "seed": args.seed,
         "reps": args.reps,
         "new_tokens": tok,
+        "host": socket.gethostname(),
+        "platform": platform.platform(),
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "store_path": "",
         **mem_stats,
     })
 
     for label, cache_size in (("raw", 0), ("lru", args.cache_size)):
         disk_model, store = load_disk_model(args.model, args.store, hidden, cache_size)
         try:
+            disk_embed = disk_model.get_input_embeddings()
             disk_stats, disk_tok = bench(
-                disk_model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps
+                disk_model, seq, args.new_tokens, warmup=args.warmup, reps=args.reps,
+                embedding=disk_embed,
             )
+            embed_stats = disk_embed.get_stats() if hasattr(disk_embed, "get_stats") else {}
+            hit_rate = 0.0
+            if embed_stats.get("hits", 0) + embed_stats.get("misses", 0) > 0:
+                hit_rate = embed_stats["hits"] / (embed_stats["hits"] + embed_stats["misses"])
+            fetch_ms = embed_stats.get("fetch_s", 0.0) * 1000.0
+            convert_ms = embed_stats.get("convert_s", 0.0) * 1000.0
             print(f"disk({label},cache={cache_size}): new_tokens={disk_tok} "
                   f"median={disk_stats['median_s']:.4f}s "
                   f"median_tok/s={disk_stats['median_tok_s']:.2f} "
-                  f"p90_tok/s={disk_stats['p90_tok_s']:.2f}")
+                  f"p90_tok/s={disk_stats['p90_tok_s']:.2f} "
+                  f"hit_rate={hit_rate:.1%} fetch_ms={fetch_ms:.2f} "
+                  f"convert_ms={convert_ms:.2f}")
             results.append({
                 "label": f"disk-{label}-cache{cache_size}",
                 "cache_size": cache_size,
                 "seed": args.seed,
                 "reps": args.reps,
                 "new_tokens": disk_tok,
+                "host": socket.gethostname(),
+                "platform": platform.platform(),
+                "python": sys.version.split()[0],
+                "torch": torch.__version__,
+                "store_path": args.store,
+                "calls": embed_stats.get("calls", 0),
+                "hits": embed_stats.get("hits", 0),
+                "misses": embed_stats.get("misses", 0),
+                "hit_rate": hit_rate,
+                "inserts": embed_stats.get("inserts", 0),
+                "evictions": embed_stats.get("evictions", 0),
+                "fetch_ms": fetch_ms,
+                "convert_ms": convert_ms,
                 **disk_stats,
             })
         finally:
@@ -233,8 +268,11 @@ def main() -> None:
     if args.csv:
         fields = [
             "label", "cache_size", "seed", "reps", "new_tokens",
+            "host", "platform", "python", "torch", "store_path",
             "median_s", "p90_s", "mean_s", "min_s", "max_s",
             "median_tok_s", "p90_tok_s", "mean_tok_s", "best_tok_s", "worst_tok_s",
+            "calls", "hits", "misses", "hit_rate", "inserts", "evictions",
+            "fetch_ms", "convert_ms",
             "raw_slowdown", "lru_slowdown",
         ]
         Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
