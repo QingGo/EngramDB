@@ -123,7 +123,9 @@ def install_disk_multi_head_embedding(
 
 def install_real_qwen_ple_embedding(
     store: Store,
-    scale: float = 0.0002,
+    scale: float | None = None,
+    model_dir: str | None = None,
+    info: dict[str, Any] | None = None,
     cache_size: int = 4096,
 ) -> None:
     """Patch engram_peft for real Qwen PLE FP8 Store-I rows.
@@ -132,13 +134,29 @@ def install_real_qwen_ple_embedding(
     table: 160-byte FP8 rows with a global ``weight_scale``.  The patched
     MultiHeadEmbedding reads FP8, dequantizes with ``scale``, and returns
     float32 (which downstream projections can cast as needed).
+
+    If ``scale`` is omitted, the function tries to read ``weight_scale`` from
+    ``model_dir`` (or from an already-discovered ``info`` dict).  Only when no
+    source is available does it fall back to the known Qwen3.8-Flash-Next value.
     """
     import torch as _torch
+
+    if scale is None:
+        if info is None and model_dir is not None:
+            from .ple_discovery import discover_ple
+            info = discover_ple(model_dir)
+        if info is not None and info.get("weight_scale") is not None:
+            scale = float(info["weight_scale"])
+        elif model_dir is not None:
+            from .ple_discovery import load_ple_weight_scale
+            scale = float(load_ple_weight_scale(model_dir))
+        else:
+            scale = 0.0002
 
     return install_disk_multi_head_embedding(
         store,
         cache_size=cache_size,
         dtype=_torch.float8_e4m3fn,
-        scale=scale,
+        scale=float(scale),
         output_dtype=_torch.float32,
     )

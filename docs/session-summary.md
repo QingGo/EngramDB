@@ -467,3 +467,27 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
 3. Phase C：Rust 原生性能路径 + 预取
 4. Phase D：服务化 / 推理引擎 A/B
 5. 发布维护：v0.2.7
+
+## 15. Session 23：v0.2.7 CI 修复与 Phase A EngramDB 侧补齐
+
+### 15.1 修复
+
+- `crates/engramdb-python/src/lib.rs` import 顺序不符合 rustfmt，导致所有 preflight 失败。
+- `python/engramdb/__init__.py` 曾 eager import `DiskPleNGramEmbedding`，使无 torch 的 wheel smoke 无法导入。
+- 修复后 Python 包在无 torch 环境下可正常使用 Store / discovery / rowids。
+
+### 15.2 新增
+
+- `load_ple_weight_scale(model_dir)`：从真实 checkpoint 自动读取 FP8 `weight_scale`。
+- `discover_ple()` 自动附带 `weight_scale`。
+- `disk_ple_from_discovery()` / `install_real_qwen_ple_embedding()` 支持自动 scale。
+- Python `rowids_for_seq()`，底层优先 PyO3 → C ABI → 纯 Python。
+- PyO3 native `rowids_for_seq` / `abi_version`。
+- `scripts/c_abi_smoke.py` 并接入 CI。
+
+### 15.3 状态
+
+- fmt / clippy / cargo test 全绿。
+- Python wheel smoke（无 torch）、service smoke、C ABI smoke 全绿。
+- 真实 checkpoint `weight_scale=0.00019931793212890625` 自动读取验证通过。
+- 下一步可发 v0.2.8，或继续 Phase A 的兄弟侧接入。

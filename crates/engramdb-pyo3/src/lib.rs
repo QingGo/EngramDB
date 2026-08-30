@@ -9,6 +9,7 @@ use std::path::Path;
 use engramdb_core::layout::Layout;
 use engramdb_io::batch::BadgeGather;
 use engramdb_io::view::{self, ViewReader};
+use engramdb_keygen::PleSpec;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -303,6 +304,26 @@ fn read_keys(path: &str) -> PyResult<Vec<u64>> {
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
 }
 
+#[pyfunction]
+fn abi_version() -> u32 {
+    1
+}
+
+#[pyfunction]
+fn rowids_for_seq(tokens: Vec<u32>, ple_spec: u32) -> PyResult<Vec<Vec<u32>>> {
+    if ple_spec != 1 {
+        return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "only PLE_QWEN_V1=1 is implemented",
+        ));
+    }
+    let spec = PleSpec::real();
+    Ok(spec
+        .rowids_for_seq(&tokens)
+        .into_iter()
+        .map(|row| row.to_vec())
+        .collect())
+}
+
 #[pymodule]
 fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Store>()?;
@@ -312,5 +333,7 @@ fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(target_os = "linux")]
     m.add_class::<IoUringPageReader>()?;
     m.add_function(wrap_pyfunction!(read_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(abi_version, m)?)?;
+    m.add_function(wrap_pyfunction!(rowids_for_seq, m)?)?;
     Ok(())
 }

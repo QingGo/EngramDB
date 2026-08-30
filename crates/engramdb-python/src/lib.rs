@@ -12,9 +12,9 @@ use std::path::Path;
 use std::ptr;
 
 use engramdb_core::layout::Layout;
-use engramdb_keygen::PleSpec;
 use engramdb_io::batch::BadgeGather;
 use engramdb_io::view::ViewReader;
+use engramdb_keygen::PleSpec;
 
 pub struct StoreHandle {
     batch: BadgeGather<'static>,

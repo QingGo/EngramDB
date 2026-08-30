@@ -66,6 +66,11 @@ def c_abi_smoke() -> None:
     assert rc == 0, f"rowids rc={rc}"
     got = list(out)
 
+    py_wrapper = engramdb.rowids_for_seq([248044, 1000, 99999, 42, 12345])
+    py_flat = [x for row in py_wrapper for x in row]
+    assert py_flat == got, "Python rowids_for_seq differs from C ABI"
+    print("[C ABI] Python rowids_for_seq wrapper matches C ABI")
+
     try:
         if SIBLING_QWEN35.exists():
             import sys

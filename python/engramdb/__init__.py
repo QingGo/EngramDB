@@ -8,7 +8,9 @@ is available, importing the module still works but Store/View will raise on use.
 
 from __future__ import annotations
 
-__version__ = "0.2.7"
+from typing import Any
+
+__version__ = "0.2.8"
 
 _USING_PYO3 = False
 _USING_CTYPES = False
@@ -58,6 +60,17 @@ if not _USING_PYO3:
         _lib_path = _find_library()
         if _lib_path is not None:
             _lib = ctypes.CDLL(_lib_path)
+
+            if hasattr(_lib, "engramdb_abi_version"):
+                _lib.engramdb_abi_version.restype = ctypes.c_uint32
+                _lib.engramdb_rowids_for_seq.restype = ctypes.c_int
+                _lib.engramdb_rowids_for_seq.argtypes = [
+                    ctypes.POINTER(ctypes.c_uint32),
+                    ctypes.c_size_t,
+                    ctypes.POINTER(ctypes.c_uint64),
+                    ctypes.c_size_t,
+                    ctypes.c_uint32,
+                ]
 
             _lib.engramdb_store_open.restype = ctypes.c_void_p
             _lib.engramdb_store_open.argtypes = [
@@ -190,8 +203,65 @@ if not _USING_PYO3:
 from .tables import Database
 from .server import EngramDBServer, EngramDBBinaryServer
 from .service_client import EngramDBClient
-from .ple_discovery import discover_ple
-from .ple_adapter import DiskPleNGramEmbedding
+from .ple_discovery import discover_ple, load_ple_weight_scale
+
+PLE_QWEN_V1 = 1
+ENG_DEEPSEEK_V1 = 2
+
+
+def abi_version() -> int:
+    """Return the EngramDB C ABI version implemented by this package."""
+    if _USING_PYO3 and hasattr(_engramdb, "abi_version"):
+        return int(_engramdb.abi_version())
+    if _USING_CTYPES and hasattr(_lib, "engramdb_abi_version"):
+        return int(_lib.engramdb_abi_version())
+    return 1
+
+
+def rowids_for_seq(
+    tokens: Any,
+    ple_spec: int = PLE_QWEN_V1,
+    multipliers: list[int] | None = None,
+) -> list[list[int]]:
+    """Return PLE/Engram rowids for a token sequence.
+
+    The returned shape is ``[len(tokens), 16]`` for ``PLE_QWEN_V1``.  The
+    implementation prefers the native Rust path (PyO3 or the C ABI) and falls
+    back to the pure-Python reference when no native binding is installed.
+    """
+    if ple_spec != PLE_QWEN_V1:
+        raise NotImplementedError(
+            f"ple_spec {ple_spec} is not implemented (only PLE_QWEN_V1=1)"
+        )
+    if hasattr(tokens, "tolist"):
+        tokens = tokens.tolist()
+    tok = [int(x) for x in tokens]
+
+    if _USING_PYO3 and hasattr(_engramdb, "rowids_for_seq"):
+        return [list(r) for r in _engramdb.rowids_for_seq(tok, ple_spec)]
+    if _USING_CTYPES and hasattr(_lib, "engramdb_rowids_for_seq"):
+        n = len(tok)
+        if n == 0:
+            return []
+        arr = (ctypes.c_uint32 * n)(*tok)
+        out = (ctypes.c_uint64 * (n * 16))()
+        rc = _lib.engramdb_rowids_for_seq(arr, n, out, n * 16, ple_spec)
+        if rc != 0:
+            raise OSError(f"engramdb_rowids_for_seq failed with code {rc}")
+        return [list(out[i * 16:(i + 1) * 16]) for i in range(n)]
+
+    from .ple_adapter import ple_rowids
+
+    if multipliers is None:
+        multipliers = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+    return ple_rowids(tok, multipliers)
+
+
+def __getattr__(name: str):
+    if name == "DiskPleNGramEmbedding":
+        from .ple_adapter import DiskPleNGramEmbedding
+        return DiskPleNGramEmbedding
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __repr__() -> str:

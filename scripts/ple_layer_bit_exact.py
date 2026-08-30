@@ -213,10 +213,8 @@ def main() -> None:
         ),
     }
     # layer_multipliers are in spec already; weight_scale dequantizes FP8 rows.
-    with __import__("safetensors").safe_open(
-        str(MODEL_DIR / "model-00005-of-00131.safetensors"), framework="pt"
-    ) as f:
-        scale = float(f.get_tensor("model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale").to(torch.float32).item())
+    from engramdb.ple_discovery import load_ple_weight_scale
+    scale = float(load_ple_weight_scale(MODEL_DIR))
 
     # Open the real PLE Store and create a disk-backed n-gram embedding.
     store = engramdb.Store(

@@ -20,6 +20,7 @@ Example::
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,12 @@ def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
         base = shard_keys[0].split("ngram_embedding.shard_", 1)[0]
         shard_pattern = base + "ngram_embedding.shard_{shard}.weight"
 
+    weight_scale = None
+    try:
+        weight_scale = load_ple_weight_scale(root)
+    except Exception:
+        weight_scale = None
+
     return {
         "architecture": config.get("architectures"),
         "model_type": config.get("model_type"),
@@ -87,5 +94,88 @@ def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
         "ple_weight_key_count": len(ple_keys),
         "ngram_embedding_shard_count": shard_count,
         "ple_shard_pattern": shard_pattern,
+        "weight_scale": weight_scale,
         "example_ple_keys": ple_keys[:8],
     }
+
+
+def _bf16_to_float(bits: int) -> float:
+    sign = (bits >> 15) & 1
+    exp = (bits >> 7) & 0xff
+    mant = bits & 0x7f
+    if exp == 0:
+        v = mant * (2.0 ** -7) * (2.0 ** -126)
+    elif exp == 0xff:
+        v = float("inf") if mant == 0 else float("nan")
+    else:
+        v = (1.0 + mant / 128.0) * (2.0 ** (exp - 127))
+    return -v if sign else v
+
+
+def _f16_to_float(bits: int) -> float:
+    sign = (bits >> 15) & 1
+    exp = (bits >> 10) & 0x1f
+    mant = bits & 0x3ff
+    if exp == 0:
+        v = mant * (2.0 ** -10) * (2.0 ** -14)
+    elif exp == 0x1f:
+        v = float("inf") if mant == 0 else float("nan")
+    else:
+        v = (1.0 + mant / 1024.0) * (2.0 ** (exp - 15))
+    return -v if sign else v
+
+
+def read_safetensors_scalar(path: str | Path, tensor_name: str) -> float:
+    """Read a small scalar tensor from a safetensors file without loading it."""
+    path = Path(path)
+    with open(path, "rb") as f:
+        header_len = struct.unpack("<Q", f.read(8))[0]
+        header = json.loads(f.read(header_len))
+        entry = header.get(tensor_name)
+        if entry is None:
+            raise KeyError(f"tensor {tensor_name!r} not in {path.name}")
+        start, end = entry["data_offsets"]
+        dtype = entry.get("dtype", "F32")
+        f.seek(8 + header_len + start)
+        raw = f.read(end - start)
+    if dtype == "F32":
+        if len(raw) != 4:
+            raise ValueError(f"expected 4 bytes for F32 scalar, got {len(raw)}")
+        return struct.unpack("<f", raw)[0]
+    if dtype in ("BF16", "F16"):
+        if len(raw) != 2:
+            raise ValueError(f"expected 2 bytes for {dtype} scalar, got {len(raw)}")
+        u = struct.unpack("<H", raw)[0]
+        return _bf16_to_float(u) if dtype == "BF16" else _f16_to_float(u)
+    raise NotImplementedError(f"cannot read scalar dtype {dtype!r}")
+
+
+def load_ple_weight_scale(
+    model_dir: str | Path,
+    tensor_name: str | None = None,
+) -> float:
+    """Read the real PLE FP8 ``weight_scale`` from a Qwen checkpoint.
+
+    The returned value is exactly what DPE FP8 adapters need to dequantize
+    stored 160-byte PLE rows.
+    """
+    root = Path(model_dir)
+    index_path = root / "model.safetensors.index.json"
+    if not index_path.exists():
+        raise FileNotFoundError(f"missing safetensors index: {index_path}")
+    index = json.loads(index_path.read_text())
+    weight_map = index["weight_map"]
+    if tensor_name is not None:
+        key = tensor_name
+    else:
+        key = next(
+            (
+                k for k in weight_map
+                if k.endswith(".ngram_embedding.weight_scale")
+                or k.endswith("ngram_embedding.weight_scale")
+            ),
+            None,
+        )
+    if key is None:
+        raise KeyError("no PLE ngram_embedding.weight_scale in checkpoint index")
+    return read_safetensors_scalar(root / weight_map[key], key)

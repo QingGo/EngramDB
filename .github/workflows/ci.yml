@@ -58,5 +58,10 @@ jobs:
         run: python scripts/python_wheel_smoke.py
       - name: run service smoke
         run: python scripts/service_smoke.py
+      - name: build C ABI
+        run: cargo build --release -p engramdb-python
+      - name: run C ABI smoke
+        run: python scripts/c_abi_smoke.py
+
       - name: check decode baselines
         run: python scripts/decode_baseline_check.py

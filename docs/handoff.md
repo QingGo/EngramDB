@@ -79,6 +79,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
     **可信 CPU decode 基线与真实权重 bit-exact 已闭环（Session 19）**：固定 seed/reps>=5/median+p90；`probes/cpu_tiny_baseline.csv`、`probes/qwen35_cpu_baseline.csv`、`scripts/decode_baseline_check.py` 已入库；`scripts/qwen35_bit_exact.py` 实机 `BIT_EXACT_PASS`；真实权重 store 下 Qwen3.5 raw 慢 13.0%、LRU 慢 19.2%。
   **真实 PLE 自动发现已定位（Session 19 增补）**：`python/engramdb/ple_discovery.py` + `scripts/inspect_ple_attributes.py`；真 Qwen3.8/Qwen4Exp 的 PLE 表路径为 `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_*.weight`，而 Qwen3.5-0.8B 没有 PLE。
   **真实 PLE 数据面与兄弟项目服务已闭环（Session 20-22）**：修复 `gather_pp` 多分片偏移；真实 128-shard Store bit-exact；`DiskPleNGramEmbedding` adapter；真实 PLE layer forward bit-exact；C ABI `rowids_for_seq` / `abi_version`；`install_real_qwen_ple_embedding`；`sibling_contract_smoke.py` 通过。完整模型 E2E 仍受环境限制。
+  **v0.2.7 CI 修复 + Phase A EngramDB 侧补齐（Session 23）**：修复 rustfmt import 顺序与无 torch 环境导入失败；新增 `load_ple_weight_scale` 自动读取 checkpoint scale；新增 Python `rowids_for_seq()`；PyO3 native `rowids_for_seq`；C ABI smoke 进入 CI；本地 fmt/clippy/test/python smoke/C ABI smoke 全绿。
 
 
 

@@ -1311,3 +1311,36 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
 ## 4. 后续
 
 详见 roadmap 第 16 节。
+
+# Session 23 复盘（2026-08-30 后段：修复 v0.2.7 CI + 补完 Phase A EngramDB 侧）
+
+## 1. 发现与修复
+
+- v0.2.7 CI 失败根因：
+  - `crates/engramdb-python/src/lib.rs` 中 `engramdb_keygen` import 顺序不符合 rustfmt，导致所有 preflight 的 `cargo fmt --all --check` 失败。
+  - `__init__.py` 顶层 eager import `DiskPleNGramEmbedding` 会强制加载 PyTorch，导致无 torch 的 python wheel smoke 失败。
+- 修复：
+  - 调整 import 顺序。
+  - `DiskPleNGramEmbedding` 改为 lazy attribute import；`ple_adapter.py` 改为可选 PyTorch。
+  - Python 包现在可在无 torch 环境导入并使用 Store / rowids / discovery。
+
+## 2. 新增能力
+
+- `engramdb.load_ple_weight_scale(model_dir)`：从真实 Qwen checkpoint 自动读取 FP8 `weight_scale`（支持 BF16/F16/F32 标量）。
+- `discover_ple()` 返回中自动包含 `weight_scale`。
+- `disk_ple_from_discovery(store, info)` 未传 `scale` 时自动使用 discovery 中的 weight_scale。
+- `install_real_qwen_ple_embedding(store, model_dir=...)` 支持自动读取 scale。
+- Python `engramdb.rowids_for_seq(tokens)` 公共 API：优先 PyO3 native，其次 C ABI，最后纯 Python。
+- PyO3 新增 native `rowids_for_seq` / `abi_version`。
+- C ABI smoke 独立脚本 `scripts/c_abi_smoke.py` 并接入 CI。
+
+## 3. 验证
+
+- `cargo fmt --all --check` ✅
+- `cargo clippy --all-targets --all-features -- -D warnings` ✅
+- `cargo test --workspace` ✅
+- `python_wheel_smoke.py`（无 torch）✅
+- `service_smoke.py` ✅
+- `c_abi_smoke.py` ✅
+- 真实 Qwen checkpoint `weight_scale` 读取 ✅（0.00019931793212890625）
+- PyO3 / C ABI / 纯 Python rowids 三者一致 ✅

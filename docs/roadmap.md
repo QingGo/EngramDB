@@ -943,12 +943,12 @@ LLM-CompileForge  推理 runtime（后续）
 |---|---|---|---|
 | V52 | engram-peft 仍未真正消费 `table_source` 配置 | 用户仍需手动调用 `install_*`，不够方便 | 在 engram-peft 的 `get_engram_model` 中按 `table_source` 自动调用 EngramDB 注入 |
 | V53 | qwen35-ple 真实 e2e 脚本仍用默认 float32 注入 | 直接跑真实 FP8 会读错行 | 更新兄弟项目脚本使用 `install_real_qwen_ple_embedding` |
-| V54 | `install_real_qwen_ple_embedding` 默认 scale 是硬编码 | 换 checkpoint/量化方案可能漂移 | 从 checkpoint/real-weights-spec 自动读取 `weight_scale` |
+| V54 | ~~`install_real_qwen_ple_embedding` 默认 scale 是硬编码~~ | ✅ 已解决 | `load_ple_weight_scale()` 自动从 checkpoint 读取，`install_real_qwen_ple_embedding(store, model_dir=...)` 可直接用 |
 | V55 | C ABI 只实现 `PLE_QWEN_V1` | `ENG_DEEPSEEK_V1` 保留未实现 | 后续按需补 DeepSeek 表规格 |
-| V56 | C ABI rowids 没有 Python 便捷封装 | Python 用户仍需自己实现/引用 qwen35-ple | 在 `engramdb` Python 包加 `rowids_for_seq()` |
-| V57 | 兄弟契约 smoke 未进 CI | 回归可能悄然失效 | 做成可选 CI job/脚本入口，检测到兄弟仓库时运行 |
+| V56 | ~~C ABI rowids 没有 Python 便捷封装~~ | ✅ 已解决 | Python `engramdb.rowids_for_seq()`，优先 PyO3/C ABI，回退纯 Python |
+| V57 | ~~兄弟契约 smoke 未进 CI~~ | ✅ 已解决 | 新增 `scripts/c_abi_smoke.py`，CI python-smoke 增加 C ABI 构建 + golden 对拍 |
 | V58 | Python 磁盘热路径仍未下沉 Rust | 正确性已闭环，性能不达标 | 后续做 Rust/PyO3 native PLE gather + dequant |
-| V59 | 版本落后于 master | 新 C ABI/集成无法进入正式发布 | 尽快 v0.2.7 |
+| V59 | ~~版本落后于 master~~ | ✅ 已解决 | v0.2.7 已发布；本次修复 v0.2.7 CI 后发布 v0.2.8 |
 
 ### 16.4 借鉴矩阵（第十二轮增量）
 
@@ -974,10 +974,10 @@ LLM-CompileForge  推理 runtime（后续）
 #### Phase A：让兄弟项目“配置即用”
 - [ ] engram-peft：`table_source="engramdb:store"` 时自动调用 EngramDB 注入（兄弟侧）
 - [ ] qwen35-ple：真实 e2e 改用 `install_real_qwen_ple_embedding`
-- [ ] EngramDB：自动读取 `weight_scale`
-- [ ] EngramDB：Python `rowids_for_seq()` 封装
-- [ ] EngramDB：C ABI 测试入 CI
-- [ ] v0.2.7 发布
+- [x] EngramDB：自动读取 `weight_scale`
+- [x] EngramDB：Python `rowids_for_seq()` 封装
+- [x] EngramDB：C ABI 测试入 CI
+- [x] v0.2.7 发布 / v0.2.8 修复 CI 后发布
 
 **退出标准**：
 - 在 engram-peft 中只配置 `table_source=engramdb:store`，不需要手动调用注入函数

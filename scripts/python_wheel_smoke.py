@@ -196,6 +196,14 @@ def test_disk_ple_lru() -> None:
             store.close()
 
 
+def test_rowids_for_seq() -> None:
+    rows = engramdb.rowids_for_seq([1000, 99999, 42])
+    assert len(rows) == 3
+    assert all(len(r) == 16 for r in rows)
+    assert rows[0][0] == 1876085
+    print("rowids_for_seq OK:", rows[0][:4])
+
+
 def main() -> None:
     from importlib.metadata import version as _dist_version
 
@@ -222,6 +230,7 @@ def main() -> None:
 
     test_page_reader()
     test_store_and_vllm_gather()
+    test_rowids_for_seq()
     test_database_arrow_server()
     test_disk_ple_lru()
     print("python wheel smoke OK")

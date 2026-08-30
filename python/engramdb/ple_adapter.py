@@ -25,8 +25,16 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import torch
-from torch import nn
+try:
+    import torch
+    from torch import nn
+except ImportError:  # pragma: no cover - optional dependency
+    torch = None  # type: ignore[assignment]
+
+    class _DummyModule:
+        pass
+
+    nn = type("nn", (), {"Module": _DummyModule})  # type: ignore[assignment]
 
 from .vllm_plugin import DiskPleEmbedding
 
@@ -82,7 +90,7 @@ def disk_ple_from_discovery(
     store: Any,
     info: dict[str, Any],
     layer_multipliers: list[int] | None = None,
-    scale: float = 1.0,
+    scale: float | None = None,
     cache_size: int = 4096,
 ) -> "DiskPleNGramEmbedding":
     """Build a disk PLE adapter from metadata returned by ``discover_ple``.
@@ -90,18 +98,24 @@ def disk_ple_from_discovery(
     This is the automatic path: feed in the output of
     ``engramdb.ple_discovery.discover_ple(model_dir)`` and it derives the
     embedding width and number of n-gram heads from the real model config.
+    If ``scale`` is omitted, the ``weight_scale`` from discovery is used
+    automatically when available.
     """
     from .ple_discovery import discover_ple  # noqa: F401  (kept for discoverability)
 
     if not info:
         raise ValueError("PLE discovery returned no PLE metadata")
+    if scale is None:
+        scale = info.get("weight_scale")
+        if scale is None:
+            scale = 1.0
     ngram_heads = (int(info["ngram_size"]) - 1) * int(info["heads_per_ngram"])
     return DiskPleNGramEmbedding(
         store=store,
         embedding_dim=int(info["ple_embed_dim"]),
         num_heads=ngram_heads,
         layer_multipliers=layer_multipliers,
-        scale=scale,
+        scale=float(scale),
         cache_size=cache_size,
     )
 
@@ -169,11 +183,15 @@ class DiskPleNGramEmbedding(nn.Module):
         num_heads: int = PLE_HEADS,
         layer_multipliers: list[int] | None = None,
         scale: float = 1.0,
-        dtype: Any = torch.float8_e4m3fn,
+        dtype: Any | None = None,
         cache_size: int = 4096,
         eos: int = PLE_EOS,
     ) -> None:
         super().__init__()
+        if dtype is None:
+            if torch is None:
+                raise ImportError("DiskPleNGramEmbedding requires PyTorch")
+            dtype = torch.float8_e4m3fn
         self.num_embeddings = num_embeddings or padded_vocab_size()
         self.embedding_dim = int(embedding_dim)
         self.num_heads = int(num_heads)
