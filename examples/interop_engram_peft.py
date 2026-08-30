@@ -174,6 +174,24 @@ def engram_layer_check() -> None:
     except Exception:
         pass
 
+    # Older torch builds (e.g. 2.2.x) may not have nn.RMSNorm.  Add a simple
+    # fallback so the engram-peft code path can still run for this smoke test.
+    try:
+        import torch.nn as nn
+        if not hasattr(nn, "RMSNorm"):
+            class _RMSNorm(nn.Module):
+                def __init__(self, dim: int, eps: float = 1e-6):
+                    super().__init__()
+                    self.weight = nn.Parameter(torch.ones(dim))
+                    self.eps = eps
+
+                def forward(self, x):
+                    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.weight
+
+            nn.RMSNorm = _RMSNorm
+    except Exception:
+        pass
+
     try:
         from engram_peft import EngramConfig, EngramLayer
     except Exception as exc:  # pragma: no cover - optional dependency

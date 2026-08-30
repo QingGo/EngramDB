@@ -31,6 +31,21 @@ if not hasattr(typing, "override"):
     typing.override = typing_extensions.override
 
 import torch
+import torch.nn as nn
+
+# Older stable torch (e.g. 2.2.x) may not expose nn.RMSNorm.
+if not hasattr(nn, "RMSNorm"):
+    class _RMSNorm(nn.Module):
+        def __init__(self, dim: int, eps: float = 1e-6):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(dim))
+            self.eps = eps
+
+        def forward(self, x):
+            return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.weight
+
+    nn.RMSNorm = _RMSNorm
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import engramdb
