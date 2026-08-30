@@ -367,3 +367,13 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
 - 完整模型 E2E ❌（环境/内存限制）
 - 新增技术债 V44–V51
 - 计划进入 Phase A：完整模型 custom loader + 官方类验证
+
+## 13. Session 22：服务兄弟项目与系统性回顾
+
+- 补齐 C ABI：rowids + abi version
+- 增强 DiskMultiHeadEmbedding FP8 反量化
+- 新增 install_real_qwen_ple_embedding
+- 新增 sibling_contract_smoke.py
+- qwen35-ple M0 quick 通过
+- 新增技术债 V52–V59
+- 计划聚焦：配置即用、真实 e2e、Rust 热路径

@@ -1283,3 +1283,31 @@ SIBLING_CONTRACT_SMOKE_OK
 ```
 
 engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径已预留。
+
+# Session 22 复盘（2026-08-30 后段：服务兄弟项目 + 系统性思考）
+
+## 1. 目标
+
+参考 qwen35-ple / engram-peft 两个兄弟项目，确认 EngramDB 能否在实际协作中：
+- 保证正确性（rowids、FP8、bit-exact）
+- 方便使用（配置/API）
+- 为高性能热路径做准备
+
+## 2. 完成
+
+- C ABI：`engramdb_abi_version`、`engramdb_rowids_for_seq`
+- `DiskMultiHeadEmbedding` 支持 FP8 + weight_scale
+- `install_real_qwen_ple_embedding`
+- `scripts/sibling_contract_smoke.py`
+- qwen35-ple M0 quick 通过
+
+## 3. 技术债
+
+新增 V52–V59，核心：
+- engram-peft 尚未真正消费 `table_source`
+- qwen35-ple 真实 e2e 仍用默认 float32 注入
+- scale 自动发现、C ABI Python 封装、CI、Rust 热路径
+
+## 4. 后续
+
+详见 roadmap 第 16 节。

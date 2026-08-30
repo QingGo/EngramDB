@@ -897,3 +897,111 @@
   - 可选 engram-peft import 检查。
 - 现状：qwen35-ple / engram-peft 依赖的存储与磁盘注入点已经可用；真实 PLE FP8 注入需要调用
   `install_real_qwen_ple_embedding`（带 scale），而不是默认 float32 注入。
+
+## 16. 第十二轮系统性思考（Session 22：服务兄弟项目 qwen35-ple / engram-peft）
+
+### 16.1 终极目标再锚定
+
+不变：
+
+> **让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。**
+
+本轮之后，EngramDB 在四仓库协作中的位置更清晰：
+
+```text
+qwen35-ple        实验编排/评测
+      ▲
+engram-peft       模型/训练层
+      ▲
+EngramDB          PLE rowids + 存储 + C ABI + 磁盘注入
+      ▲
+LLM-CompileForge  推理 runtime（后续）
+```
+
+核心职责：
+
+- 拥有 rowid 语义和 golden
+- 拥有 Store-I / Store-P 数据面
+- 提供 C ABI / Python API
+- 提供 engram-peft 的磁盘注入点
+- 不侵入模型/训练/推理逻辑
+
+### 16.2 本轮完成
+
+| 项 | 状态 |
+|---|---|
+| `engramdb_abi_version` | ✅ |
+| `engramdb_rowids_for_seq` | ✅ 与 qwen35-ple 对拍一致 |
+| `DiskMultiHeadEmbedding` FP8 反量化 | ✅ |
+| `install_real_qwen_ple_embedding` | ✅ |
+| `scripts/sibling_contract_smoke.py` | ✅ |
+| qwen35-ple M0 quick | ✅ 通过 |
+
+### 16.3 本轮新技术债（V52 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V52 | engram-peft 仍未真正消费 `table_source` 配置 | 用户仍需手动调用 `install_*`，不够方便 | 在 engram-peft 的 `get_engram_model` 中按 `table_source` 自动调用 EngramDB 注入 |
+| V53 | qwen35-ple 真实 e2e 脚本仍用默认 float32 注入 | 直接跑真实 FP8 会读错行 | 更新兄弟项目脚本使用 `install_real_qwen_ple_embedding` |
+| V54 | `install_real_qwen_ple_embedding` 默认 scale 是硬编码 | 换 checkpoint/量化方案可能漂移 | 从 checkpoint/real-weights-spec 自动读取 `weight_scale` |
+| V55 | C ABI 只实现 `PLE_QWEN_V1` | `ENG_DEEPSEEK_V1` 保留未实现 | 后续按需补 DeepSeek 表规格 |
+| V56 | C ABI rowids 没有 Python 便捷封装 | Python 用户仍需自己实现/引用 qwen35-ple | 在 `engramdb` Python 包加 `rowids_for_seq()` |
+| V57 | 兄弟契约 smoke 未进 CI | 回归可能悄然失效 | 做成可选 CI job/脚本入口，检测到兄弟仓库时运行 |
+| V58 | Python 磁盘热路径仍未下沉 Rust | 正确性已闭环，性能不达标 | 后续做 Rust/PyO3 native PLE gather + dequant |
+| V59 | 版本落后于 master | 新 C ABI/集成无法进入正式发布 | 尽快 v0.2.7 |
+
+### 16.4 借鉴矩阵（第十二轮增量）
+
+| 来源 | 借什么 | 不借什么 | 目标 |
+|---|---|---|---|
+| **engram-peft** | config 驱动 `table_source`、引擎抽象、训练侧薄层 | 不借训练/模型实现 | 让 EngramDB 变得“配置即用” |
+| **qwen35-ple** | 四仓库契约、golden 测试、编排层 | 不借实验逻辑 | 保证跨仓库正确性 |
+| **HuggingFace** | model loading hook、skip 大权重、from_pretrained | 不重写模型 | 完整模型 E2E 加载路径 |
+| **vLLM / SGLang / llama.cpp** | engine adapter、serving 替换 | 不复制推理 | 真实服务引擎接入 |
+| **Rust / PyO3 / Arrow** | 原生热路径、零拷贝 | 不借查询引擎 | 性能目标 |
+| **DuckDB / SQLite** | 嵌入式、manifest、cheksum | 不借 SQL | 产品形态 |
+| **MLPerf / fio** | 固定基准、阈值、CSV | 只做测量 | 可回归性能结论 |
+
+关键不冲突：
+
+- EngramDB 不拥有模型/训练/推理逻辑
+- 兄弟项目不拥有 rowid/存储/数据面
+- 所有跨仓改动通过契约 + golden 守门
+- 每个仓库只改自己职责内代码，调用方通过 API/config 组合
+
+### 16.5 下一步计划
+
+#### Phase A：让兄弟项目“配置即用”
+- [ ] engram-peft：`table_source="engramdb:store"` 时自动调用 EngramDB 注入（兄弟侧）
+- [ ] qwen35-ple：真实 e2e 改用 `install_real_qwen_ple_embedding`
+- [ ] EngramDB：自动读取 `weight_scale`
+- [ ] EngramDB：Python `rowids_for_seq()` 封装
+- [ ] EngramDB：C ABI 测试入 CI
+- [ ] v0.2.7 发布
+
+**退出标准**：
+- 在 engram-peft 中只配置 `table_source=engramdb:store`，不需要手动调用注入函数
+- qwen35-ple 真实 e2e 脚本能正确读 FP8 PLE
+
+#### Phase B：真实模型 E2E
+- full-model custom loader + skip ngram_embedding
+- 大内存/云环境
+- 真实 PLE generate A/B
+
+#### Phase C：性能
+- Rust/PyO3 native rowid + gather + dequant
+- 预取重叠
+- LRU hit-rate 门禁
+
+#### Phase D：服务/推理
+- vLLM/SGLang/llama.cpp serving
+- Unix socket / Arrow / 连接池
+- C ABI / runtime 集成
+
+### 16.6 本轮纪律
+
+1. **跨仓库正确性必须以 golden/契约守门**，不能只靠本地自测。
+2. **FP8/量化必须由存储层统一负责**，使用方只消费反量化后数值。
+3. **配置驱动优先于手动调用**，方便使用才能成为基础设施。
+4. **环境限制照实记录**，不能把“没跑”当成“能跑”。
+5. **性能最终必须下沉 Rust**，Python 只负责语义和编排。
