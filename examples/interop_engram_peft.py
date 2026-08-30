@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import struct
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
 
 try:
@@ -61,6 +62,7 @@ class DiskMultiHeadEmbedding(nn.Module if nn is not None else object):
         embedding_dim_per_head: int,
         store: engramdb.Store | None = None,
         dtype=torch.float32,
+        cache_size: int = 4096,
         **kwargs,
     ):
         super().__init__()
@@ -72,6 +74,8 @@ class DiskMultiHeadEmbedding(nn.Module if nn is not None else object):
         self.store = store
         self.dtype = dtype
         self._sparse = False
+        self._cache: OrderedDict[int, bytes] = OrderedDict()
+        self._cache_size = max(0, int(cache_size))
 
     def forward(self, hash_indices):
         if self.store is None:
@@ -79,7 +83,27 @@ class DiskMultiHeadEmbedding(nn.Module if nn is not None else object):
         # Same logical index mapping as the in-memory MultiHeadEmbedding.
         shifted = hash_indices.to(self.offsets.device) + self.offsets
         flat = shifted.reshape(-1).cpu().tolist()
-        raw = self.store.fetch(flat)
+        row_len = self.embedding_dim_per_head * self.dtype.itemsize
+
+        # Small LRU cache: hits are served from Python memory, misses are fetched
+        # in one EngramDB batch call.
+        misses: list[int] = []
+        for i in flat:
+            if i not in self._cache:
+                misses.append(i)
+        if misses:
+            raw = self.store.fetch(misses)
+            if len(raw) != len(misses) * row_len:
+                raise RuntimeError(
+                    f"disk fetch returned {len(raw)} bytes for {len(misses)} rows"
+                )
+            for j, idx in enumerate(misses):
+                self._cache[idx] = raw[j * row_len:(j + 1) * row_len]
+                if self._cache_size > 0:
+                    while len(self._cache) > self._cache_size:
+                        self._cache.popitem(last=False)
+
+        raw = b"".join(self._cache[i] for i in flat)
         expected = int(shifted.numel()) * self.embedding_dim_per_head
         if len(raw) != expected * self.dtype.itemsize:
             raise RuntimeError(
