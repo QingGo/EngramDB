@@ -112,6 +112,73 @@ impl View {
     }
 }
 
+/// Page reader compatible with the shape of SGLang's `IoUringReader.read_pages`.
+///
+/// This is a pread-based implementation (Unix); it is a useful integration point
+/// for engines that already have raw file descriptors and offset lists.
+#[cfg(unix)]
+#[pyclass(unsendable)]
+struct PageReader {
+    page_size: usize,
+}
+
+#[cfg(unix)]
+#[pymethods]
+impl PageReader {
+    #[new]
+    #[pyo3(signature = (page_size=4096))]
+    fn new(page_size: usize) -> PyResult<Self> {
+        if page_size == 0 || !page_size.is_power_of_two() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "page_size must be a positive power of two",
+            ));
+        }
+        Ok(Self { page_size })
+    }
+
+    fn read_pages<'py>(
+        &self,
+        py: Python<'py>,
+        file_descriptors: Vec<i32>,
+        offsets: Vec<u64>,
+    ) -> PyResult<Vec<Py<PyBytes>>> {
+        if file_descriptors.len() != offsets.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "file_descriptors and offsets must have the same length",
+            ));
+        }
+        let page_size = self.page_size;
+        let mut pages = Vec::with_capacity(file_descriptors.len());
+        for (fd, offset) in file_descriptors.into_iter().zip(offsets) {
+            let mut buf = vec![0u8; page_size];
+            // SAFETY: buf is valid for writes of page_size bytes; pread does not
+            // modify the file offset.
+            let n = unsafe {
+                libc::pread(
+                    fd,
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                    offset as libc::off_t,
+                )
+            };
+            if n < 0 {
+                return Err(pyo3::exceptions::PyOSError::new_err(
+                    std::io::Error::last_os_error().to_string(),
+                ));
+            }
+            let n = n as usize;
+            if n == 0 {
+                return Err(pyo3::exceptions::PyOSError::new_err(
+                    "EOF while reading page",
+                ));
+            }
+            buf.truncate(n);
+            pages.push(PyBytes::new(py, &buf).unbind());
+        }
+        Ok(pages)
+    }
+}
+
 #[pyfunction]
 fn read_keys(path: &str) -> PyResult<Vec<u64>> {
     view::read_keys(Path::new(path))
@@ -122,6 +189,8 @@ fn read_keys(path: &str) -> PyResult<Vec<u64>> {
 fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Store>()?;
     m.add_class::<View>()?;
+    #[cfg(unix)]
+    m.add_class::<PageReader>()?;
     m.add_function(wrap_pyfunction!(read_keys, m)?)?;
     Ok(())
 }

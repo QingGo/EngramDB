@@ -12,5 +12,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.24.2", features = ["extension-module", "abi3-py310"] }
-engramdb-core = { path = "../engramdb-core" }
-engramdb-io = { path = "../engramdb-io" }
+libc = "0.2"
+engramdb-core = { path = "../engramdb-core", version = "0.2.0" }
+engramdb-io = { path = "../engramdb-io", version = "0.2.0" }

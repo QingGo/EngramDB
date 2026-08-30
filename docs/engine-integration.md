@@ -112,7 +112,8 @@
   - 端到端 ~24 tok/s（DGX Spark, MTP, 512 output）
 - 对我们最有价值：
   - 它的 Rust reader API 与我们的 `engramdb-io` 同构，可直接作为对接接口
-  - 我们可以暴露等价的 `read_pages`/`fetch_rows` Python 类，或把 `BadgeGather` 的 gather 逻辑替换进它的 Python 侧
+  - 我们已实现 `engramdb.PageReader.read_pages(fds, offsets)`，接口形状与它的 `IoUringReader.read_pages` 一致
+  - 后续可以把 `engramdb.PageReader` 作为 SGLang Python 侧的可替换 reader
 
 ### llama.cpp TENSOR_READ_LAZY（PR #27794）
 

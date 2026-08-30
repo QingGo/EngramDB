@@ -14,9 +14,14 @@ _USING_PYO3 = False
 _USING_CTYPES = False
 
 try:
-    from ._engramdb import Store, View, read_keys
+    from ._engramdb import Store, View, read_keys, PageReader
 except ImportError:
-    pass
+    try:
+        from ._engramdb import Store, View, read_keys
+    except ImportError:
+        pass
+    else:
+        _USING_PYO3 = True
 else:
     _USING_PYO3 = True
 
