@@ -1,5 +1,19 @@
 # P4 物化视图 A/B 探针结论（真表，2026-08-29）
 
+> **T3 可重建性清单（2026-08-30，全部资产都有重建命令；keys 一律用固定 seed 重生成，
+> 不依赖 /tmp 与旧的 view-manifest.json 命名）**：
+> ```
+> # 真表行存储 128 分片（48G，SSD；源是 SA 上的 Qwen4Exp FP8 safetensors，私有）
+> #   已存在: /Volumes/My Passport/qwen38-rows  (data/real-rows -> 软链)
+> # 视图重建（2048 倍缩放请显式 --slot）:
+> target/release/p4view build data/real-rows 20000096 /Volumes/My\ Passport/p4view-full-2560.bin /tmp/p4keys-full.txt --slot 2560
+> # keys 由 manifest 携带 n 可不用（bench/lat 支持 B-only：--keys 省略、n 从 .manifest.json 读）
+> # 吞吐复测:   p4view bench data/real-rows <view.bin> --threads 8 [--sub N]
+> # 延迟复测:   p4view lat <view.bin> [--warm] [--threads 1|8] [--sub N]
+> # 大小视图门禁输入: probes/view-keys-20k.txt（固定 seed，入 git，gate.sh 使用）
+> ```
+
+
 设置：真表 128 分片 × [2,500,012, 160] F8（=320,001,536 行，外接 USB SSD）；
 采样 100,000 个 gram key × 16 头 = 1,600,000 行；view = 每条 4KB 对齐槽位（2560B 数据 + pad）。
 
