@@ -190,6 +190,7 @@ if not _USING_PYO3:
 from .tables import Database
 from .server import EngramDBServer, EngramDBBinaryServer
 from .service_client import EngramDBClient
+from .ple_discovery import discover_ple
 
 
 def __repr__() -> str:
