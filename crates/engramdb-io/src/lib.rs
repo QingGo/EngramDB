@@ -13,4 +13,7 @@ pub use backend::{default_backend, IoBackend, PreadvBackend};
 pub use batch::{BadgeGather, PrefetchPlan};
 pub use planner::StreamingPlanner;
 pub use tiers::TierManager;
-pub use view::{build_view, build_view_from_keys, verify_view, ViewBuilder, ViewReader};
+pub use view::{
+    build_view, build_view_from_keys, build_view_from_keys_file, verify_view, ViewBuilder,
+    ViewReader,
+};

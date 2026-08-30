@@ -327,6 +327,124 @@ pub fn build_view_from_keys(
     Ok(build_s)
 }
 
+/// 流式文件版：从 rowid 文本文件（每行一个 u64）构建访问序视图，适合 keys 文件很大时使用。
+pub fn build_view_from_keys_file(
+    batch: &BadgeGather,
+    keys_path: &Path,
+    slot_bytes: u64,
+    view_out: &Path,
+    keys_out: Option<&Path>,
+) -> std::io::Result<f64> {
+    const CHUNK_ROWS: usize = 500_000 * HEAD_W as usize;
+    let mut reader = BufReader::new(File::open(keys_path)?);
+    let mut view = BufWriter::with_capacity(
+        64 << 20,
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(view_out)?,
+    );
+    let mut keys_w = keys_out.map(|p| BufWriter::new(File::create(p).unwrap()));
+    let rec_len = (HEAD_W * ROW_BYTES) as usize;
+    let t0 = std::time::Instant::now();
+    let mut total = 0usize;
+    let mut chunk: Vec<u64> = Vec::with_capacity(CHUNK_ROWS);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let r = reader.read_line(&mut line)?;
+        if r == 0 {
+            break;
+        }
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        chunk.push(
+            t.parse::<u64>()
+                .map_err(|e: std::num::ParseIntError| std::io::Error::other(e.to_string()))?,
+        );
+        if chunk.len() == CHUNK_ROWS {
+            let m = chunk.len() / HEAD_W as usize;
+            let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
+            batch
+                .gather_pp(&chunk, &mut out, 8)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut slot = vec![0u8; slot_bytes as usize];
+            for i in 0..m {
+                let rec = &out[i * rec_len..(i + 1) * rec_len];
+                slot[..rec.len()].copy_from_slice(rec);
+                view.write_all(&slot)?;
+            }
+            if let Some(w) = keys_w.as_mut() {
+                for &r in &chunk {
+                    writeln!(w, "{r}")?;
+                }
+            }
+            total += chunk.len();
+            chunk.clear();
+        }
+    }
+    if !chunk.is_empty() {
+        if !chunk.len().is_multiple_of(HEAD_W as usize) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "keys file has {} rowids, not a multiple of heads {HEAD_W}",
+                    chunk.len() + total
+                ),
+            ));
+        }
+        let m = chunk.len() / HEAD_W as usize;
+        let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
+        batch
+            .gather_pp(&chunk, &mut out, 8)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut slot = vec![0u8; slot_bytes as usize];
+        for i in 0..m {
+            let rec = &out[i * rec_len..(i + 1) * rec_len];
+            slot[..rec.len()].copy_from_slice(rec);
+            view.write_all(&slot)?;
+        }
+        if let Some(w) = keys_w.as_mut() {
+            for &r in &chunk {
+                writeln!(w, "{r}")?;
+            }
+        }
+        total += chunk.len();
+    }
+    if total == 0 || !total.is_multiple_of(HEAD_W as usize) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("keys file total {total} rowids not multiple of heads"),
+        ));
+    }
+    view.flush()?;
+    let build_s = t0.elapsed().as_secs_f64();
+    let n = total / HEAD_W as usize;
+    let manifest = serde_json::json!({
+        "grans": n,
+        "heads": HEAD_W,
+        "slot_bytes": slot_bytes,
+        "record_bytes": RECORD_BYTES,
+        "build_seconds": build_s,
+        "build_mb_s": (n as f64 * slot_bytes as f64 / 1e6) / build_s.max(1e-9),
+        "rows": n as u64 * HEAD_W,
+        "source": format!("provided-keys-file:{} shards={}", total, batch.layout.shards),
+        "layout": "access-order",
+    });
+    std::fs::write(
+        view_out.with_extension("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )?;
+    println!(
+        "view built from keys file: n={n} slot={slot_bytes}B view={} took={build_s:.1}s",
+        view_out.display()
+    );
+    Ok(build_s)
+}
+
 fn report(name: &str, rows: u64, dt: std::time::Duration) -> String {
     let s = dt.as_secs_f64();
     let rps = rows as f64 / s.max(1e-9);
