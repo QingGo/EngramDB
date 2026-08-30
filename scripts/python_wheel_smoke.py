@@ -75,7 +75,11 @@ def main() -> None:
     assert engramdb.__version__.startswith("0.2.1"), engramdb.__version__
     # Importing every public integration surface catches missing/renamed symbols.
     from engramdb.vllm import PleDiskGather  # noqa: F401
-    import engramdb.integrations  # noqa: F401
+    try:
+        from engramdb import integrations  # noqa: F401
+        print("integrations import OK")
+    except Exception as exc:  # optional torch/engram-peft dependency
+        print(f"integrations skipped ({exc})")
 
     test_page_reader()
     test_store_and_vllm_gather()

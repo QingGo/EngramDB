@@ -57,6 +57,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - name: install maturin with zig support
         run: python -m pip install "maturin[zig]"
@@ -77,6 +80,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: install maturin
         run: python -m pip install maturin
       - name: build sdist

@@ -7,27 +7,30 @@ cd "$(dirname "$0")/.."
 V=$1
 [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: bump.sh <MAJOR.MINOR.PATCH>"; exit 1; }
 
-for c in engramdb-keygen engramdb-core engramdb-io engramdb engramdb-bench engramdb-python engramdb-pyo3; do
-  python3 - "$c" "$V" <<'EOF'
-import re, sys
-c, v = sys.argv[1], sys.argv[2]
-p = f"crates/{c}/Cargo.toml"
-s = open(p).read()
-s = re.sub(r'^(version = )"[^"]+"', rf'\g<1>"{v}"', s, count=1, flags=re.M)
-open(p, "w").write(s)
-print(f"  {c}: v{v}")
-EOF
-done
+OLD=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+if [[ -z "$OLD" || "$OLD" == "$V" ]]; then
+  echo "cannot determine previous version (or already at $V)"; exit 1
+fi
 
-python3 - "$V" <<'EOF'
-import re, sys
-v = sys.argv[1]
-p = "python/pyproject.toml"
-s = open(p).read()
-s = re.sub(r'^(version = )"[^"]+"', rf'\g<1>"{v}"', s, count=1, flags=re.M)
-open(p, "w").write(s)
-print(f"  python/pyproject.toml: v{v}")
-EOF
+python3 - "$OLD" "$V" <<'PY'
+import sys
+old, new = sys.argv[1], sys.argv[2]
+crates = [
+    "engramdb-keygen", "engramdb-core", "engramdb-io", "engramdb",
+    "engramdb-bench", "engramdb-python", "engramdb-pyo3",
+]
+paths = ["Cargo.toml"] + [f"crates/{c}/Cargo.toml" for c in crates] + [
+    "python/pyproject.toml",
+    "python/engramdb/__init__.py",
+]
+for p in paths:
+    s = open(p).read()
+    s2 = s.replace(f'version = "{old}"', f'version = "{new}"')
+    s2 = s2.replace(f'__version__ = "{old}"', f'__version__ = "{new}"')
+    if s2 != s:
+        open(p, "w").write(s2)
+        print(f"  {p}: {old} -> {new}")
+PY
 
 git add -A
 git commit -m "release: bump v${V}"

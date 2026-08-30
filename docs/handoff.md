@@ -49,14 +49,17 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   - **io_uring 性能面定案**：per-call 0.97×、batch 0.94× vs preadv —— 保留作语义实现，
     默认 = preadv；不要在性能面再花时间（除非介质=网络盘/cgroup 受限环境）
 - **发布链**：v0.2.0 已发布 crates.io 四 crate + PyPI（engramdb-python，
-  abi3 manylinux wheel + sdist）；GitHub Release 4 平台二进制；版本只走 scripts/bump.sh。
+  abi3 manylinux wheel + sdist）；v0.2.1 已准备并推送，包含
+  `PageReader` / `PleDiskGather` / Linux `IoUringPageReader` 和多平台 PyPI wheel 矩阵；
+  GitHub Release 4 平台二进制；版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
 - **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 已发布并优先使用，ctypes C-ABI 作回退；
   `DiskMultiHeadEmbedding` 和真实 `EngramLayer` 前向均通过；
   **TinyLlama + engram-peft + EngramDB 磁盘版完整文本生成已跑通**（Python 3.12 + torch 2.2.2）。
-  已新增 `engramdb.PageReader`（SGLang 兼容）和 `engramdb.vllm.PleDiskGather`（vLLM 方向）。
-  多平台 Python wheel 矩阵待补。
+  已新增 `engramdb.PageReader`（SGLang 兼容）、`engramdb.vllm.PleDiskGather`（vLLM 方向）、
+  Linux `IoUringPageReader`（io_uring batch）。
+  多平台 PyPI wheel：Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64；CI 含 Python 安装冒烟。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

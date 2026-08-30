@@ -198,15 +198,16 @@
   - engram-peft 磁盘集成进入 `engramdb.integrations`。
   - SGLang 兼容 `engramdb.PageReader.read_pages(fds, offsets)`。
   - vLLM 方向 `engramdb.vllm.PleDiskGather`。
+  - 0.2.1 追加：Linux `IoUringPageReader`、多平台 PyPI wheel 矩阵、Python CI 冒烟。
 
 ### 8.2 本轮新增技术债
 
 | # | 债 | 现状 | 处置 |
 |---|---|---|---|
-| R1 | PyPI 只发布 Linux x86_64 wheel | 0.2.0 仅 manylinux x86_64 + sdist | 下一版增加 Linux aarch64 / macOS / Windows wheel 矩阵 |
-| R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | 实现 `IoUringPageReader`，复用 `UringBatchBackend` |
-| R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | 发 0.2.1 |
-| R4 | 无 Python CI smoke test | 仅在本地验证 | CI 增加 wheel 安装 + import + Store/PageReader 冒烟 |
+| R1 | PyPI 只发布 Linux x86_64 wheel | 0.2.0 仅 manylinux x86_64 + sdist | ✅ 0.2.1 已增加 Linux aarch64 / macOS x86_64+arm64 / Windows wheel 矩阵 |
+| R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | ✅ 0.2.1 已实现 Linux `IoUringPageReader`（io_uring batch）；待 Linux 实机验证 |
+| R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | ✅ 0.2.1 已包含 PageReader / PleDiskGather / IoUringPageReader |
+| R4 | 无 Python CI smoke test | 仅在本地验证 | ✅ CI 新增 wheel 安装 + Store/PageReader/PleDiskGather 冒烟 |
 | R5 | 没有真正接入 vLLM / SGLang 仓库 | 只有适配层和调研 | 下一阶段做上游 patch / 插件原型 |
 | R6 | 没有目标硬件端到端性能数据 | Intel Mac PyTorch 测试已暂停 | 用用户自维护 wheel / Windows/WSL + 真实 PLE 表验证 |
 
@@ -221,9 +222,9 @@
 
 ### 8.4 v0.3 计划
 
-1. 发 `0.2.1`：PageReader / PleDiskGather / 多平台 wheel。
-2. 增加 Python CI smoke。
-3. 实现 `IoUringPageReader`（Linux）。
+1. ✅ 发 `0.2.1`：PageReader / PleDiskGather / 多平台 wheel。
+2. ✅ 增加 Python CI smoke。
+3. ✅ 实现 `IoUringPageReader`（Linux）。
 4. 准备 SGLang 替换 patch。
 5. 准备 vLLM 插件原型。
 6. 在目标硬件跑真实 PLE 端到端。

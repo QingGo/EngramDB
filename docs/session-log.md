@@ -389,3 +389,43 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 7. 在用户自维护 torch wheel / Windows/WSL + 真实 PLE 表上做端到端性能验证。
 8. 视验证结果再优化访问序 / 预取 / 缓存 / 异步 H2D。
 
+
+---
+
+# Session 6 复盘（2026-08-30 后半段：v0.2.1 发布准备）
+
+## 1. 目标
+
+- 把 `PageReader` / `PleDiskGather` 正式装进 0.2.1。
+- 补上多平台 PyPI wheel（Linux aarch64、macOS x86_64/arm64、Windows）。
+- 加 Python wheel 安装冒烟 CI。
+- 顺手实现 Linux `IoUringPageReader`。
+
+## 2. 尝试 → 结果
+
+| # | 尝试 | 结果 | 备注 |
+|---|---|---|---|
+| S6-1 | 扩展 `publish.yml` 为 5 平台 wheel 矩阵 + sdist + 统一发布 | ✅ 已写入 | Linux 用 maturin zig manylinux2014；macOS/Windows 原生 |
+| S6-2 | 新增 `scripts/python_wheel_smoke.py` | ✅ 本地 mac wheel 冒烟通过 | 覆盖 Store、PleDiskGather、PageReader；torch 缺失时跳过 integrations |
+| S6-3 | CI 增加 `python-smoke` job | ✅ 已写入 | Linux + macOS 构建安装后跑 smoke |
+| S6-4 | 实现 Linux `IoUringPageReader` | ✅ 已写入 | thread-local io_uring，按批提交；需 Linux CI/实机验证 |
+| S6-5 | 修复 bump.sh | ✅ 已写入 | 现在同时更新 workspace 版本、crate 依赖版本引用、Python `__version__` |
+
+## 3. 坑
+
+1. `bump.sh` 原先只改每个 crate 的自身版本，**没有改依赖引用**（如 `engramdb-io` 仍依赖 core `0.2.0`），也没有改 workspace 根版本和 Python `__version__`；本次已修正脚本。
+2. Python smoke 最初 `import engramdb.integrations` 直接要求 torch，导致普通 CI 环境失败；改为可选 import。
+3. 本地 mac 构建时系统 Python 3.9 不满足 abi3-py310，需用 miniconda Python 3.13 构建。
+
+## 4. 状态
+
+- v0.2.1 tag 已本地创建并准备推送；推送后由 GitHub Actions 发布 crates.io + PyPI 多平台 wheel。
+- `IoUringPageReader` 尚未在 Linux 实机跑过，受本机为 macOS 限制。
+
+## 5. 下一步
+
+1. 确认 GitHub Actions 上 v0.2.1 发布成功（crates.io 四个 crate + PyPI 多平台 wheel）。
+2. 准备 SGLang 替换 patch。
+3. 准备 vLLM 插件原型。
+4. 目标硬件真实 PLE 端到端。
+

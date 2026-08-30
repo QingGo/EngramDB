@@ -116,7 +116,7 @@
 - 对我们最有价值：
   - 它的 Rust reader API 与我们的 `engramdb-io` 同构，可直接作为对接接口
   - 我们已实现 `engramdb.PageReader.read_pages(fds, offsets)`，接口形状与它的 `IoUringReader.read_pages` 一致
-  - 后续可以把 `engramdb.PageReader` 作为 SGLang Python 侧的可替换 reader
+  - Linux 另有 `engramdb.IoUringPageReader.read_pages(fds, offsets)`，按批提交；后续可以把任一 reader 作为 SGLang Python 侧的可替换 reader
 
 ### llama.cpp TENSOR_READ_LAZY（PR #27794）
 

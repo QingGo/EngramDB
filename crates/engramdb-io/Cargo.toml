@@ -7,8 +7,8 @@ description = "EngramDB IO layer: badge batch reader, tier manager, prefetch pla
 repository = "https://github.com/QingGo/EngramDB"
 
 [dependencies]
-engramdb-core = { path = "../engramdb-core", version = "0.2.0" }
-engramdb-keygen = { path = "../engramdb-keygen", version = "0.2.0" }
+engramdb-core = { path = "../engramdb-core", version = "0.2.1" }
+engramdb-keygen = { path = "../engramdb-keygen", version = "0.2.1" }
 serde_json = "1"
 libc = "0.2"
 
