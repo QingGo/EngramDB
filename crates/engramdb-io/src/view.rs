@@ -143,6 +143,190 @@ pub fn read_keys(p: &Path) -> std::io::Result<Vec<u64>> {
     Ok(k)
 }
 
+/// 视图读取器：打开已经构建好的 Store-P 视图，按物理槽位读取记录。
+/// 这是面向产品面/PyO3 的读取 API（`build_view` 负责写；本类型负责读）。
+pub struct ViewReader {
+    file: File,
+    slot_bytes: u64,
+    count: usize,
+}
+
+impl ViewReader {
+    /// 打开视图文件；优先从 `.manifest.json` 读取槽宽与记录数，缺失时按文件大小推断。
+    pub fn open(view_file: &Path) -> std::io::Result<Self> {
+        let (slot_bytes, manifest_grans) = slot_of(view_file);
+        let file = File::open(view_file)?;
+        let meta = file.metadata()?;
+        let count_file = meta
+            .len()
+            .checked_div(slot_bytes)
+            .map(|n| n as usize)
+            .unwrap_or(0);
+        let count = if manifest_grans > 0 {
+            count_file.min(manifest_grans as usize)
+        } else {
+            count_file
+        };
+        Ok(Self {
+            file,
+            slot_bytes,
+            count,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn slot_bytes(&self) -> u64 {
+        self.slot_bytes
+    }
+
+    /// 读取一个 gram 的完整 e_t 记录到 `buf`。返回实际读到的槽宽（通常 2560B）。
+    pub fn read_record(&self, index: usize, buf: &mut [u8]) -> std::io::Result<usize> {
+        if index >= self.count {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "view record index {index} out of range (count {})",
+                    self.count
+                ),
+            ));
+        }
+        let want = (self.slot_bytes as usize).min(buf.len());
+        if want == 0 {
+            return Ok(0);
+        }
+        platform_read_exact_at(&self.file, &mut buf[..want], index as u64 * self.slot_bytes)?;
+        Ok(want)
+    }
+
+    /// 按物理槽位读取多条记录；`out` 长度必须 >= indices.len() * slot_bytes。
+    pub fn read_records(&self, indices: &[usize], out: &mut [u8]) -> std::io::Result<()> {
+        let want = self.slot_bytes as usize;
+        if out.len() < indices.len() * want {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "read_records: output buffer too small",
+            ));
+        }
+        for (j, &idx) in indices.iter().enumerate() {
+            self.read_record(idx, &mut out[j * want..(j + 1) * want])?;
+        }
+        Ok(())
+    }
+}
+
+/// 视图构建器：持有源表 gather 句柄与槽宽，提供随机采样构建和调用方访问序构建。
+pub struct ViewBuilder<'a> {
+    batch: &'a BadgeGather<'a>,
+    slot_bytes: u64,
+}
+
+impl<'a> ViewBuilder<'a> {
+    pub fn new(batch: &'a BadgeGather<'a>, slot_bytes: u64) -> Self {
+        Self { batch, slot_bytes }
+    }
+
+    /// 随机采样构建（原有 LCG 路径）。
+    pub fn build_random(
+        &self,
+        n: usize,
+        view_out: &Path,
+        keys_out: Option<&Path>,
+    ) -> std::io::Result<f64> {
+        build_view(self.batch, n, self.slot_bytes, view_out, keys_out)
+    }
+
+    /// 按调用方提供的 rowid 访问序构建。
+    pub fn build_from_keys(
+        &self,
+        keys: &[u64],
+        view_out: &Path,
+        keys_out: Option<&Path>,
+    ) -> std::io::Result<f64> {
+        build_view_from_keys(self.batch, keys, self.slot_bytes, view_out, keys_out)
+    }
+}
+
+/// 从调用方提供的 rowid 列表构建视图（`keys` 为 16 头平铺：每 gram 连续 16 行）。
+/// 槽位物理顺序 = 调用方给的顺序；因此可用来生成“按访问序排布”的视图：
+/// 把实际推理/训练访问的 gram 顺序直接作为 keys 顺序写入，顺序读取即连续 IO。
+pub fn build_view_from_keys(
+    batch: &BadgeGather,
+    keys: &[u64],
+    slot_bytes: u64,
+    view_out: &Path,
+    keys_out: Option<&Path>,
+) -> std::io::Result<f64> {
+    const CHUNK_ROWS: usize = 500_000 * HEAD_W as usize;
+    if !keys.len().is_multiple_of(HEAD_W as usize) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "keys length {} is not a multiple of heads {HEAD_W}",
+                keys.len()
+            ),
+        ));
+    }
+    let n = keys.len() / HEAD_W as usize;
+    let rec_len = (HEAD_W * ROW_BYTES) as usize;
+    let mut view = BufWriter::with_capacity(
+        64 << 20,
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(view_out)?,
+    );
+    let mut keys_w = keys_out.map(|p| BufWriter::new(File::create(p).unwrap()));
+    let t0 = std::time::Instant::now();
+    for chunk in keys.chunks(CHUNK_ROWS) {
+        let m = chunk.len() / HEAD_W as usize;
+        let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
+        batch
+            .gather_pp(chunk, &mut out, 8)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let mut slot = vec![0u8; slot_bytes as usize];
+        for i in 0..m {
+            let rec = &out[i * rec_len..(i + 1) * rec_len];
+            slot[..rec.len()].copy_from_slice(rec);
+            view.write_all(&slot)?;
+        }
+        if let Some(w) = keys_w.as_mut() {
+            for &r in chunk {
+                writeln!(w, "{r}")?;
+            }
+        }
+    }
+    view.flush()?;
+    let build_s = t0.elapsed().as_secs_f64();
+    let manifest = serde_json::json!({
+        "grans": n,
+        "heads": HEAD_W,
+        "slot_bytes": slot_bytes,
+        "record_bytes": RECORD_BYTES,
+        "build_seconds": build_s,
+        "build_mb_s": (n as f64 * slot_bytes as f64 / 1e6) / build_s.max(1e-9),
+        "rows": n as u64 * HEAD_W,
+        "source": format!("provided-keys:{} shards={}", keys.len(), batch.layout.shards),
+        "layout": "access-order",
+    });
+    std::fs::write(
+        view_out.with_extension("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )?;
+    println!(
+        "view built from keys: n={n} slot={slot_bytes}B view={} took={build_s:.1}s",
+        view_out.display()
+    );
+    Ok(build_s)
+}
+
 fn report(name: &str, rows: u64, dt: std::time::Duration) -> String {
     let s = dt.as_secs_f64();
     let rps = rows as f64 / s.max(1e-9);
@@ -388,4 +572,50 @@ pub fn lat_view(
         us(mean)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn build_from_keys_and_view_reader_roundtrip() {
+        let dir = std::env::temp_dir().join("engramdb-view-reader-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let layout = Layout::new(1, 100, ROW_BYTES, 1); // 100 rows × 160B
+        let shard = dir.join("shard_000.bin");
+        let mut f = File::create(&shard).unwrap();
+        let mut row = vec![0u8; ROW_BYTES as usize];
+        for r in 0..100u64 {
+            row.fill((r % 251) as u8);
+            f.write_all(&row).unwrap();
+        }
+        drop(f);
+        let bg = BadgeGather::open(&dir, &layout).unwrap();
+        let keys: Vec<u64> = (0..32).collect(); // 2 grams × 16 heads
+        let view_path = dir.join("ordered.bin");
+        let keys_path = dir.join("ordered.keys.txt");
+        build_view_from_keys(&bg, &keys, RECORD_BYTES, &view_path, Some(&keys_path)).unwrap();
+
+        let vr = ViewReader::open(&view_path).unwrap();
+        assert_eq!(vr.len(), 2);
+        assert_eq!(vr.slot_bytes(), RECORD_BYTES);
+        let mut buf = vec![0u8; RECORD_BYTES as usize];
+        let got = vr.read_record(0, &mut buf).unwrap();
+        assert_eq!(got, RECORD_BYTES as usize);
+        for i in 0..16usize {
+            let r = i as u64;
+            let expect = (r % 251) as u8;
+            assert_eq!(buf[i * ROW_BYTES as usize], expect, "row {r} first byte");
+        }
+
+        let mut two = vec![0u8; 2 * RECORD_BYTES as usize];
+        vr.read_records(&[1, 0], &mut two).unwrap();
+        // record 1 begins with row 16 value 16
+        assert_eq!(two[0], 16);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

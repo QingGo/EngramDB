@@ -257,3 +257,46 @@ P2b CLI 端到端（warm/bench-real 接 agent 真指令序列 + 集成测试入�
 ## 5. 计划（v2.2，详见 roadmap §7.4）
 
 P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据量确认）→ P2b 收尾 → P4b（Linux/GPU 决策门）→ P5 v0（DataLoader）→ T3-T6 插缝。
+
+---
+
+# Session 4 复盘（2026-08-30 深夜~次段：存储读取面 + Python C ABI 最小桥 + engram-peft 适配原型）
+
+## 1. 本轮目标
+
+根据 handoff 与讨论，从“继续调存储性能”转向“先端到端可用”：
+- 给 Python 侧一个不需要完整 PyO3/maturin 环境的最小 Rust 桥；
+- 准备 engram-peft `MultiHeadEmbedding` 的磁盘替代实现；
+- 验证“磁盘读取 + 模型 embedding 查表”语义一致。
+
+## 2. 尝试 → 结果
+
+| # | 尝试 | 结果 | 备注 |
+|---|---|---|---|
+| S4-1 | `ViewReader` / `ViewBuilder` / `build_view_from_keys` 收口 | ✅ 已入库前工作区，加单元测试 | 为 PyO3/C ABI 提供底层读取面 |
+| S4-2 | 尝试 PyO3 0.24 直接依赖 | ⚠️ 离线环境无法拉齐 transitive crates（autocfg/rustversion/syn 等版本不在本地 cache） | 决定先做 C ABI + ctypes，后续网络可用再升级 PyO3 |
+| S4-3 | 新增 `engramdb-python` C ABI cdylib | ✅ 构建通过 | 只依赖 workspace 已有 crate，无新增外部依赖 |
+| S4-4 | Python `engramdb.Store` / `View` ctypes 包装 | ✅ Store fetch 与 View read 冒烟通过 | 返回 bytes，Python 侧自行转 torch |
+| S4-5 | `examples/interop_engram_peft.py` 磁盘版 `DiskMultiHeadEmbedding` | ✅ self_check 通过 | 输出与直接查表逐元素一致 |
+
+## 3. 坑 / 环境注意
+
+1. PyO3 最低依赖版本与本地 Cargo cache 不匹配，直接新增依赖会卡在下载/权限；
+   **当前不强行引入 PyO3**，C ABI + ctypes 是离线可复现的最小桥。
+2. 系统 Python 3.9 + torch 2.2.2 + numpy 2.0.2 有 numpy ABI 警告，但 `torch.frombuffer`
+   仍可用；因此示例避免 `numpy`，用 `bytes + torch.frombuffer` 完成校验。
+3. 大段 heredoc/长命令在这个环境容易触发超时，后续编辑改为小步文件替换。
+
+## 4. 产出
+
+- `crates/engramdb-python/`：C ABI cdylib（Store/View open/fetch/read/close）。
+- `python/engramdb/__init__.py`：ctypes 包装，`Store` / `View` / `read_keys`。
+- `examples/interop_engram_peft.py`：DiskMultiHeadEmbedding 原型 + 自检。
+- `python/README.md` 更新最小桥用法。
+
+## 5. 下一步
+
+- 在可用 Python+torch 环境里导入真实 `engram-peft`，替换 `MultiHeadEmbedding` 后跑一个
+  小型 `EngramLayer` forward / 小模型生成。
+- 之后再把 C ABI 升级为正式 PyO3 发布链，并接 vLLM/SGLang/llama.cpp 的兼容层。
+

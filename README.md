@@ -14,7 +14,7 @@
 - 面向：DeepSeek **Engram**（arXiv 2601.07372）与 **Qwen3.8-Flash-Next PLE**（51.2B 参数 n-gram 表）的静态记忆表。
 - 能力：确定性哈希寻址（rowid 预知）→ badge 布局 / 批量 gather / 确定性预取 / 三级缓存 / 频率索引；
   双视图：Store-I（原始表）与 Store-P（物化 e_t）；训练流（高吞吐）与推理点查（低延迟）。
-- 形态：`engramdb` CLI / Rust lib / Python 绑定（PyO3，包名 `engramdb`）/ 服务化（Arrow IPC，M4）。
+- 形态：`engramdb` CLI / Rust lib / Python 绑定（当前为 ctypes-C ABI 最小桥，后续升级 PyO3；包名 `engramdb`）/ 服务化（Arrow IPC，M4）。
 
 文档：
 ^- `docs/handoff.md` —— **空白上下文 agent 交接 prompt（最新状态/资产/环境/待办/纪律，粘贴即用）**
@@ -38,4 +38,8 @@ python3 scripts/prep_env.py verify      # 校验产物
 cargo run -p engramdb-bench               # 探针（占位，M0）
 python3 scripts/extract_ple_spec.py       # 从真实分片提取规格 JSON（需真权重）
 python3 scripts/mock_table_gen.py         # 生成结构等价合成表（prep_env quick 已含）
+
+# Python 最小桥（ctypes C ABI）
+cargo build -p engramdb-python --release
+PYTHONPATH=python python3 examples/interop_engram_peft.py
 ```

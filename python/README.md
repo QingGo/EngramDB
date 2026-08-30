@@ -2,10 +2,34 @@
 
 Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
-> **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。** v0.1.0 占位包：Rust 核心（crates.io: `engramdb-keygen`/`engramdb-core`/`engramdb-io`/`engramdb`）与 PyO3 绑定正在开发中；本包于 0.1.0 仅占名 + 版本声明。完整 API / 文档随 0.2.0 发布。
+> **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
+>
+> 当前 v0.1.x 已从占位包升级为最小可用的 ctypes 桥接：
+> Rust 侧通过 `crates/engramdb-python` 暴露 C ABI，Python 侧在 `python/engramdb/__init__.py`
+> 加载 `libengramdb_c` 并提供 `Store` / `View` 两类对象。完整的 PyO3/maturin 发布链将在后续阶段补齐。
+
+## 快速使用
+
+```bash
+cargo build -p engramdb-python --release
+PYTHONPATH=python python3 -c "import engramdb; print(engramdb.__version__)"
+```
+
+```python
+import engramdb
+
+# 打开 Store-I：目录内为 shard_000.bin 等定长行文件
+store = engramdb.Store("path/to/rows", shards=1, rows_per_shard=100, width=256)
+row_bytes = store.fetch([0, 1, 2])   # bytes, 每条 256B
+store.close()
+
+# 打开 Store-P 视图
+view = engramdb.View("path/to/view.bin")
+rec = view.read_record(0)            # 一条 e_t 记录
+```
 
 ## 定位（一句话）
 
 让"确定性哈希的 n-gram 记忆表"（Qwen PLE、DeepSeek Engram 等）像数据库一样落盘、建索引、预取、服务化——单机 CPU+NVMe 低延迟推理 / 高吞吐训练预处理。
 
-详细文档见上游仓库 `docs/`（design.md / specifications / roadmap）。
+详细文档见上游仓库 `docs/`（design.md / specifications / roadmap）以及 `examples/interop_engram_peft.py`。

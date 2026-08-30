@@ -526,7 +526,7 @@ fn _keep_serde(_p: &Path) {
 
 /// view <build|bench|lat> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
 /// 用法：
-///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096]
+///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS]
 ///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
 ///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
 fn cmd_view(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
@@ -566,6 +566,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let keys_out = PathBuf::from(rest.next().ok_or("keys.txt")?);
     let mut slot_bytes: u64 = 2560;
     let mut backend_name: Option<String> = None;
+    let mut keys_in: Option<PathBuf> = None;
     let mut it = rest;
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -577,6 +578,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
                     .map_err(|e: std::num::ParseIntError| e.to_string())?
             }
             "--backend" => backend_name = Some(it.next().ok_or("backend")?),
+            "--keys" => keys_in = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
             "--seed" => {
                 let _ = it.next();
             }
@@ -586,8 +588,30 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let layout = layout_for_dir(&rows_dir)?;
     let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)
         .map_err(|e| e.to_string())?;
-    let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
+    if let Some(kf) = keys_in {
+        // 使用调用方提供的访问序/rowid 列表构建视图。keys 文件为 16 头平铺：
+        // 每 gram 连续 16 行，物理槽位顺序 = 文件顺序。
+        let all = view::read_keys(&kf).map_err(|e| e.to_string())?;
+        let need = n * view::HEAD_W as usize;
+        if all.len() < need {
+            return Err(format!(
+                "--keys 文件只有 {} 行，需要至少 {need} 行（{n} grams × {} heads）",
+                all.len(),
+                view::HEAD_W
+            ));
+        }
+        let _ = view::build_view_from_keys(
+            &batch,
+            &all[..need],
+            slot_bytes,
+            &view_out,
+            Some(&keys_out),
+        )
         .map_err(|e| e.to_string())?;
+    } else {
+        let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

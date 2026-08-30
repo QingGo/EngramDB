@@ -6,6 +6,7 @@ members = [
     "crates/engramdb-io",
     "crates/engramdb",
     "crates/engramdb-bench",
+    "crates/engramdb-python",
 ]
 
 [workspace.package]
