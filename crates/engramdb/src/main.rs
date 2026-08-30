@@ -70,6 +70,7 @@ fn main() {
         "bench-real" => cmd_bench_real(rest),
         "warm" => cmd_warm(rest),
         "view" => cmd_view(rest),
+        "prep" => cmd_prep(rest),
         _ => Err(format!("unknown command: {cmd}")),
     };
     if let Err(e) = out {
@@ -357,6 +358,103 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
         keys.len() * 160 / 1024 / (keys.len() / 16)
     );
     Ok(())
+}
+
+/// prep [<tokens.u32.npy> | --dist uniform|agent] <out_keys.txt>
+/// 把 token 流（P2 语料导出 npy，或 --dist 真实流量模拟）映射为 gram rowid keys
+/// （每 token 16 头平铺），供后续 build/gather/verify/view 链消费（训练数据准备入口）。
+/// npy 格式与 p2rowid 一致（np.save 原生 u32 数组）。
+fn cmd_prep(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let mut args: Vec<String> = rest.collect();
+    if args.is_empty() {
+        return Err("usage: engramdb prep <tokens.u32.npy | --dist agent> <out_keys.txt>".into());
+    }
+    let mut dist = false;
+    let mut dist_name = "uniform".to_string();
+    let mut stats_path = PathBuf::from("probes/agent_workload_stats.json");
+    let mut reqs = 64usize;
+    let mut cap_token = 10_000u32;
+    let mut hot_hit = 0.35f64;
+    let mut seed = 1u64;
+    let mut tokens_src: Option<PathBuf> = None;
+    let mut pos: Vec<PathBuf> = Vec::new();
+    let mut it = args.drain(..);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--dist" => { dist = true; dist_name = it.next().ok_or("dist 值")?; }
+            "--stats" => stats_path = PathBuf::from(it.next().ok_or("stats 路径")?),
+            "--reqs" => reqs = it.next().ok_or("reqs")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--cap-token" => cap_token = it.next().ok_or("cap")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            "--hot-hit" => hot_hit = it.next().ok_or("hot")?.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?,
+            "--seed" => seed = it.next().ok_or("seed")?.parse().map_err(|e: std::num::ParseIntError| e.to_string())?,
+            _ => pos.push(PathBuf::from(a)),
+        }
+    }
+    if dist {
+        if pos.len() != 1 {
+            return Err("--dist 模式下只需要 <out_keys.txt>".into());
+        }
+    } else if pos.len() == 2 {
+        tokens_src = Some(pos[0].clone());
+    } else if pos.len() != 1 {
+        return Err("需要 <tokens.u32.npy> <out_keys.txt>".into());
+    }
+    if pos.len() > 1 {
+        let _ = pos.pop();
+    }
+    let out_keys = pos.pop().ok_or("缺少 <out_keys.txt>")?;
+    let mut tokens_src = tokens_src.take();
+    let tokens: Vec<u32> = if dist {
+        let stats = if dist_name == "agent" { Some(AgentStats::load(&stats_path)?) } else { None };
+        let mode = if dist_name == "agent" { Mode::Agent(stats_path.clone(), hot_hit) } else { Mode::Uniform };
+        let t = gen_tokens(&mode, stats.as_ref(), reqs, cap_token, seed)?;
+        if t.is_empty() { return Err("空 token 序列".into()); }
+        t
+    } else {
+        let src = tokens_src.ok_or("缺少 token 源或 --dist")?;
+        read_tokens_npy(&src)?
+    };
+    let spec = PleSpec::real();
+    let mut w = std::io::BufWriter::new(std::fs::File::create(&out_keys).map_err(|e| e.to_string())?);
+    use std::io::Write as _;
+    for t in 0..tokens.len() {
+        let triple = [tokens[t.saturating_sub(2)], tokens[t.saturating_sub(1)], tokens[t]];
+        let ids = spec.rowids_for_seq(&triple);
+        for &r in &ids[0] {
+            writeln!(w, "{}", r as u64).map_err(|e| e.to_string())?;
+        }
+    }
+    w.flush().map_err(|e| e.to_string())?;
+    println!(
+        "prep: tokens={} rows={} keys_file={}",
+        tokens.len(),
+        tokens.len() * 16,
+        out_keys.display()
+    );
+    Ok(())
+}
+
+/// 读取 np.save 原生 u32 数组（P2 语料导出格式，与 p2rowid 同源）。
+fn read_tokens_npy(path: &Path) -> Result<Vec<u32>, String> {
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    if data.len() < 8 || &data[0..6] != b"\x93NUMPY" {
+        return Err(format!("{path:?} 非 npy（np.save 原生 u32）"));
+    }
+    let mut idx = 6usize;
+    let major = data[idx];
+    idx += 1;
+    idx += 1; // minor
+    let hlen = if major == 1 {
+        u16::from_le_bytes([data[idx], data[idx + 1]]) as usize
+    } else {
+        u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]) as usize
+    };
+    idx += if major == 1 { 2 } else { 4 };
+    let raw = &data[idx + hlen..];
+    if raw.len() % 4 != 0 {
+        return Err("npy 数据非 u32 对齐".into());
+    }
+    Ok(raw.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
 }
 
 fn black_box<T>(x: &T) {
