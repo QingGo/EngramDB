@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use engramdb_core::layout::Layout;
 use engramdb_io::batch::BadgeGather;
+use engramdb_io::view::ViewReader;
 use serde_json::Value;
 
 const KIND_JSON: u8 = 0;
@@ -195,6 +196,16 @@ fn fetch_raw_table(root: &Path, req: &Value) -> Result<(Vec<u8>, u64), String> {
     Ok((out, layout.width))
 }
 
+fn read_view_record(path: &Path, index: usize) -> Result<Vec<u8>, String> {
+    let reader = ViewReader::open(path).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; reader.slot_bytes() as usize];
+    let n = reader
+        .read_record(index, &mut buf)
+        .map_err(|e| e.to_string())?;
+    buf.truncate(n);
+    Ok(buf)
+}
+
 fn fetch_table(root: &Path, req: &Value) -> Result<Value, String> {
     let (raw, width) = fetch_raw_table(root, req)?;
     let table = req
@@ -227,6 +238,20 @@ fn handle_request(root: &Path, req: &Value) -> Value {
             Ok(v) => v,
             Err(e) => serde_json::json!({"ok": false, "error": e}),
         },
+        "view_read" => match req.get("path").and_then(Value::as_str) {
+            Some(path) => {
+                let index = req.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                match read_view_record(Path::new(path), index) {
+                    Ok(data) => serde_json::json!({
+                        "ok": true,
+                        "index": index,
+                        "slot_base64": base64_encode(&data),
+                    }),
+                    Err(e) => serde_json::json!({"ok": false, "error": e}),
+                }
+            }
+            None => serde_json::json!({"ok": false, "error": "view_read requires path"}),
+        },
         other => serde_json::json!({"ok": false, "error": format!("unknown command: {other}")}),
     }
 }
@@ -256,6 +281,27 @@ fn binary_dispatch(root: &Path, req: &Value) -> (u8, Vec<u8>) {
                 KIND_JSON,
                 serde_json::to_vec(&serde_json::json!({"ok": false, "error": e}))
                     .unwrap_or_default(),
+            ),
+        },
+        "view_read" => match req.get("path").and_then(Value::as_str) {
+            Some(path) => {
+                let index = req.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                match read_view_record(Path::new(path), index) {
+                    Ok(data) => (KIND_RAW, data),
+                    Err(e) => (
+                        KIND_JSON,
+                        serde_json::to_vec(&serde_json::json!({"ok": false, "error": e}))
+                            .unwrap_or_default(),
+                    ),
+                }
+            }
+            None => (
+                KIND_JSON,
+                serde_json::to_vec(&serde_json::json!({
+                    "ok": false,
+                    "error": "view_read requires path"
+                }))
+                .unwrap_or_default(),
             ),
         },
         other => (
