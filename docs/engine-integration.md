@@ -28,6 +28,8 @@
 预期交付：
 - `engramdb` Python 包提供 `vllm_ple_backend` 适配层。
 - 在 vLLM 环境中可通过配置启用。
+- ✅ 已落地原型：`engramdb.vllm_plugin.DiskPleEmbedding` + `patch_named_embedding`，
+  内部使用 `PleDiskGather`；真正 upstream 接入仍需按 vLLM 模型类/自定义 op 再接。
 
 ## 3. SGLang
 
@@ -44,6 +46,8 @@
 预期交付：
 - `engramdb-io` 增加面向 SGLang 的薄封装或文档化 C ABI。
 - 后续在 SGLang 上游 PR 中替换其 NVMe reader。
+- ✅ 已落地 Python 侧同形适配：`engramdb.sglang.SGLangPageReader`（Linux 自动用
+  `IoUringPageReader`）；`install_sglang_io_uring_reader()` 可做进程内替换。
 
 ## 4. llama.cpp
 

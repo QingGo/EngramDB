@@ -49,6 +49,13 @@ reader = engramdb.PageReader(page_size=4096)
 pages = reader.read_pages([fd0, fd1], [offset0, offset1])
 ```
 
+## 引擎适配层
+
+- `engramdb.sglang.SGLangPageReader`：与 SGLang `IoUringReader.read_pages(fds, offsets)`
+  同形的适配器，Linux 优先用 `IoUringPageReader`。
+- `engramdb.vllm_plugin.DiskPleEmbedding` / `patch_named_embedding`：用 EngramDB
+  替代模型中 PLE 表的 `nn.Embedding`，内部走 `PleDiskGather` 去重+批量读+展开。
+
 ## engram-peft 集成
 
 安装 `engramdb-python` 后，可以直接使用内置的磁盘版 `MultiHeadEmbedding`：

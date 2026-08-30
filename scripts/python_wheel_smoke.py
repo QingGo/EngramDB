@@ -20,6 +20,8 @@ def test_page_reader() -> None:
         for name in ("PageReader", "IoUringPageReader")
         if getattr(engramdb, name, None) is not None
     ]
+    if getattr(engramdb, "PageReader", None) is not None:
+        readers.append("SGLangPageReader")
     if not readers:
         print("No page reader available on this platform; skipping")
         return
@@ -34,7 +36,11 @@ def test_page_reader() -> None:
         fd = os.open(tmp.name, os.O_RDONLY)
         try:
             for name in readers:
-                reader = getattr(engramdb, name)(page_size=page_size)
+                from engramdb.sglang import SGLangPageReader
+                if name == "SGLangPageReader":
+                    reader = SGLangPageReader(page_size=page_size)
+                else:
+                    reader = getattr(engramdb, name)(page_size=page_size)
                 pages = reader.read_pages([fd], [0])
                 assert len(pages) == 1
                 assert pages[0] == payload
@@ -75,6 +81,12 @@ def main() -> None:
     assert engramdb.__version__.startswith("0.2.1"), engramdb.__version__
     # Importing every public integration surface catches missing/renamed symbols.
     from engramdb.vllm import PleDiskGather  # noqa: F401
+    from engramdb import sglang  # noqa: F401
+    try:
+        from engramdb import vllm_plugin  # noqa: F401
+        print("vllm_plugin import OK")
+    except Exception as exc:
+        print(f"vllm_plugin skipped ({exc})")
     try:
         from engramdb import integrations  # noqa: F401
         print("integrations import OK")

@@ -410,6 +410,8 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 | S6-3 | CI 增加 `python-smoke` job | ✅ 已写入 | Linux + macOS 构建安装后跑 smoke |
 | S6-4 | 实现 Linux `IoUringPageReader` | ✅ 已写入 | thread-local io_uring，按批提交；需 Linux CI/实机验证 |
 | S6-5 | 修复 bump.sh | ✅ 已写入 | 现在同时更新 workspace 版本、crate 依赖版本引用、Python `__version__` |
+| S6-6 | 新增 `engramdb.sglang.SGLangPageReader` / `install_sglang_io_uring_reader` | ✅ 已写入 | SGLang `IoUringReader` 同形适配 |
+| S6-7 | 新增 `engramdb.vllm_plugin.DiskPleEmbedding` / `patch_named_embedding` | ✅ 已写入 | vLLM PLE 磁盘替换原型，内部走 `PleDiskGather` |
 
 ## 3. 坑
 
@@ -419,13 +421,14 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 
 ## 4. 状态
 
-- v0.2.1 tag 已本地创建并准备推送；推送后由 GitHub Actions 发布 crates.io + PyPI 多平台 wheel。
+- v0.2.1 tag 已推送；GitHub Actions 触发 crates.io + PyPI 多平台 wheel 发布。
 - `IoUringPageReader` 尚未在 Linux 实机跑过，受本机为 macOS 限制。
+- SGLang / vLLM 适配层和插件原型已入库（`engramdb.sglang`、`engramdb.vllm_plugin`）。
 
 ## 5. 下一步
 
 1. 确认 GitHub Actions 上 v0.2.1 发布成功（crates.io 四个 crate + PyPI 多平台 wheel）。
-2. 准备 SGLang 替换 patch。
-3. 准备 vLLM 插件原型。
+2. 在 Linux/目标硬件上验证 `IoUringPageReader` 和新的 wheel 矩阵。
+3. 把 SGLang / vLLM 原型接到真实仓库做功能验证。
 4. 目标硬件真实 PLE 端到端。
 

@@ -208,7 +208,7 @@
 | R2 | `PageReader` 仍是 pread | 接口对，性能不是 io_uring | ✅ 0.2.1 已实现 Linux `IoUringPageReader`（io_uring batch）；待 Linux 实机验证 |
 | R3 | 新 Python API 未进 release | PageReader/PleDiskGather 在 0.2.0 之后 | ✅ 0.2.1 已包含 PageReader / PleDiskGather / IoUringPageReader |
 | R4 | 无 Python CI smoke test | 仅在本地验证 | ✅ CI 新增 wheel 安装 + Store/PageReader/PleDiskGather 冒烟 |
-| R5 | 没有真正接入 vLLM / SGLang 仓库 | 只有适配层和调研 | 下一阶段做上游 patch / 插件原型 |
+| R5 | 没有真正接入 vLLM / SGLang 仓库 | 已有 `SGLangPageReader` 和 `vllm_plugin` 原型 | 下一步做上游 patch / 真实引擎内验证 |
 | R6 | 没有目标硬件端到端性能数据 | Intel Mac PyTorch 测试已暂停 | 用用户自维护 wheel / Windows/WSL + 真实 PLE 表验证 |
 
 ### 8.3 借鉴增量（本轮）
