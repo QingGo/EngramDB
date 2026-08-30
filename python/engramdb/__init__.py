@@ -8,7 +8,7 @@ is available, importing the module still works but Store/View will raise on use.
 
 from __future__ import annotations
 
-__version__ = "0.2.5"
+__version__ = "0.2.6"
 
 _USING_PYO3 = False
 _USING_CTYPES = False
