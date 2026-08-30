@@ -1227,3 +1227,32 @@ PLE_LAYER_BIT_EXACT_PASS
 - 真实 Qwen4Exp PLE 层的前向 bit-exact 已闭环。
 - 不需要把 200GB+ 的 ngram embedding 载入 RAM。
 - 下一步只有完整模型级 E2E 仍受整模型内存/资产限制。
+
+# Session 21 复盘（2026-08-30 后段：真实 PLE 数据面里程碑 + 系统性思考）
+
+## 1. 本轮完成
+
+- 真实 PLE 128-shard Store 位级读取闭环；
+- 修复 `gather_pp` 多分片偏移 bug；
+- 新增 `DiskPleNGramEmbedding` 磁盘 PLE adapter；
+- 新增 `disk_ple_from_discovery` 自动工厂；
+- 新增 `scripts/ple_layer_bit_exact.py`，真实 PLE 层 forward bit-exact 通过；
+- 明确完整模型 E2E 仍受环境/内存限制。
+
+## 2. 技术债
+
+新增 V44–V51，最关键：
+
+- 完整模型自定义加载 + 跳过 ngram_embedding 权重；
+- adapter 与官方类/cache 的进一步验证；
+- 完整模型性能数据缺失；
+- Rust 热路径尚未实现。
+
+## 3. 后续计划
+
+- Phase A：让 adapter 能被完整模型真正使用；
+- Phase B：准备真实 E2E 运行环境；
+- Phase C：Rust 原生性能路径；
+- Phase D：引擎服务化。
+
+详细内容见 `docs/roadmap.md` 第 15 节。

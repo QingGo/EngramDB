@@ -760,3 +760,123 @@
   max_abs=0.0
   ```
 - 完整模型级 E2E：仍受整模型内存/资产限制，属于后续真实机器任务。
+
+## 15. 第十一轮系统性思考（Session 21：真实 PLE 数据面第一里程碑）
+
+### 15.1 终极目标再锚定
+
+不变：
+
+> **让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。**
+
+本轮后的位置：
+
+| 层 | 状态 |
+|---|---|
+| 真实 PLE Store 位级读取 | ✅ 已闭环 |
+| PLE rowid 生成 | ✅ 与官方数学对齐 |
+| PLE 层前向 bit-exact | ✅ 已闭环（自实现 PLE forward + 真实权重） |
+| 磁盘 PLE adapter | ✅ 已可复用 |
+| 完整模型加载时替换 PLE | ⚠️ 需要 custom loader |
+| 完整模型 E2E A/B | ❌ 受环境/内存限制 |
+| 服务引擎级 A/B | ❌ 未做 |
+
+### 15.2 本轮完成与关键收获
+
+- 发现并修复 `gather_pp` 多分片偏移 bug：
+  - 此前只对单分片正确；
+  - 真实 128-shard PLE 表会读到错误行；
+  - 这是“看似能跑，实际错误”的典型数据面隐患。
+- 新增 `DiskPleNGramEmbedding`：
+  - 磁盘 PLE n-gram embedding；
+  - 确定性 rowid；
+  - FP8 + weight_scale 反量化；
+  - 顺序 decode 最小历史。
+- `scripts/ple_layer_bit_exact.py`：
+  - 不加载完整大模型；
+  - 只加载 PLE 层小权重；
+  - 全 PLE 层 forward bit-exact。
+- 结论：
+  - 存储层、adaptor 层、PLE 数学层已经没有功能缺口；
+  - 缺口转移到“完整模型加载/替换时机”和“真实算力/内存环境”。
+
+### 15.3 本轮新技术债（V44 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V44 | 完整 Qwen4Exp 模型仍不能加载进内存或跳过 ngram_embedding 权重后替换 PLE | 无法做完整模型 E2E | 写 custom loader / from_pretrained 前置 patch；跳过 `ngram_embedding.shard_*` 权重 |
+| V45 | `DiskPleNGramEmbedding` 只在自实现 PLE forward 中验证，未在官方 `Qwen4ExpTextPLELayer` 中验证 | 可能与官方 cache/量化/特殊路径有差异 | 在可加载完整模型的环境里用官方类实例替换并对比 |
+| V46 | adapter 使用 Python 内部 token history，未接入 Transformers `Cache` | 流式 decode 与 MTP/多段输入可能不一致 | 接入官方 `past_key_values` conv_state 或提供等价引擎状态 |
+| V47 | 尚未有真实 PLE 模型性能数据 | 无法判断磁盘 PLE 是否达到服务门槛 | 准备 big-memory 环境或引擎级替换后跑 A/B |
+| V48 | 当前 PLE layer bit-exact 仅覆盖单段、冷路径 | 未覆盖跨段、EOS 重置、多 batch、MTP 等边界 | 扩展测试矩阵 |
+| V49 | 完整模型资产不在可运行环境 | 开发和验证被环境卡住 | 寻找大内存机器/云主机，或走 llama.cpp/服务端路径 |
+| V50 | Rust 核心尚无 PLE adapter 热路径 | Python 版只验证语义，不满足性能目标 | 后续把 rowid + gather + dequant 下沉 Rust/PyO3 |
+| V51 | 服务化/发布仍然滞后 | 产品面未闭环 | 保持 v0.3 计划，但当前优先打通真实 E2E 路径 |
+
+### 15.4 借鉴矩阵（第十一轮增量）
+
+| 来源 | 借什么 | 不借什么 | 为什么对我们有用 |
+|---|---|---|---|
+| **HuggingFace Transformers** | `from_pretrained` 前置/后置 hook、state_dict 自定义加载、skip 大权重 | 不重写模型定义 | 解决“完整模型加载时不分配 ngram_embedding” |
+| **vLLM / SGLang / llama.cpp** | 模型加载时替换 embedding 表、CPU offload、内存映射 | 不复制推理内核 | 把真实 PLE 接进可用推理路径 |
+| **DuckDB / SQLite** | 嵌入式优先、manifest、integrity、连接模型 | 不借 SQL | 存储库产品形态 |
+| **DiskANN / Memcached** | 冷热分层、LRU 命中率、预取窗口 | 不借 ANN/KV | 让磁盘 PLE 在真实推理中有性能意义 |
+| **MLPerf / fio** | 固定输入、阈值、CSV、cache mode | 只做 benchmark | 所有性能结论可回归 |
+| **Arrow / Rust** | 零拷贝批次、原生热路径 | 不借查询引擎 | 最终将 Python adapter 下沉 Rust |
+| **RocksDB / FoundationDB** | checksum、原子发布、文件版本 | 不借 LSM | 大表可靠发布 |
+
+关键不冲突：
+
+- 我们不做模型训练/推理，只做 PLE 数据面。
+- 我们不改上游源码，用 loader hook / adapter。
+- 所有“快”的结论必须来自真实 PLE + 可复现基准。
+
+### 15.5 下一步开发计划
+
+#### Phase A：让 adapter 能被完整模型真正使用（最高优先）
+- [ ] 写 `scripts/qwen4_ple_custom_loader.py`：
+  - 加载完整模型所有非 PLE 权重；
+  - 跳过 `ngram_embedding.shard_*.weight`；
+  - 构造模型后用 `DiskPleNGramEmbedding` 替换真实 PLE 层。
+- [ ] 把 `DiskPleNGramEmbedding` 接进官方 `Qwen4ExpTextPLELayer`，验证官方类 forward。
+- [ ] 补跨段 / EOS / batch / 多段输入测试。
+- [ ] 在能加载完整模型的机器上跑“memory vs disk PLE 层前向”对照。
+
+**退出标准**：
+- 能用官方 `Qwen4ExpForCausalLM` 或 `Qwen4ExpForConditionalGeneration` 加载模型且不把 200GB+ PLE 表载入内存。
+- 官方 PLE layer forward 与 EngramDB disk adapter bit-exact。
+
+#### Phase B：真实 E2E 算力/环境
+- [ ] 找大内存 Linux / 工作站 / 云主机；
+- [ ] 或使用 llama.cpp / vLLM / SGLang 的磁盘表替换路径；
+- [ ] 完整模型 generate A/B。
+
+**退出标准**：
+- 真实 PLE 模型端到端跑通。
+- 输出 bit-exact + tok/s + hit-rate + fetch/convert。
+
+#### Phase C：性能架构
+- [ ] Rust/PyO3 native PLE gather + rowid；
+- [ ] 预取重叠，消除磁盘同步等待；
+- [ ] 真实 PLE 冷/热基准。
+
+#### Phase D：引擎服务化
+- [ ] vLLM / SGLang / llama.cpp serving A/B；
+- [ ] Unix socket / Arrow / 连接池 / 认证；
+- [ ] 发布 v0.2.7+。
+
+### 15.6 本轮纪律强化
+
+1. **不能把“自实现数学验证”当成“官方模型验证”**  
+   还要在官方模型类中验证一次，才算真正闭环。
+
+2. **大表不能因为“能跑”就认为正确**  
+   多分片、跨 shard、FP8 量化、EOS 边界都必须有 bit-exact 测试。
+
+3. **环境限制不是技术债的终点，但要显式记录**  
+   完整模型 E2E 没做就是没做，不能假装闭环。
+
+4. **继续坚持 Rust 为核**  
+   Python adapter 是语义验证和快速实验，不是最终性能产品。
+
+5. **所有性能结论最终必须落在真实 PLE + 固定基准上**。

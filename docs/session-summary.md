@@ -357,3 +357,13 @@ docs(session): record Session 19 trustworthy baseline and bit-exact progress
   - 加载真实 PLE 层投影/卷积权重；
   - 真实 PLE 层 forward 对比 raw-file vs EngramDB；
   - 结果 `max_abs=0.0`，`PLE_LAYER_BIT_EXACT_PASS`。
+
+## 12. Session 21：真实 PLE 数据面里程碑与系统性回顾
+
+- 真实 PLE Store bit-exact ✅
+- 修复多分片 gather 偏移 bug ✅
+- DiskPleNGramEmbedding adapter ✅
+- 真实 PLE 层 forward bit-exact ✅
+- 完整模型 E2E ❌（环境/内存限制）
+- 新增技术债 V44–V51
+- 计划进入 Phase A：完整模型 custom loader + 官方类验证
