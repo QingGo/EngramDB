@@ -45,6 +45,20 @@ view = engramdb.View("path/to/view.bin")
 rec = view.read_record(0)            # 一条 e_t 记录
 ```
 
+## engram-peft 集成
+
+安装 `engramdb-python` 后，可以直接使用内置的磁盘版 `MultiHeadEmbedding`：
+
+```python
+import engramdb
+from engramdb.integrations import install_disk_multi_head_embedding
+
+store = engramdb.Store("path/to/embedding-store", shards=1, rows_per_shard=100, width=256)
+install_disk_multi_head_embedding(store)
+
+# 之后再调用 engram-peft 的 get_engram_model(...) 即可让 Engram 层从磁盘读取 embedding
+```
+
 ## 定位（一句话）
 
 让"确定性哈希的 n-gram 记忆表"（Qwen PLE、DeepSeek Engram 等）像数据库一样落盘、建索引、预取、服务化——单机 CPU+NVMe 低延迟推理 / 高吞吐训练预处理。
