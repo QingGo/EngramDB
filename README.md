@@ -17,6 +17,7 @@
 - 形态：`engramdb` CLI / Rust lib / Python 绑定（PyO3，包名 `engramdb`）/ 服务化（Arrow IPC，M4）。
 
 文档：
+^- `docs/handoff.md` —— **空白上下文 agent 交接 prompt（最新状态/资产/环境/待办/纪律，粘贴即用）**
 - `docs/portable-dev.md` —— 双机开发/外盘布局与同步纪律（换机插入步骤/关机 checklist）
 - `docs/linux-setup.md` —— **全新 Linux/WSL 环境零到一**（rustup/镜像/MTU/mock 验证/真表接入/探针复现/口径）
 - `docs/design.md` —— 技术设计与开发方案（架构/负载/实测基线§7/里程碑/风险/ADR）
