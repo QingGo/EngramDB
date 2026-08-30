@@ -52,7 +52,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   （5 平台 wheel + sdist），包含
   `PageReader` / `PleDiskGather` / Linux `IoUringPageReader` 和多平台 PyPI wheel 矩阵；
   ✅ v0.2.2 已发布，额外包含 `engramdb.sglang` / `engramdb.vllm_plugin` 适配原型；
-  GitHub Release 4 平台二进制（v0.2.2 release-assets 的附件步骤失败，PyPI/crates 不受影响）；
+  ✅ v0.2.3 已发布，修复 release-assets 重复上传问题，GitHub Release 含 4 平台二进制 + Python 包；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
