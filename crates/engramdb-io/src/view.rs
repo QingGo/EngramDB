@@ -160,6 +160,7 @@ pub fn bench_view(
     sub_grams: usize,
     threads: usize,
     req_slot: u64,
+    order_mode: &str,
 ) -> std::io::Result<(f64, f64, f64)> {
     let (slot_bytes, grans) = if req_slot > 0 {
         (req_slot, 0)
@@ -199,13 +200,18 @@ pub fn bench_view(
     let meta = vf.metadata()?;
     let grans_actual = (meta.len() / slot_bytes) as usize;
     let n_grams = n_grams.min(grans_actual);
-    let mut g_state: u64 = 0xCAFE_BEEF_0F1E_2D3C;
-    let mut order: Vec<u64> = Vec::with_capacity(n_grams);
-    for _ in 0..n_grams {
-        g_state = g_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        order.push(g_state % n_grams as u64);
+    let mut order: Vec<u64>;
+    if order_mode == "seq" {
+        order = (0..n_grams as u64).collect();
+    } else {
+        let mut g_state: u64 = 0xCAFE_BEEF_0F1E_2D3C;
+        order = Vec::with_capacity(n_grams);
+        for _ in 0..n_grams {
+            g_state = g_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            order.push(g_state % n_grams as u64);
+        }
     }
     let run_par = |threads: usize| -> std::time::Duration {
         let t = std::time::Instant::now();

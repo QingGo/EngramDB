@@ -599,9 +599,11 @@ fn cmd_view_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let mut threads = 8usize;
     let mut slot_bytes: u64 = 0;
     let mut backend_name: Option<String> = None;
+    let mut order = String::from("rand");
     let mut it = rest;
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--order" => order = it.next().ok_or("order 值")?,
             "--keys" => keys_path = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
             "--sub" => {
                 sub_grams = it
