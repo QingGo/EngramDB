@@ -31,6 +31,8 @@ class DiskMultiHeadEmbedding(nn.Module):
         store: Store,
         dtype: Any = torch.float32,
         cache_size: int = 4096,
+        scale: float = 1.0,
+        output_dtype: Any | None = None,
         **kwargs: Any,
     ):
         super().__init__()
@@ -41,6 +43,8 @@ class DiskMultiHeadEmbedding(nn.Module):
         self.register_buffer("offsets", torch.tensor(offsets, dtype=torch.long))
         self.store = store
         self.dtype = dtype
+        self.scale = float(scale)
+        self.output_dtype = output_dtype
         self._sparse = False
         self._cache: OrderedDict[int, bytes] = OrderedDict()
         self._cache_size = max(0, int(cache_size))
@@ -73,11 +77,24 @@ class DiskMultiHeadEmbedding(nn.Module):
                 f"disk fetch returned {len(raw)} bytes, expected {expected * self.dtype.itemsize}"
             )
         data = torch.frombuffer(bytearray(raw), dtype=self.dtype)
+        if self.scale != 1.0 or self.output_dtype is not None:
+            out_dtype = self.output_dtype or torch.float32
+            data = data.to(out_dtype) * self.scale
         return data.reshape(*shifted.shape, self.embedding_dim_per_head)
 
 
-def install_disk_multi_head_embedding(store: Store, cache_size: int = 4096) -> None:
+def install_disk_multi_head_embedding(
+    store: Store,
+    cache_size: int = 4096,
+    dtype: Any = torch.float32,
+    scale: float = 1.0,
+    output_dtype: Any | None = None,
+) -> None:
     """Patch engram_peft's MultiHeadEmbedding to use an EngramDB Store.
+
+    For FP8 PLE tables pass ``dtype=torch.float8_e4m3fn`` and the real
+    ``weight_scale`` as ``scale``; the module will dequantize to float32
+    (or ``output_dtype``) before returning.
 
     Call this before constructing the Engram model, e.g. after
     ``uv add engramdb-python`` and before ``get_engram_model``.
@@ -94,8 +111,34 @@ def install_disk_multi_head_embedding(store: Store, cache_size: int = 4096) -> N
                 embedding_dim_per_head,
                 store=store,
                 cache_size=cache_size,
+                dtype=dtype,
+                scale=scale,
+                output_dtype=output_dtype,
                 **kwargs,
             )
 
     PatchedDiskMultiHeadEmbedding.__name__ = "DiskMultiHeadEmbedding"
     layer.MultiHeadEmbedding = PatchedDiskMultiHeadEmbedding
+
+
+def install_real_qwen_ple_embedding(
+    store: Store,
+    scale: float = 0.0002,
+    cache_size: int = 4096,
+) -> None:
+    """Patch engram_peft for real Qwen PLE FP8 Store-I rows.
+
+    This is the convenience wrapper for the Qwen3.8-Flash-Next / Qwen4Exp PLE
+    table: 160-byte FP8 rows with a global ``weight_scale``.  The patched
+    MultiHeadEmbedding reads FP8, dequantizes with ``scale``, and returns
+    float32 (which downstream projections can cast as needed).
+    """
+    import torch as _torch
+
+    return install_disk_multi_head_embedding(
+        store,
+        cache_size=cache_size,
+        dtype=_torch.float8_e4m3fn,
+        scale=scale,
+        output_dtype=_torch.float32,
+    )

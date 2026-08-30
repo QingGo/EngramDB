@@ -1256,3 +1256,30 @@ PLE_LAYER_BIT_EXACT_PASS
 - Phase D：引擎服务化。
 
 详细内容见 `docs/roadmap.md` 第 15 节。
+
+# Session 21 增补：服务 qwen35-ple / engram-peft 兄弟项目
+
+## 1. C ABI 契约
+
+- 新增 `engramdb_abi_version`
+- 新增 `engramdb_rowids_for_seq`
+- 与 qwen35-ple `PleSpec` 样本对拍一致
+
+## 2. 磁盘 MultiHeadEmbedding
+
+- 支持 FP8 + weight_scale 反量化
+- 新增 `install_real_qwen_ple_embedding`
+- 修复/补强 qwen35-ple 真实 PLE FP8 注入路径
+
+## 3. Smoke
+
+`scripts/sibling_contract_smoke.py` 通过：
+
+```text
+[C ABI] rowids match qwen35-ple PleSpec
+[C ABI] abi_version=1 rowids_for_seq OK
+[DiskMultiHeadEmbedding] quick check OK
+SIBLING_CONTRACT_SMOKE_OK
+```
+
+engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径已预留。

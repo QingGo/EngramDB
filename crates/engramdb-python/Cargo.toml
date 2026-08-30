@@ -12,3 +12,4 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 engramdb-core = { path = "../engramdb-core" }
 engramdb-io = { path = "../engramdb-io" }
+engramdb-keygen = { path = "../engramdb-keygen" }

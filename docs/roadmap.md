@@ -880,3 +880,20 @@
    Python adapter 是语义验证和快速实验，不是最终性能产品。
 
 5. **所有性能结论最终必须落在真实 PLE + 固定基准上**。
+
+### 14.8 服务兄弟项目：qwen35-ple / engram-peft 契约对齐
+
+- 新增 C ABI：
+  - `engramdb_abi_version() -> u32`
+  - `engramdb_rowids_for_seq(ids, len, out, out_cap, ple_spec) -> i32`
+  - 已与 qwen35-ple `PleSpec.rowids_for_seq` 对拍通过。
+- 增强 `DiskMultiHeadEmbedding`：
+  - 支持 FP8 行 + `weight_scale` 反量化；
+  - 支持 `output_dtype`；
+  - 新增 `install_real_qwen_ple_embedding(store, scale, cache_size)`。
+- 新增 `scripts/sibling_contract_smoke.py`：
+  - C ABI rowids 对拍 qwen35-ple；
+  - DiskMultiHeadEmbedding quick check；
+  - 可选 engram-peft import 检查。
+- 现状：qwen35-ple / engram-peft 依赖的存储与磁盘注入点已经可用；真实 PLE FP8 注入需要调用
+  `install_real_qwen_ple_embedding`（带 scale），而不是默认 float32 注入。

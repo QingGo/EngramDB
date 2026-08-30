@@ -12,6 +12,7 @@ use std::path::Path;
 use std::ptr;
 
 use engramdb_core::layout::Layout;
+use engramdb_keygen::PleSpec;
 use engramdb_io::batch::BadgeGather;
 use engramdb_io::view::ViewReader;
 
@@ -84,6 +85,48 @@ pub extern "C" fn engramdb_store_close(handle: *mut StoreHandle) {
     if !handle.is_null() {
         drop(unsafe { Box::from_raw(handle) });
     }
+}
+
+#[no_mangle]
+pub extern "C" fn engramdb_abi_version() -> u32 {
+    1
+}
+
+/// Compute PLE/Engram rowids for a token sequence.
+///
+/// Returns ``[len, 16]`` u64 rowids in head-major order.
+/// `ple_spec`: 1 = PLE_QWEN_V1 (Qwen Flash-Next), 2 = ENG_DEEPSEEK_V1 (reserved).
+#[no_mangle]
+pub unsafe extern "C" fn engramdb_rowids_for_seq(
+    ids: *const u32,
+    len: usize,
+    out: *mut u64,
+    out_cap: usize,
+    ple_spec: u32,
+) -> i32 {
+    if ids.is_null() || out.is_null() {
+        return -1;
+    }
+    if ple_spec != 1 {
+        // ENG_DEEPSEEK_V1 is not implemented in the C ABI yet.
+        return -3;
+    }
+    let Some(need) = len.checked_mul(16) else {
+        return -2;
+    };
+    if need == 0 || out_cap < need {
+        return -2;
+    }
+    let tokens = std::slice::from_raw_parts(ids, len);
+    let out_slice = std::slice::from_raw_parts_mut(out, need);
+    let spec = PleSpec::real();
+    let rows = spec.rowids_for_seq(tokens);
+    for (i, row) in rows.iter().enumerate() {
+        for (j, rid) in row.iter().enumerate() {
+            out_slice[i * 16 + j] = u64::from(*rid);
+        }
+    }
+    0
 }
 
 #[no_mangle]
