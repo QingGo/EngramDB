@@ -75,6 +75,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **vLLM embedding A/B 已测（Session 12/13）**：raw disk 235-268μs/call；已实现行级 LRU 后降到 14-23μs/call。`DiskPleEmbedding` 首未命中仍走 raw disk，Tier/预热待做（V7）。
   **Rust 侧多表/serve/check 已落地（Session 16/17）**：`engramdb tables <root>`、`engramdb serve <root> --port N [--binary]`、`engramdb check <root>`；支持 manifest 布局推断、完整性检查、JSON 与二进制 raw fetch。
   **CPU 小模型 E2E decode A/B 首曲线已获得（Session 16）**：`scripts/cpu_tiny_decode_ab.py`，memory vs disk raw vs disk LRU；原始磁盘约慢 16–24%，LRU 基本拉回。
+  **真实 Qwen3.5-0.8B CPU E2E A/B 已跑通（Session 18）**：`scripts/qwen35_cpu_decode_ab.py`，模型软链于 `data/Qwen3.5-0.8B`；原始磁盘通常慢 20%+，LRU 在短序列下优势尚不明显。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

@@ -963,3 +963,52 @@ check: {"ok": true, "table_count": 1, ...}
   - Unix socket；
   - 连接复用/认证/限流；
   - checksum 级完整性校验。
+
+# Session 18 复盘（2026-08-30 后段：真实 Qwen3.5-0.8B CPU E2E A/B）
+
+## 1. 模型准备
+
+- 真实模型所在路径：
+  ```text
+  /Volumes/My Passport/model/Qwen3.5-0.8B
+  ```
+- 已在本仓库建立软链：
+  ```text
+  data/Qwen3.5-0.8B -> /Volumes/My Passport/model/Qwen3.5-0.8B
+  ```
+- `data/` 已在 `.gitignore` 中，软链不会进入 git。
+
+## 2. 新增脚本
+
+`scripts/qwen35_cpu_decode_ab.py`
+
+- 加载真实 `Qwen3_5ForCausalLM`（transformers 5.16.1，WSL）
+- 将 `model.embed_tokens` 替换为 `DiskPleEmbedding`
+- 使用稀疏 store 文件避免实际写出 1GB embedding 行
+- 支持 `memory / disk raw / disk LRU` 三路 A/B 与 CSV 输出
+
+## 3. 实机结果（WSL + CPU，真实 0.8B）
+
+因 WSL/CPU 负载波动较大，记录多轮代表值：
+
+| 轮次 | memory | disk raw | disk LRU |
+|---|---|---|---|
+| 4 tokens, reps=3 | 3.66 tok/s | 2.84 tok/s | 2.87 tok/s |
+| 4 tokens, reps=1 | 4.02 tok/s | 2.40 tok/s | 3.67 tok/s |
+| 8 tokens, reps=1 | 2.12 tok/s | 3.93 tok/s | 1.53 tok/s |
+
+初步结论：
+
+- 已经跑通真实 0.8B 模型的端到端 CPU decode，不再是 tiny toy；
+- 原始磁盘路径通常比内存慢约 20% 以上；
+- LRU 在短序列/小工作集下优势不明显，因为每 token 大多是新行；
+- WSL 当前噪声较大，需要更长序列 + 多次中位数才能形成稳定回归阈值。
+
+## 4. 意义与后续
+
+- 这是“真实模型 + 磁盘 PLE 数据面”的首个 E2E 性能锚点；
+- 下一步：
+  - 固定生成序列、固定 seed、增加序列长度；
+  - 用真实权重填充 store（非稀疏零值）做 bit-exact 功能对照；
+  - 尝试 vLLM/SGLang 对 Qwen3.5-0.8B 的真实 serving 路径；
+  - 或者用 llama.cpp 替代 CPU 路径。
