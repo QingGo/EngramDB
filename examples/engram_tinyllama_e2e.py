@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import struct
 import tempfile
+import time
 import typing
 from pathlib import Path
 
@@ -103,6 +104,7 @@ def main() -> None:
     print("forward OK, logits shape:", tuple(out.logits.shape))
 
     # Optional tiny generation to prove the full path works.
+    t0 = time.time()
     with torch.no_grad():
         generated = engram_model.generate(
             input_ids,
@@ -110,7 +112,11 @@ def main() -> None:
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
+    dt = time.time() - t0
+    new_tokens = int(generated.shape[-1]) - int(input_ids.shape[-1])
     print("generated:", tokenizer.decode(generated[0], skip_special_tokens=True))
+    if dt > 0:
+        print(f"generation: {new_tokens} tokens in {dt:.2f}s = {new_tokens / dt:.2f} tok/s")
 
     store.close()
 
