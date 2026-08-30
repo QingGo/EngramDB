@@ -364,7 +364,7 @@ fn cmd_bench_real(mut args: impl Iterator<Item = String>) -> Result<(), String> 
 /// 把 token 流（P2 语料导出 npy，或 --dist 真实流量模拟）映射为 gram rowid keys
 /// （每 token 16 头平铺），供后续 build/gather/verify/view 链消费（训练数据准备入口）。
 /// npy 格式与 p2rowid 一致（np.save 原生 u32 数组）。
-fn cmd_prep(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+fn cmd_prep(rest: impl Iterator<Item = String>) -> Result<(), String> {
     let mut args: Vec<String> = rest.collect();
     if args.is_empty() {
         return Err("usage: engramdb prep <tokens.u32.npy | --dist agent> <out_keys.txt>".into());
@@ -430,7 +430,7 @@ fn cmd_prep(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         let _ = pos.pop();
     }
     let out_keys = pos.pop().ok_or("缺少 <out_keys.txt>")?;
-    let mut tokens_src = tokens_src.take();
+    tokens_src = tokens_src.take();
     let tokens: Vec<u32> = if dist {
         let stats = if dist_name == "agent" {
             Some(AgentStats::load(&stats_path)?)
@@ -644,6 +644,7 @@ fn cmd_view_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
         sub_grams,
         threads,
         slot_bytes,
+        &order,
     )
     .map_err(|e| e.to_string())?;
     Ok(())

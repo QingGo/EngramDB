@@ -114,6 +114,7 @@ fn cmd_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
         sub_grams,
         threads,
         slot_bytes,
+        "rand",
     )
     .map_err(|e| e.to_string())?;
     Ok(())
