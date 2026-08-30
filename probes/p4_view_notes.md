@@ -115,3 +115,18 @@ B8t=17.9M, A8t=1.34M, ampl_B=1.00 → PASS。基线 CSV: `probes/baseline_view.c
    预算仍有 3+ 数量级余量 → **"低延迟"承诺在 Linux/SSD 目标环境得到强证据支持**；
 3. 8t 尾延迟 max 18ms（~1/50K 罕见簇）：WSL/VHDX 元数据或写回抖动——事件性质，不作为验收指标；
 4. **口径修正落进 design**：吞吐基准的冷/热差异主要由"介质类别"决定而非缓存态；gate 无冷门槛。
+
+## P4 v6（2026-08-30：io_uring backend 实测——逐提交无增量，批量是正路）
+
+**环境**：WSL2 Ubuntu x86_64 @ VHDX（/dev/sdd 1TB）；合成单 shard 表 400MB（2,500,012×160B，内容零）+ 20K gram keys（320K 行随机 rowid）；A 路径 8t gather。
+
+| backend | A rows/s | 相对 | 备注 |
+|---|---|---|---|
+| preadv（冷首跑） | **1,094,230** | 1.00× | 与 Mac 真表 1.09M 完全一致 |
+| uring（逐提交，warm） | 905,133 | 0.83× | per-call submit_and_wait 每 IO 额外 ring 进入/等待 |
+
+结论（M2 验收口径）：
+1. **p/readv 在 Linux+SSD 上不被 uring 逐提交超越**——per-call 提交只是语义验证；
+2. 真正价值路径 = **批量提交**（一次 submit N SQE 后统一 wait，绕过 syscall 路径/复制）→ batch API（io::view/gather 路径）留作后端演进；
+3. 顺带验证：合成表布局与 Mac 真表行为完全同构（1.09M rows/s 一致），WSL 平台可作为性能复现环境（后续基准以"Mac 真表 + WSL 合成表"双口径）；
+4. P4 record：A/B 口径下 1.09M vs B(warm) 26.0M rows/s = 视图 24×（8t 档，虚高因 51MB 全热）——冷对照请用 full 表数据（P4 v3）。
