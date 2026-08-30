@@ -52,6 +52,9 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   4 平台预编；三个 workflow 均带 preflight；版本只走 scripts/bump.sh（patch）
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）
+- **Python 最小桥**：`engramdb-python` C ABI cdylib + ctypes `Store`/`View` 已可调；
+  `examples/interop_engram_peft.py` 的 `DiskMultiHeadEmbedding` 自检通过；
+  正式 PyO3/maturin 发布链留到依赖环境就绪后升级。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |
