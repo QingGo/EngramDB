@@ -898,3 +898,68 @@ SERVICE_SMOKE_OK
 - `DiskPleEmbedding` 现在允许 `cache_size=0`：
   - 之前 `cache_size=0` 会先写入 LRU 后立即淘汰，导致 forward 取缓存时 KeyError；
   - 修复后 `cache_size=0` 显式走 raw no-cache 路径，可用于 A/B 和调试。
+
+# Session 17 复盘（2026-08-30 后段：Rust manifest check + 二进制 serve）
+
+## 1. 目标
+
+在 Rust 侧继续收敛多表/服务能力：
+
+- 增加 manifest 完整性校验；
+- 将 Rust `serve` 从纯 JSON 升级到与 Python 客户端兼容的二进制 length-prefix 协议。
+
+## 2. 完成内容
+
+### 2.1 `engramdb check <root>`
+
+新增 `crates/engramdb/src/serve.rs` 中的：
+
+- `check_table(dir)`：
+  - 解析并校验 manifest；
+  - 检查每个预期 shard/badge 文件是否存在；
+  - 检查文件非空且大小为 `row_bytes` 的整数倍；
+  - 返回 `ok / shards_found / shards_expected / issues`。
+- `check_root(root)`：扫描多表并汇总。
+
+CLI：
+
+```bash
+engramdb check /path/to/tables-root
+```
+
+### 2.2 Rust 二进制 serve
+
+`engramdb serve <root> --binary` 新增：
+
+- 与 Python `EngramDBClient` 相同的 length-prefix 协议；
+- `fetch_raw` 直接返回裸字节（不再 base64 包装）；
+- `ping` / `list_tables` 返回 JSON kind；
+- 保留原 JSON serve 为默认模式。
+
+### 2.3 测试
+
+- `serve` 单元测试新增 `check_table` 有效/缺文件路径；
+- CLI e2e 新增 `tables_and_check_multi_table`；
+- Rust 二进制协议已用 Python `EngramDBClient` 手动验证通过。
+
+## 3. 验证结果
+
+```text
+ping True
+tables ['alpha']
+raw b'\x00...' 16
+check: {"ok": true, "table_count": 1, ...}
+```
+
+## 4. 状态
+
+- 多表目录发现：✅
+- manifest 布局读取：✅
+- manifest 完整性检查：✅ 首批
+- Rust JSON serve：✅
+- Rust 二进制 raw serve：✅
+- 待做：
+  - Rust Arrow IPC；
+  - Unix socket；
+  - 连接复用/认证/限流；
+  - checksum 级完整性校验。

@@ -199,3 +199,39 @@ fn build_gather_verify_bench_chain() {
     let dump = std::fs::read_to_string(idx.join("counts.dump.txt")).unwrap();
     assert!(dump.lines().count() >= rowids.len() - 1, "dump 行数异常");
 }
+
+#[test]
+fn tables_and_check_multi_table() {
+    let tmp = Temp::new("tables");
+    let root = tmp.0.clone();
+    let alpha = root.join("alpha");
+    std::fs::create_dir_all(&alpha).unwrap();
+    std::fs::write(alpha.join("shard_000.bin"), vec![0u8; 4 * 8]).unwrap();
+    std::fs::write(
+        alpha.join("manifest.json"),
+        serde_json::to_string(&serde_json::json!({
+            "layout": {
+                "shards": 1,
+                "rows_per_shard": 4,
+                "width": 8,
+                "elem_bytes": 1,
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let o = run(&["tables", root.to_str().unwrap()], &tmp.0, None);
+    assert!(o.status.success(), "tables: {}", stdout(&o));
+    let text = stdout(&o);
+    assert!(text.contains("alpha"), "tables should list alpha: {text}");
+
+    let o = run(&["check", root.to_str().unwrap()], &tmp.0, None);
+    assert!(o.status.success(), "check: {}", stdout(&o));
+    let text = stdout(&o);
+    assert!(text.contains("\"ok\": true"), "check should pass: {text}");
+    assert!(
+        text.contains("\"table\": \"alpha\""),
+        "check should include table"
+    );
+}

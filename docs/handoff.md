@@ -73,7 +73,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **访问序视图已在 WSL 验证（Session 10/11）**：`view build --keys`、校验与冷盘 A/B 均跑通；冷顺序 785.8MB/s vs 冷随机 86.0MB/s（约 9.1×）。
   **多表/Arrow/最小服务原型已落地（Session 14/15）**：`Database`、`arrow_utils`、TCP/JSON server（含 `fetch_arrow`）、二进制 length-prefix server + `EngramDBClient` 均通过 smoke。
   **vLLM embedding A/B 已测（Session 12/13）**：raw disk 235-268μs/call；已实现行级 LRU 后降到 14-23μs/call。`DiskPleEmbedding` 首未命中仍走 raw disk，Tier/预热待做（V7）。
-  **Rust 侧首批多表/serve 已落地（Session 16）**：`engramdb tables <root>`、`engramdb serve <root> --port N`，支持 manifest 布局推断和 JSON fetch。
+  **Rust 侧多表/serve/check 已落地（Session 16/17）**：`engramdb tables <root>`、`engramdb serve <root> --port N [--binary]`、`engramdb check <root>`；支持 manifest 布局推断、完整性检查、JSON 与二进制 raw fetch。
   **CPU 小模型 E2E decode A/B 首曲线已获得（Session 16）**：`scripts/cpu_tiny_decode_ab.py`，memory vs disk raw vs disk LRU；原始磁盘约慢 16–24%，LRU 基本拉回。
 
 ## 4. 机器与资产（重要）
