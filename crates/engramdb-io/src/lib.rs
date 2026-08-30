@@ -7,8 +7,10 @@ pub mod backend;
 pub mod batch;
 pub mod planner;
 pub mod tiers;
+pub mod view;
 
 pub use backend::{default_backend, IoBackend, PreadvBackend};
 pub use batch::{BadgeGather, PrefetchPlan};
 pub use planner::StreamingPlanner;
 pub use tiers::TierManager;
+pub use view::build_view;

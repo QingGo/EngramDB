@@ -15,9 +15,13 @@ use std::path::{Path, PathBuf};
 
 use engramdb_core::count_index::CountIndex;
 use engramdb_core::layout::Layout;
+
 use engramdb_keygen::PleSpec;
 
 use engramdb_core::fnv64;
+use engramdb_io::backend::{default_backend, IoBackend};
+use engramdb_io::batch::BadgeGather;
+use engramdb_io::view;
 
 mod workload;
 
@@ -65,6 +69,7 @@ fn main() {
         "verify" => cmd_verify(rest),
         "bench-real" => cmd_bench_real(rest),
         "warm" => cmd_warm(rest),
+        "view" => cmd_view(rest),
         _ => Err(format!("unknown command: {cmd}")),
     };
     if let Err(e) = out {
@@ -372,4 +377,164 @@ pub fn exported_fnv(bytes: &[u8]) -> u64 {
 #[allow(dead_code)]
 fn _keep_serde(_p: &Path) {
     let _ = serde_json::Value::Null;
+}
+
+/// view <build|bench|lat> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
+/// 用法：
+///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096]
+///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
+///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
+fn cmd_view(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let Some(sub) = rest.next() else {
+        return Err("view 需要子命令 build|bench|lat".into());
+    };
+    let it = rest;
+    match sub.as_str() {
+        "build" => cmd_view_build(it),
+        "bench" => cmd_view_bench(it),
+        "lat" => cmd_view_lat(it),
+        _ => Err(format!("unknown view subcommand: {sub}")),
+    }
+}
+
+fn backend_for(name: Option<String>) -> Result<Box<dyn IoBackend>, String> {
+    match name.as_deref() {
+        None | Some("preadv") => Ok(default_backend()),
+        #[cfg(target_os = "linux")]
+        Some("uring") => Ok(Box::new(engramdb_io::backend::UringBackend)),
+        #[cfg(not(target_os = "linux"))]
+        Some("uring") => Err("uring 后端仅 Linux 可用（当前平台不可用）".into()),
+        Some(other) => Err(format!("unknown backend: {other}")),
+    }
+}
+
+fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
+    let n: usize = rest
+        .next()
+        .ok_or("n_grams")?
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let view_out = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let keys_out = PathBuf::from(rest.next().ok_or("keys.txt")?);
+    let mut slot_bytes: u64 = 2560;
+    let mut backend_name: Option<String> = None;
+    let mut it = rest;
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--slot" => {
+                slot_bytes = it
+                    .next()
+                    .ok_or("slot")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--backend" => backend_name = Some(it.next().ok_or("backend")?),
+            "--seed" => {
+                let _ = it.next();
+            }
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let layout = layout_for_dir(&rows_dir)?;
+    let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)
+        .map_err(|e| e.to_string())?;
+    let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn cmd_view_bench(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
+    let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let mut keys_path: Option<PathBuf> = None;
+    let mut sub_grams = 0usize;
+    let mut threads = 8usize;
+    let mut slot_bytes: u64 = 0;
+    let mut backend_name: Option<String> = None;
+    let mut it = rest;
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--keys" => keys_path = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
+            "--sub" => {
+                sub_grams = it
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--threads" => {
+                threads = it
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--slot" => {
+                slot_bytes = it
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--backend" => backend_name = Some(it.next().ok_or("backend")?),
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let layout = layout_for_dir(&rows_dir)?;
+    let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)
+        .map_err(|e| e.to_string())?;
+    let keys = match &keys_path {
+        Some(kf) => Some(view::read_keys(kf).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    view::bench_view(
+        &batch,
+        &view_file,
+        keys.as_deref(),
+        sub_grams,
+        threads,
+        slot_bytes,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn cmd_view_lat(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
+    let mut threads = 8usize;
+    let mut warm = false;
+    let mut cold = false;
+    let mut sub_grams = 0usize;
+    let mut slot_bytes: u64 = 0;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--threads" => {
+                threads = rest
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--warm" => warm = true,
+            "--cold" => cold = true,
+            "--sub" => {
+                sub_grams = rest
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            "--slot" => {
+                slot_bytes = rest
+                    .next()
+                    .ok_or("v")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    view::lat_view(&view_file, threads, warm, cold, sub_grams, slot_bytes)
+        .map_err(|e| e.to_string())
 }
