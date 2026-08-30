@@ -360,3 +360,90 @@
    - 上游 patch / 贡献；
    - llama.cpp 文件格式/C ABI 接入；
    - 保持“不修改上游源码”的薄层适配哲学。
+
+## 11. 第七轮复盘（2026-08-30 后段：发布验证 + Rust 首批服务化 + CPU E2E 首曲线）
+
+### 11.1 终极目标再确认
+
+一句话不变：
+
+> 让 Engram/PLE 这类“确定性哈希 n-gram 记忆表”成为任何小模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+本轮后需要把“接近目标”的判断标准更严格：
+
+| 轴 | 验收口径 |
+|---|---|
+| 性能 | 真实小模型 + 真实/合成 PLE 表上的端到端 A/B，而不是 tiny toy model 或单独 embedding micro A/B；EngramDB 参与后总 tok/s 差距目标 ≤5% |
+| 形态 | 单目录多表、manifest 可校验、嵌入式 + 服务化双形态、Arrow 零拷贝输出、引擎薄接入 |
+| 科学 | 每个性能论断都有可复现脚本、冷热/介质/并发口径，并且拒绝“单次抖动即结论” |
+
+### 11.2 本轮新认识与技术债（V16 起）
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V16 | CPU E2E 首曲线来自 tiny toy Qwen3，不是真实 PLE 表/真实服务引擎 | 数字只能做方向锚点，不能作为验收 | 下一轮用真实或大合成 PLE 表 + 更高保真 CPU/llama.cpp 路径 |
+| V17 | v0.2.5 tag 之后 master 已有 Rust serve、CPU A/B 脚本等新代码 | 版本与代码开始分叉，容易混淆“哪个版本含什么” | 规划 v0.2.6，在 release 前把新功能纳入并重新 bump |
+| V18 | Rust serve 只是 JSON + base64，没有 Arrow IPC/二进制协议 | 仍不是最终产品 wire，且与 Python 二进制服务能力不对齐 | 按“Rust 为核、Python 为薄壳”把二进制/Arrow 迁到 Rust |
+| V19 | 服务仍无连接复用、认证、限流、线程安全句柄、性能门禁 | 不能作为生产服务使用 | 参考 Redis 连接模型 + DuckDB 每线程资源，先做每线程 store 池/句柄 |
+| V20 | Manifest 只用于布局读取，没有完整性校验（文件大小、shard 数、checksum） | 数据损坏/部分复制时静默错误 | 增加 manifest schema、shard 文件尺寸校验、可选 checksum、`check` 子命令 |
+| V21 | CPU A/B 噪声大，缺少固定 seed、固定序列、重复次数阈值、冷热状态 | 数字波动无法形成回归门槛 | 采用 MLPerf 式：固定输入、固定命令、判定阈值、结果 CSV 入库 |
+| V22 | DiskPleEmbedding 仍为 Python 层逐 token 拼接，无原生零拷贝/异步 | 热路径虽接近内存，但持锁、GIL、Python 对象开销仍在 | 中期考虑 Rust/PyO3 原生 gather + Arrow 或内存池接口 |
+| V23 | GPU 路径仍无可行 torch 构建 | 无法验证 GPU 端 ≤5% 门禁 | 尝试 cu121/cu126 老 torch，或先以 llama.cpp CPU/GPU 作为替代验收 |
+| V24 | 模型 PLE 属性仍靠手填 | 换模型/换版本时接入成本高 | 增加 config 自动发现 + 注册表/映射文件 |
+
+### 11.3 借鉴矩阵（本轮聚焦“如何不冲突地推进”）
+
+| 来源 | 借鉴 | 不冲突的原因 |
+|---|---|---|
+| **DuckDB** | 单目录库、manifest、Arrow 输出、嵌入式+服务双形态 | 我们不做 SQL/执行引擎，只借用“数据库形态”和“可嵌入性” |
+| **SQLite** | integrity_check、connection-per-thread、轻量服务化 | 我们不做关系模型；只取“可校验、可嵌入、每线程资源隔离” |
+| **Redis/Memcached** | LRU/TTL、连接池、每连接状态、简单命令协议 | 我们不是通用 KV；只取缓存与服务端资源管理 |
+| **Milvus** | 不可变段、seal/flush、快照发布 | 我们是静态只读表；只借生命周期与原子发布，不借向量检索 |
+| **DiskANN** | 冷数据顺序化、滑窗、热集驻留 | 我们无近邻语义；只借“把随机 IO 收敛为顺序窗口”的经验 |
+| **vLLM/SGLang** | dedup、页对齐、pinned staging、PREWARM、io_uring | 我们保持引擎无关数据面；薄 adapter 不修改上游 |
+| **llama.cpp** | mmap/MADV_RANDOM、warm table、实测数字文化 | 我们只取部署阈值与测量纪律，不复制其推理内核 |
+| **PyArrow** | Arrow Table/IPC 作为批次数据契约 | 我们只用它做存储读取输出，不做查询/执行 |
+| **MLPerf** | 固定输入+固定命令+判定阈值+CSV 基线 | 用于把 A/B 从“跑一次”变成“可回归” |
+| **fio** | `--cache-mode`、O_DIRECT、介质标注 | 用于把冷热/直通口径显式化，避免假冷/假热 |
+
+### 11.4 下一步开发计划（v0.3 主线）
+
+按“先建立可信性能基线，再产品化，再引擎深化”排序：
+
+1. **v0.2.6 发布准备**
+   - 把 Rust serve、CPU A/B 脚本、cache_size=0 修复纳入正式发布；
+   - 增加 Rust `serve`/`tables` smoke 进 CI；
+   - 保持 Python wheel smoke 全绿。
+
+2. **可信性能门禁**
+   - 把 CPU tiny decode A/B 改成固定 seed + 固定序列 + 多次取中位数；
+   - 生成 `probes/cpu_decode_baseline.csv`；
+   - 建立阈值：raw disk 不得比 memory 慢超过 X%，LRU 不得慢超过 Y%；未达标即回归失败。
+   - 下一步尝试真实 PLE 表或大合成 PLE 表，而不是只 toy vocab。
+
+3. **Rust 服务化收敛**
+   - Rust `serve` 增加二进制 length-prefix 与 Arrow IPC；
+   - 增加 manifest 校验/`engramdb check`；
+   - 每线程 store 句柄/连接池，解决 `unsendable`；
+   - 性能门禁：embedded vs server ≤2%（≤32KB 批往返）。
+
+4. **冷读与调度**
+   - 大表冷态顺序/随机复测；
+   - 自适应单/少线程顺序流；
+   - 与 `StreamingPlanner` / Tier/预取打通。
+
+5. **引擎真实接入**
+   - 优先 CPU 可用路径：llama.cpp 或可运行的 vLLM/SGLang CPU serving；
+   - 自动发现 PLE 属性/配置映射；
+   - 做端到端 A/B，目标差距 ≤5%。
+
+6. **长期**
+   - 上游 patch / C ABI / llama.cpp 文件格式；
+   - GPU 路径待兼容 torch 或换硬件后补测；
+   - 保持“不修改上游源码”的薄层哲学。
+
+### 11.5 稳定前进的三条纪律
+
+1. **先测量，后优化**：任何“快/慢”结论必须落在可复现脚本和 CSV，不接受单次 run 口述。
+2. **收敛到 Rust 核心**：Python 只做薄 adapter/演示；服务、Arrow、manifest、多表逐步由 Rust 承担。
+3. **版本和功能同源**：重大功能必须进入正式 tag，避免 master 与已发布版本长期分叉。
