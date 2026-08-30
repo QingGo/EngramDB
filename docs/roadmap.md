@@ -198,7 +198,8 @@
   - engram-peft 磁盘集成进入 `engramdb.integrations`。
   - SGLang 兼容 `engramdb.PageReader.read_pages(fds, offsets)`。
   - vLLM 方向 `engramdb.vllm.PleDiskGather`。
-  - 0.2.1 追加：Linux `IoUringPageReader`、多平台 PyPI wheel 矩阵、Python CI 冒烟。
+  - ✅ 0.2.1 已发布：Linux `IoUringPageReader`、5 平台 PyPI wheel 矩阵、Python CI 冒烟。
+  - 发布后追加：`engramdb.sglang.SGLangPageReader`、`engramdb.vllm_plugin.DiskPleEmbedding` 原型。
 
 ### 8.2 本轮新增技术债
 

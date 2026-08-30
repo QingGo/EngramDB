@@ -421,9 +421,11 @@ P4 前端（视图 API+CLI，关 T1/T7）→ P4 v5 顺序化（关 T4 大数据�
 
 ## 4. 状态
 
-- v0.2.1 tag 已推送；GitHub Actions 触发 crates.io + PyPI 多平台 wheel 发布。
-- `IoUringPageReader` 尚未在 Linux 实机跑过，受本机为 macOS 限制。
-- SGLang / vLLM 适配层和插件原型已入库（`engramdb.sglang`、`engramdb.vllm_plugin`）。
+- ✅ v0.2.1 已发布：crates.io 四 crate；PyPI `engramdb-python 0.2.1` 包含
+  Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 共 5 个 wheel + sdist。
+- `IoUringPageReader` 已通过 GitHub Actions Linux 构建（预检/打包成功），尚未在 Linux 实机跑性能。
+- SGLang / vLLM 适配层和插件原型已入库（`engramdb.sglang`、`engramdb.vllm_plugin`），
+  这些是 0.2.1 发布之后的代码，待下一个版本再进 PyPI。
 
 ## 5. 下一步
 

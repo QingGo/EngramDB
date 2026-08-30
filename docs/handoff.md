@@ -48,8 +48,8 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   - 延迟：视图单记录 p50=0.75~5μs、p99=1.4~12μs（存储层比 10ms/token 低 3 个量级）
   - **io_uring 性能面定案**：per-call 0.97×、batch 0.94× vs preadv —— 保留作语义实现，
     默认 = preadv；不要在性能面再花时间（除非介质=网络盘/cgroup 受限环境）
-- **发布链**：v0.2.0 已发布 crates.io 四 crate + PyPI（engramdb-python，
-  abi3 manylinux wheel + sdist）；v0.2.1 已准备并推送，包含
+- **发布链**：✅ v0.2.1 已发布 crates.io 四 crate + PyPI `engramdb-python 0.2.1`
+  （5 平台 wheel + sdist），包含
   `PageReader` / `PleDiskGather` / Linux `IoUringPageReader` 和多平台 PyPI wheel 矩阵；
   GitHub Release 4 平台二进制；版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
@@ -60,6 +60,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   已新增 `engramdb.PageReader`（SGLang 兼容）、`engramdb.vllm.PleDiskGather`（vLLM 方向）、
   Linux `IoUringPageReader`（io_uring batch）。
   多平台 PyPI wheel：Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64；CI 含 Python 安装冒烟。
+  发布后新增 `engramdb.sglang` / `engramdb.vllm_plugin` 适配原型（尚未进下一个 PyPI 版本）。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |
