@@ -10,6 +10,8 @@
 > # keys 由 manifest 携带 n 可不用（bench/lat 支持 B-only：--keys 省略、n 从 .manifest.json 读）
 > # 吞吐复测:   p4view bench data/real-rows <view.bin> --threads 8 [--sub N]
 > # 延迟复测:   p4view lat <view.bin> [--warm] [--threads 1|8] [--sub N]
+> # 抽样校验:   p4view verify data/real-rows <view.bin> --keys <keys.txt> [--sub N]
+> # 构建+校验:  p4view build ... --verify
 > # 大小视图门禁输入: probes/view-keys-20k.txt（固定 seed，入 git，gate.sh 使用）
 > ```
 
