@@ -68,6 +68,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   README 已重写为完整用户入口（用法/架构/性能/优化策略）。
   **真实引擎模型类验证已闭环（Session 9）**：vLLM 0.28.0 与 SGLang 0.5.9 的真实
   `Qwen3ForCausalLM` 均通过类级/实例级 patch，`DiskPleEmbedding` 前向成功。
+  **访问序视图已在 WSL 验证（Session 10）**：`view build --keys`、校验与顺序/随机读均跑通。
 
 ## 4. 机器与资产（重要）
 | 机器 | 地址 | 用途 |

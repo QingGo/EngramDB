@@ -584,3 +584,33 @@ SGLANG_PLE_VERIFY_OK
 2. 用真实 PLE 表或大合成表完成端到端性能 A/B。
 3. 顺序化视图基准与调度落地。
 4. 存储产品化（多表 / Arrow IPC / 服务化）。
+
+# Session 10 复盘（2026-08-30 后段：访问序视图 WSL 真机验证）
+
+## 1. 目标
+
+把当前仓库源码同步到 WSL2，用新编译的 `engramdb` 验证：
+- `view build --keys`（访问序/调用方 keys 构建视图）在真实 Linux 可跑；
+- 构建后的视图校验通过；
+- 顺序读 vs 随机读在同一视图上的吞吐基线。
+
+## 2. 结果
+
+| 项 | 数值 |
+|---|---|
+| 输入 | `wsl-keys.txt` 前 319984 行 = 19999 grams × 16 heads |
+| 构建 | `/tmp/access.view` 49MB，用时 0.4s |
+| 校验 | 抽样 1000/19999 grams 全部与源表一致 |
+| B 顺序 1t | 9.55M rows/s / 1529 MB/s |
+| B 随机 1t | 9.25M rows/s / 1481 MB/s |
+| B 顺序 8t | 29.57M rows/s / 4732 MB/s |
+| B 随机 8t | 27.97M rows/s / 4475 MB/s |
+| A scatter 8t | ~1.10–1.20M rows/s |
+
+说明：该测试是构建后热页缓存下的吞吐，不是冷盘对比；访问序视图的构建/校验/读取路径已闭环，
+冷盘顺序化收益仍需 O_DIRECT/fadvise 冷态 A/B。
+
+## 3. 当前状态
+
+- `build_view_from_keys` 和 `view bench --order seq|rand` 在真实 Linux WSL 上可用。
+- V6 从“未实现”变为“构建/读取路径已验证，冷盘收益待测”。
