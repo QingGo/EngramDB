@@ -93,8 +93,11 @@ The 0.2.2 PyPI wheel includes the SGLang/vLLM adapter modules. On a Linux box
 (WSL or Raspberry Pi) run:
 
 ```bash
-python3 -m pip install --upgrade engramdb-python==0.2.2
+# Option A: clone this repo, then:
+bash scripts/linux_verify.sh
 
+# Option B: no repo clone:
+python3 -m pip install --upgrade engramdb-python==0.2.2
 curl -sL https://raw.githubusercontent.com/QingGo/EngramDB/master/scripts/python_wheel_smoke.py \
   -o /tmp/engramdb_smoke.py
 python3 /tmp/engramdb_smoke.py
