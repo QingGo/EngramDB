@@ -1108,7 +1108,7 @@ LLM-CompileForge  推理 runtime（后续）
 ### 17.6 下一阶段开发计划
 
 #### Phase 0：发布与工程稳定性（先做，门槛）
-- [ ] 新增 `scripts/release_gate.sh`：
+- [x] 新增 `scripts/release_gate.sh`：
   - `cargo fmt --all --check`
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test --workspace`
@@ -1116,10 +1116,11 @@ LLM-CompileForge  推理 runtime（后续）
   - `service_smoke.py`
   - `c_abi_smoke.py`
   - `decode_baseline_check.py`
-- [ ] 将最新 README/python README 收编进下一个版本。
-- [ ] `install_real_qwen_ple_embedding` 去掉静默硬编码 fallback，或至少输出显式 warning。
-- [ ] `rowids_for_seq()` 支持 `multipliers`/`info` 来源。
-- [ ] 把 README 核心示例抽成可执行 smoke，防止再次漂移。
+  - 已接入 `scripts/bump.sh`（默认 bump 前先跑，可用 `--skip-gate` 跳过）。
+- [ ] 将最新 README/python README 收编进下一个版本（本次已继续刷新，待 bump 收口）。
+- [x] `install_real_qwen_ple_embedding` 去掉静默硬编码 fallback，或至少输出显式 warning。
+- [x] `rowids_for_seq()` 支持 `multipliers`/`info` 来源。
+- [ ] 把 README 核心示例抽成可执行 smoke，防止再次漂移（rowids/discovery/safetensors 示例已进入 `python_wheel_smoke.py`，其余待补）。
 
 **退出标准**：
 - 本地一条命令能完整预检所有发布门禁。

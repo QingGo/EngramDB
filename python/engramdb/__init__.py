@@ -203,7 +203,11 @@ if not _USING_PYO3:
 from .tables import Database
 from .server import EngramDBServer, EngramDBBinaryServer
 from .service_client import EngramDBClient
-from .ple_discovery import discover_ple, load_ple_weight_scale
+from .ple_discovery import (
+    discover_ple,
+    load_ple_multipliers,
+    load_ple_weight_scale,
+)
 
 PLE_QWEN_V1 = 1
 ENG_DEEPSEEK_V1 = 2
@@ -222,12 +226,19 @@ def rowids_for_seq(
     tokens: Any,
     ple_spec: int = PLE_QWEN_V1,
     multipliers: list[int] | None = None,
+    info: dict[str, Any] | None = None,
 ) -> list[list[int]]:
     """Return PLE/Engram rowids for a token sequence.
 
     The returned shape is ``[len(tokens), 16]`` for ``PLE_QWEN_V1``.  The
     implementation prefers the native Rust path (PyO3 or the C ABI) and falls
     back to the pure-Python reference when no native binding is installed.
+
+    ``multipliers`` may be supplied directly, or taken from ``info`` as returned
+    by :func:`engramdb.ple_discovery.discover_ple` (keys ``layer_multipliers``,
+    ``rowid_multipliers``, or ``multipliers``).  When a non-default multiplier
+    source is provided, the pure-Python path is used because the current C
+    ABI/PyO3 rowid entry points implement only the standard Qwen PLE constants.
     """
     if ple_spec != PLE_QWEN_V1:
         raise NotImplementedError(
@@ -237,24 +248,38 @@ def rowids_for_seq(
         tokens = tokens.tolist()
     tok = [int(x) for x in tokens]
 
-    if _USING_PYO3 and hasattr(_engramdb, "rowids_for_seq"):
-        return [list(r) for r in _engramdb.rowids_for_seq(tok, ple_spec)]
-    if _USING_CTYPES and hasattr(_lib, "engramdb_rowids_for_seq"):
-        n = len(tok)
-        if n == 0:
-            return []
-        arr = (ctypes.c_uint32 * n)(*tok)
-        out = (ctypes.c_uint64 * (n * 16))()
-        rc = _lib.engramdb_rowids_for_seq(arr, n, out, n * 16, ple_spec)
-        if rc != 0:
-            raise OSError(f"engramdb_rowids_for_seq failed with code {rc}")
-        return [list(out[i * 16:(i + 1) * 16]) for i in range(n)]
+    info_multipliers: list[int] | None = None
+    if info is not None:
+        for key in ("layer_multipliers", "rowid_multipliers", "multipliers"):
+            val = info.get(key)
+            if val is not None:
+                info_multipliers = [int(x) for x in val]
+                break
+
+    custom_multipliers = multipliers is not None or info_multipliers is not None
+    if not custom_multipliers:
+        if _USING_PYO3 and hasattr(_engramdb, "rowids_for_seq"):
+            return [list(r) for r in _engramdb.rowids_for_seq(tok, ple_spec)]
+        if _USING_CTYPES and hasattr(_lib, "engramdb_rowids_for_seq"):
+            n = len(tok)
+            if n == 0:
+                return []
+            arr = (ctypes.c_uint32 * n)(*tok)
+            out = (ctypes.c_uint64 * (n * 16))()
+            rc = _lib.engramdb_rowids_for_seq(arr, n, out, n * 16, ple_spec)
+            if rc != 0:
+                raise OSError(f"engramdb_rowids_for_seq failed with code {rc}")
+            return [list(out[i * 16:(i + 1) * 16]) for i in range(n)]
 
     from .ple_adapter import ple_rowids
 
-    if multipliers is None:
-        multipliers = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
-    return ple_rowids(tok, multipliers)
+    if multipliers is not None:
+        effective = [int(x) for x in multipliers]
+    elif info_multipliers is not None:
+        effective = info_multipliers
+    else:
+        effective = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+    return ple_rowids(tok, effective)
 
 
 def __getattr__(name: str):

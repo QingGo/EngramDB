@@ -8,6 +8,7 @@ PyTorch (and optionally engram-peft) only when the user wants to replace
 
 from __future__ import annotations
 
+import warnings
 from collections import OrderedDict
 from typing import Any
 
@@ -151,6 +152,13 @@ def install_real_qwen_ple_embedding(
             from .ple_discovery import load_ple_weight_scale
             scale = float(load_ple_weight_scale(model_dir))
         else:
+            warnings.warn(
+                "install_real_qwen_ple_embedding: no weight_scale source provided; "
+                "falling back to the hardcoded Qwen3.8 value 0.0002. "
+                "Pass `model_dir=...`, `info=...`, or `scale=...` to avoid "
+                "silently using the wrong scale.",
+                stacklevel=2,
+            )
             scale = 0.0002
 
     return install_disk_multi_head_embedding(

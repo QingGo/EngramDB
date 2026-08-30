@@ -65,14 +65,18 @@ pages = reader.read_pages([fd0, fd1], [offset0, offset1])
 ### PLE rowid、自动发现、FP8 scale
 
 ```python
-from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale
+from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale, load_ple_multipliers
 
 # Qwen PLE / Engram 确定性 rowid：[T, 16]
 rows = rowids_for_seq([248044, 1000, 99999, 42])
 
-# 从 checkpoint 自动发现 PLE 表元数据与 weight_scale
+# 从 checkpoint 自动发现 PLE 表元数据、weight_scale 与 rowid multipliers
 info = discover_ple("/path/to/Qwen3.8-Flash-Next")
 scale = load_ple_weight_scale("/path/to/Qwen3.8-Flash-Next")
+mult = load_ple_multipliers("/path/to/Qwen3.8-Flash-Next")
+
+# discovery 返回的 info 已包含 weight_scale 和 multipliers，可直接用于 rowids
+rows = rowids_for_seq([248044, 1000, 99999, 42], info=info)
 ```
 
 ### 真实 PLE 磁盘 Adapter

@@ -84,6 +84,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   **真实 PLE 数据面与兄弟项目服务已闭环（Session 20-22）**：修复 `gather_pp` 多分片偏移；真实 128-shard Store bit-exact；`DiskPleNGramEmbedding` adapter；真实 PLE layer forward bit-exact；C ABI `rowids_for_seq` / `abi_version`；`install_real_qwen_ple_embedding`；`sibling_contract_smoke.py` 通过。完整模型 E2E 仍受环境限制。
   **v0.2.7 CI 修复 + Phase A EngramDB 侧补齐（Session 23）**：修复 rustfmt import 顺序与无 torch 环境导入失败；新增 `load_ple_weight_scale` 自动读取 checkpoint scale；新增 Python `rowids_for_seq()`；PyO3 native `rowids_for_seq`；C ABI smoke 进入 CI；本地 fmt/clippy/test/python smoke/C ABI smoke 全绿。
   **v0.2.8 发布 + README 刷新 + 系统性思考（Session 24）**：发布 v0.2.8；根 README 与 python README 补齐 Rust/Python 安装、真实 PLE、FP8 engram-peft 用法；roadmap 新增第 17 节系统性思考与技术债 V60-V73；后续优先做 release gate 和兄弟侧配置即用。
+  **Session 25（当前开发，未发布）**：新增 `scripts/release_gate.sh` 并接入 `bump.sh` 默认前置；`discover_ple()` 自动读取 `layer_multipliers`（一次索引读取同时取 scale/multipliers）；`rowids_for_seq()` 支持 `info`/`multipliers`；`install_real_qwen_ple_embedding` 无来源时改为显式 warning；README/Python README 同步；`python_wheel_smoke.py` 增加 safetensors I64、discovery、自定义 multipliers 回归。
 
 
 

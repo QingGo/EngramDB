@@ -601,10 +601,10 @@ Phase 0 发布稳定 → Phase A 配置即用 → Phase B 完整模型 E2E → P
 
 ### 17.6 未完成的内容
 
-- ❌ `scripts/release_gate.sh` 尚未创建
+- ✅ `scripts/release_gate.sh` 已创建，并已接入 `bump.sh` 默认流程
 - ❌ 最新 README 尚未进入 v0.2.8 发布物（需下版收编）
-- ❌ `install_real_qwen_ple_embedding` 仍保留无 model_dir 时的硬编码 fallback
-- ❌ `rowids_for_seq()` 纯 Python fallback 仍使用固定 multipliers
+- ✅ `install_real_qwen_ple_embedding` 无来源时改为显式 warning
+- ✅ `rowids_for_seq()` 现支持 `multipliers`/`info`，`discover_ple()` 自动读取 `layer_multipliers`
 - ❌ engram-peft 自动消费 `table_source`
 - ❌ qwen35-ple 真实 e2e 切 FP8 wrapper
 - ❌ Rust native PLE gather + dequant 热路径
@@ -625,11 +625,11 @@ master 已包含 README 刷新 + 系统性思考
 ### 17.8 未来计划
 
 #### Phase 0：发布与工程稳定（最高优先）
-- 创建 `scripts/release_gate.sh`
-- 把 README 收编进下一版本
-- 去掉静默硬编码 scale fallback
-- `rowids_for_seq()` 支持 `info` / `multipliers`
-- README 示例自动化
+- ✅ 创建 `scripts/release_gate.sh`（bump 默认先跑）
+- 🔶 把 README 收编进下一版本（内容已刷新，待 bump）
+- ✅ 去掉静默硬编码 scale fallback（改为显式 warning）
+- ✅ `rowids_for_seq()` 支持 `info` / `multipliers`；`discover_ple()` 附带 `layer_multipliers`
+- 🔶 README 示例自动化（rowids/discovery/safetensors 已进 smoke，其余待补）
 
 #### Phase A：兄弟项目配置即用
 - engram-peft `table_source` 自动注入

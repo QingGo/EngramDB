@@ -109,6 +109,11 @@ def disk_ple_from_discovery(
         scale = info.get("weight_scale")
         if scale is None:
             scale = 1.0
+    if layer_multipliers is None:
+        for key in ("layer_multipliers", "rowid_multipliers", "multipliers"):
+            if info.get(key) is not None:
+                layer_multipliers = [int(x) for x in info[key]]
+                break
     ngram_heads = (int(info["ngram_size"]) - 1) * int(info["heads_per_ngram"])
     return DiskPleNGramEmbedding(
         store=store,

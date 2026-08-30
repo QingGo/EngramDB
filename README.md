@@ -199,15 +199,19 @@ if hasattr(engramdb, "IoUringPageReader"):
 #### 5.1.2 PLE rowid 与自动发现
 
 ```python
-from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale
+from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale, load_ple_multipliers
 
 # Qwen PLE / Engram 确定性 rowid，返回 [T, 16]
 rows = rowids_for_seq([248044, 1000, 99999, 42])
 print(len(rows), len(rows[0]))
 
-# 从真实 Qwen checkpoint 自动读取元数据与 FP8 weight_scale
+# 从真实 Qwen checkpoint 自动读取元数据、FP8 weight_scale 与 rowid multipliers
 info = discover_ple("/path/to/Qwen3.8-Flash-Next")
 scale = load_ple_weight_scale("/path/to/Qwen3.8-Flash-Next")
+mult = load_ple_multipliers("/path/to/Qwen3.8-Flash-Next")
+
+# 也可直接用 discovery 返回的 info（自动包含 weight_scale 和 multipliers）
+rows = rowids_for_seq([248044, 1000, 99999, 42], info=info)
 ```
 
 #### 5.1.3 多表 / Arrow / 最小服务

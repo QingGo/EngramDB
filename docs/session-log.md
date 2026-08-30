@@ -1382,3 +1382,40 @@ engram-peft 完整 import 在当前 Python 3.9 环境不可用，但代码路径
 - Phase D：服务化 / 推理引擎
 
 详见 `docs/roadmap.md` 第 17 节。
+
+# Session 25 复盘（2026-08-30 后段：Phase 0 发布门禁 + rowid 元数据自动读取）
+
+## 1. 完成
+
+- 新增 `scripts/release_gate.sh`：
+  - cargo fmt / clippy / test
+  - 构建 PyO3 + C ABI
+  - python wheel smoke / service smoke / C ABI smoke / decode baseline
+  - 已接入 `scripts/bump.sh`，默认 bump 前先跑；可用 `--skip-gate` 或 `ENGRAMDB_SKIP_GATE=1` 跳过。
+- `discover_ple()` 改为只读取一次 safetensors index，并自动读取：
+  - `weight_scale`
+  - `layer_multipliers`
+- 新增 `load_ple_multipliers()` / `read_safetensors_i64()`。
+- `rowids_for_seq()` 支持 `multipliers` 和 `info` 来源；非默认 multipliers 时自动走纯 Python 路径。
+- `disk_ple_from_discovery()` 自动使用 discovery 返回的 `layer_multipliers`。
+- `install_real_qwen_ple_embedding()` 无 scale 来源时不再静默，改为显式 warning。
+- `python_wheel_smoke.py` 增加：
+  - safetensors I64 读取
+  - fake checkpoint discovery（scale + multipliers + shard 数）
+  - 自定义 multipliers / info rowids 回归
+- 根 README 与 python/README 同步补充 `load_ple_multipliers` 与 `rowids_for_seq(info=...)` 示例。
+
+## 2. 验证
+
+- `bash scripts/release_gate.sh`（SKIP_BENCH=1）✅
+- `python_wheel_smoke.py` 全绿 ✅
+- 真实 Qwen checkpoint：
+  - `load_ple_multipliers` → `[23703573157769, 20109073645365, 8052911324071]` ✅
+  - `discover_ple()` 返回 `weight_scale` + `layer_multipliers` ✅
+  - native / custom multipliers 首 rowid 一致 ✅
+
+## 3. 遗留
+
+- README 最终收编需等下个版本 bump。
+- README 核心示例全量化 smoke 仍需继续。
+- 兄弟项目 `table_source` 自动消费与真实 FP8 e2e 仍未做。

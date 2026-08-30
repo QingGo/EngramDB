@@ -31,6 +31,47 @@ def _text_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _find_ple_tensor_key(
+    weight_map: dict[str, str],
+    *suffixes: str,
+) -> str | None:
+    for k in weight_map:
+        if any(k.endswith(s) for s in suffixes):
+            return k
+    return None
+
+
+def _read_ple_metadata(
+    root: Path,
+    weight_map: dict[str, str],
+) -> tuple[float | None, list[int] | None]:
+    """Read weight_scale and layer_multipliers using one already-loaded index."""
+    weight_scale = None
+    scale_key = _find_ple_tensor_key(
+        weight_map,
+        ".ngram_embedding.weight_scale",
+        "ngram_embedding.weight_scale",
+    )
+    if scale_key is not None:
+        try:
+            weight_scale = read_safetensors_scalar(
+                root / weight_map[scale_key], scale_key
+            )
+        except Exception:
+            weight_scale = None
+
+    multipliers = None
+    mult_key = _find_ple_tensor_key(weight_map, ".layer_multipliers")
+    if mult_key is not None:
+        try:
+            multipliers = read_safetensors_i64(
+                root / weight_map[mult_key], mult_key
+            )
+        except Exception:
+            multipliers = None
+    return weight_scale, multipliers
+
+
 def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
     """Return PLE metadata for a model directory, or None when no PLE exists."""
     root = Path(model_dir)
@@ -48,6 +89,7 @@ def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
     ple_keys: list[str] = []
     shard_keys: list[str] = []
     shard_count = 0
+    weight_map: dict[str, str] | None = None
 
     if ple_layer_ids is not None or any(
         key in text_cfg for key in ("ple_embed_dim", "ngram_size", "split_ngram_parts")
@@ -71,11 +113,10 @@ def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
         base = shard_keys[0].split("ngram_embedding.shard_", 1)[0]
         shard_pattern = base + "ngram_embedding.shard_{shard}.weight"
 
-    weight_scale = None
-    try:
-        weight_scale = load_ple_weight_scale(root)
-    except Exception:
-        weight_scale = None
+    weight_scale: float | None = None
+    multipliers: list[int] | None = None
+    if weight_map is not None:
+        weight_scale, multipliers = _read_ple_metadata(root, weight_map)
 
     return {
         "architecture": config.get("architectures"),
@@ -95,6 +136,8 @@ def discover_ple(model_dir: str | Path) -> dict[str, Any] | None:
         "ngram_embedding_shard_count": shard_count,
         "ple_shard_pattern": shard_pattern,
         "weight_scale": weight_scale,
+        "layer_multipliers": multipliers,
+        "rowid_multipliers": multipliers,
         "example_ple_keys": ple_keys[:8],
     }
 
@@ -179,3 +222,66 @@ def load_ple_weight_scale(
     if key is None:
         raise KeyError("no PLE ngram_embedding.weight_scale in checkpoint index")
     return read_safetensors_scalar(root / weight_map[key], key)
+
+def read_safetensors_i64(path: str | Path, tensor_name: str) -> list[int]:
+    """Read an integer tensor from a safetensors file without loading it.
+
+    Primarily used for Qwen PLE ``layer_multipliers`` (I64 shape ``[3]``).
+    """
+    path = Path(path)
+    with open(path, "rb") as f:
+        header_len = struct.unpack("<Q", f.read(8))[0]
+        header = json.loads(f.read(header_len))
+        entry = header.get(tensor_name)
+        if entry is None:
+            raise KeyError(f"tensor {tensor_name!r} not in {path.name}")
+        dtype = entry.get("dtype", "I64")
+        shape = entry.get("shape", [])
+        count = 1
+        for dim in shape:
+            count *= int(dim)
+        start, end = entry["data_offsets"]
+        f.seek(8 + header_len + start)
+        raw = f.read(end - start)
+    if dtype == "I64":
+        if len(raw) != count * 8:
+            raise ValueError(
+                f"expected {count * 8} bytes for I64 tensor, got {len(raw)}"
+            )
+        return list(struct.unpack(f"<{count}q", raw))
+    if dtype == "I32":
+        if len(raw) != count * 4:
+            raise ValueError(
+                f"expected {count * 4} bytes for I32 tensor, got {len(raw)}"
+            )
+        return list(struct.unpack(f"<{count}i", raw))
+    raise NotImplementedError(f"cannot read integer tensor dtype {dtype!r}")
+
+
+def load_ple_multipliers(
+    model_dir: str | Path,
+    tensor_name: str | None = None,
+) -> list[int]:
+    """Read the real PLE ``layer_multipliers`` (I64[3]) from a Qwen checkpoint.
+
+    These multipliers are part of the rowid contract.  For the standard Qwen
+    PLE models they are ``[23703573157769, 20109073645365, 8052911324071]``,
+    but callers should prefer this loader so non-standard checkpoints stay
+    correct.
+    """
+    root = Path(model_dir)
+    index_path = root / "model.safetensors.index.json"
+    if not index_path.exists():
+        raise FileNotFoundError(f"missing safetensors index: {index_path}")
+    index = json.loads(index_path.read_text())
+    weight_map = index["weight_map"]
+    if tensor_name is not None:
+        key = tensor_name
+    else:
+        key = next(
+            (k for k in weight_map if k.endswith(".layer_multipliers")),
+            None,
+        )
+    if key is None:
+        raise KeyError("no PLE layer_multipliers in checkpoint index")
+    return read_safetensors_i64(root / weight_map[key], key)

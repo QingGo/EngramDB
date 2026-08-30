@@ -196,11 +196,130 @@ def test_disk_ple_lru() -> None:
             store.close()
 
 
+def test_safetensors_i64_reader() -> None:
+    import json
+    import struct
+
+    from engramdb.ple_discovery import read_safetensors_i64
+
+    multipliers = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+    payload = struct.pack("<3q", *multipliers)
+    header = {
+        "__metadata__": {},
+        "layer_multipliers": {
+            "dtype": "I64",
+            "shape": [3],
+            "data_offsets": [0, len(payload)],
+        },
+    }
+    header_bytes = json.dumps(header).encode("utf-8")
+    with tempfile.TemporaryDirectory(prefix="engramdb-i64-") as td:
+        path = Path(td) / "tensor.safetensors"
+        with open(path, "wb") as f:
+            f.write(struct.pack("<Q", len(header_bytes)))
+            f.write(header_bytes)
+            f.write(payload)
+        got = read_safetensors_i64(path, "layer_multipliers")
+        assert got == multipliers, (got, multipliers)
+    print("read_safetensors_i64 OK")
+
+
+def test_discover_ple_metadata() -> None:
+    import json
+    import struct
+
+    from engramdb import discover_ple, load_ple_multipliers, load_ple_weight_scale
+
+    multipliers = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+    scale = 0.00019931793212890625
+    scale_bytes = struct.pack("<f", scale)
+    mult_bytes = struct.pack("<3q", *multipliers)
+    shard_bytes = bytes(160)
+    payload = scale_bytes + mult_bytes + shard_bytes
+    header = {
+        "__metadata__": {},
+        "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale": {
+            "dtype": "F32",
+            "shape": [1],
+            "data_offsets": [0, len(scale_bytes)],
+        },
+        "model.language_model.layers.1.ple.ple_embedding.layer_multipliers": {
+            "dtype": "I64",
+            "shape": [3],
+            "data_offsets": [len(scale_bytes), len(scale_bytes) + len(mult_bytes)],
+        },
+        "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight": {
+            "dtype": "F8_E4M3",
+            "shape": [1, 160],
+            "data_offsets": [
+                len(scale_bytes) + len(mult_bytes),
+                len(payload),
+            ],
+        },
+    }
+    header_bytes = json.dumps(header).encode("utf-8")
+    with tempfile.TemporaryDirectory(prefix="engramdb-disc-") as td:
+        root = Path(td)
+        st_path = root / "model.safetensors"
+        with open(st_path, "wb") as f:
+            f.write(struct.pack("<Q", len(header_bytes)))
+            f.write(header_bytes)
+            f.write(payload)
+
+        (root / "config.json").write_text(json.dumps({
+            "architectures": ["Qwen4ExpForCausalLM"],
+            "model_type": "qwen4_exp_text",
+            "text_config": {
+                "model_type": "qwen4_exp_text",
+                "ple_layer_ids": [1],
+                "ple_embed_dim": 2560,
+                "ple_conv_kernel_size": 4,
+                "ngram_size": 3,
+                "ngram_vocab_size_base": 20_000_000,
+                "split_ngram_parts": 128,
+                "heads_per_ngram": 8,
+                "make_ngram_vocab_size_divisible_by": 128,
+            },
+        }))
+        (root / "model.safetensors.index.json").write_text(json.dumps({
+            "weight_map": {
+                "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale": "model.safetensors",
+                "model.language_model.layers.1.ple.ple_embedding.layer_multipliers": "model.safetensors",
+                "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight": "model.safetensors",
+            }
+        }))
+
+        info = discover_ple(root)
+        assert info is not None
+        assert info["ngram_embedding_shard_count"] == 1
+        assert info["layer_multipliers"] == multipliers
+        assert info["rowid_multipliers"] == multipliers
+        assert abs(float(info["weight_scale"]) - scale) < 1e-12
+        assert load_ple_multipliers(root) == multipliers
+        assert abs(load_ple_weight_scale(root) - scale) < 1e-12
+    print("discover_ple metadata OK")
+
+
 def test_rowids_for_seq() -> None:
     rows = engramdb.rowids_for_seq([1000, 99999, 42])
     assert len(rows) == 3
     assert all(len(r) == 16 for r in rows)
     assert rows[0][0] == 1876085
+
+    # The pure-Python path must accept explicit multipliers and discovery info.
+    multipliers = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+    rows_custom = engramdb.rowids_for_seq(
+        [1000, 99999, 42], multipliers=multipliers
+    )
+    assert rows_custom == rows, "custom multipliers should match standard golden"
+    rows_info = engramdb.rowids_for_seq(
+        [1000, 99999, 42],
+        info={
+            "layer_multipliers": multipliers,
+            "rowid_multipliers": multipliers,
+        },
+    )
+    assert rows_info == rows, "info multipliers should match standard golden"
     print("rowids_for_seq OK:", rows[0][:4])
 
 
@@ -230,6 +349,8 @@ def main() -> None:
 
     test_page_reader()
     test_store_and_vllm_gather()
+    test_safetensors_i64_reader()
+    test_discover_ple_metadata()
     test_rowids_for_seq()
     test_database_arrow_server()
     test_disk_ple_lru()
