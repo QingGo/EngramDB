@@ -4,7 +4,7 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.2.9 同时包含两条 Python 接入路径：
+> 当前 v0.2.10 同时包含两条 Python 接入路径：
 > 1. **PyO3 原生扩展**（优先）：`crates/engramdb-pyo3`，构建后以
 >    `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` / Linux `IoUringPageReader`。
 > 2. **ctypes C-ABI 回退**：`crates/engramdb-python`，无 PyO3 构建产物时也能用。

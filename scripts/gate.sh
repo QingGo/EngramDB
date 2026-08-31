@@ -27,7 +27,7 @@ if [[ -d data/real-rows ]]; then
       echo "  [gate] FAIL: 视图抽样校验不通过"
       exit 1
     fi
-    RAW=$(target/release/p4view bench data/real-rows "$V" probes/view-keys-20k.txt --threads 8 2>/dev/null)
+    RAW=$(target/release/p4view bench data/real-rows "$V" --keys probes/view-keys-20k.txt --threads 8 2>/dev/null)
     OUT=$(echo "$RAW" | grep -E "^B,|^A,")
     B8=$(echo "$OUT" | sed -n '2p')
     A8=$(echo "$OUT" | sed -n '3p')

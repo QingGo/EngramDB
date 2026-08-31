@@ -165,7 +165,13 @@ python3 -m pip install --upgrade engramdb-python
 uv add engramdb-python
 ```
 
-当前发布线（v0.2.9）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+当前发布线（v0.2.10）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+
+v0.2.10 新增：
+
+- `StorePool` / `ThreadLocalStore`：线程安全的 Store 连接池
+- `Database.fetch` 默认走 StorePool，适合多线程服务
+- 本仓库与 qwen35 懒加载 / Store-P WSL A/B 基准数据已沉淀进 README / docs
 
 #### 5.1.1 核心存储与视图
 
@@ -247,7 +253,7 @@ finally:
     tls.release_current()
 ```
 
-#### 5.1.4 快速 e_t tensor 读取与预取统计（v0.2.9+）
+#### 5.1.4 快速 e_t tensor 读取与预取统计（v0.2.9+，v0.2.10 继续支持）
 
 训练/预计算不要用 Python 逐行 bytes 拼接，直接用一次 `Store.fetch` + `torch.frombuffer`：
 
@@ -416,7 +422,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 
 | 项目 | 状态 |
 |---|---|
-| 最新版本 | v0.2.9 |
+| 最新版本 | v0.2.10 |
 | crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
 | Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
