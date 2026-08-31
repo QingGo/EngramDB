@@ -1790,6 +1790,10 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
   - 20k grams：Store-I A 1.33M rows/s，Store-P B 1t 6.48M，8t 17.81M
   - 100k grams：Store-I A 1.56M rows/s，Store-P B 1t 6.07M，8t 22.22M
   - Store-P 构建 20k 2.9s，100k 11.9s
+- WSL Python 懒加载（qwen35 venv + engramdb-python 0.2.9）：
+  - 20k Store-I：156 窗口，wall 22.41s
+  - 100k Store-P：781 窗口，wall 1.86s
+  - 1M Store-P：7812 窗口，wall 23.93s
 
 
 

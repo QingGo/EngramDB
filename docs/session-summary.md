@@ -1461,7 +1461,8 @@ DataLoader 多 worker ✅
 StorePool / ThreadLocalStore ✅
 Store-P 懒加载 ✅（本机 1M 约 7.1s）
 WSL Store-P A/B ✅（p4view 20k/100k, 8t ~22M rows/s）
-WSL Python 懒加载 / serving A/B ❌
+WSL Python 懒加载 ✅（20k Store-I 22.4s / 100k Store-P 1.9s / 1M Store-P 23.9s）
+WSL serving A/B / 完整模型训练 ❌
 ```
 
 
