@@ -194,6 +194,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
    - 新增 `qwen35-ple/scripts/mini_official_prefetch_ab.py`：冻结官方 PLE layer + 真实 Store + dense 前后块的 mini A/B，输出 CSV。
    - 当前仍是低资源 smoke；完整模型、冷热分离、CSV 阈值、超时/回退/合并去重未完成。
     - 20k 预计算慢路径修复：`PleDiskGather.fetch` 改为直接 `Store.fetch`；新增 `fetch_e_t_tensor`；qwen35 `real_ple.fetch_e_t` / `precompute_real_ple_features.py` / `run_phase0 --live-store` 已切换。
+    **Session 30 系统性思考**：详见 `docs/roadmap.md` Section 21（终极目标、V112–V117、Track 0–5、借鉴矩阵）。
+
 
 
 

@@ -1674,4 +1674,15 @@ MINI_OFFICIAL_PREFETCH_AB_OK
 - 发现：FP8 tensor 不能直接用 `batch[idx]` 做 CPU 索引，需要先 `.to(float32)` 再索引；`fetch_e_t_tensor` 的 flat rowids 长度是 T×16，返回 shape 应为 `[T,16,160]`，不是 `[len(rowids),16,160]`。
 - 结果：`python wheel smoke OK`、`cargo test -p engramdb-keygen` 4 passed、小规模真实 Store precompute 跑通。
 
+## Session 30 系统性思考记录
+
+- 用户要求做新一轮系统性思考：终极目标、本轮技术债、后续计划、借鉴矩阵。
+- 写入 `docs/roadmap.md` Section 21：
+  - 终极目标轴 A/B/C 不变；
+  - 新增 V112–V117；
+  - 重排 Track 0–5；
+  - 借鉴 DuckDB/SQLite/Redis/RocksDB/DiskANN/vLLM/SGLang/llama.cpp/Arrow/MLPerf/engram-peft。
+- 结论：先解决“测不准”，再消除 serving Python 热路径，再做真实模型 A/B 和服务化。
+
+
 

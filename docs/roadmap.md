@@ -1649,5 +1649,143 @@ LLM-CompileForge  推理 runtime（后续）
 
 状态：V101（Python 热路径）开始收敛，V102 已部分关闭；V99/V100/V104/V105 仍开放。
 
-状态：V102（executor 生命周期）已部分关闭；V99/V100/V101/V104/V105 仍开放。
 
+
+# 21. 第十七轮系统性思考（Session 29/30：快速读取路径落地 + v0.2.9 发布）
+
+## 21.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、
+> 推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+三条不可妥协的验收轴：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；EngramDB 参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录嵌入式 + 可服务化；manifest 可校验；Arrow 零拷贝；engine 薄 adapter 不改上游 |
+| C. 科学契约 | 每个结论有真实 PLE + 固定输入 + 冷热标注 + CSV/阈值；bit-exact 以官方类或 golden 双保险 |
+
+## 21.2 本轮坐标更新
+
+| 层 | 状态 |
+|---|---|
+| 真实 Store ↔ checkpoint byte-exact | ✅ 144 行 oracle 已闭环 |
+| 预取管线（future / hook / mini 官方 A/B） | ✅ 低资源 smoke 已跑通 |
+| prefetch executor 生命周期 | ✅ close/shutdown 已落地 |
+| Python 慢路径 `PleDiskGather` | ✅ 已改为直接 `Store.fetch`，新增 `fetch_e_t_tensor` |
+| qwen35 live-store 直接读取 | ✅ 已落地（`--live-store`） |
+| native rowid + history | ✅ PyO3 已导出，标准 adapter 可走 native |
+| 完整 Qwen4Exp 官方模型 | ❌ 仍受环境限制 |
+| 真实模型端到端 A/B | ❌ 未完成 |
+| Rust/PyO3 原生 gather + FP8 dequant + flatten | ❌ 未完成 |
+| serving / 连接池 / Arrow 生产化 | ❌ 未完成 |
+
+## 21.3 本轮关键发现
+
+1. **慢的不一定是 EngramDB 核心，而是 Python 适配层**：
+   - 旧 `PleDiskGather.fetch` 在 20k token / 320k 行上是 16.857s；
+   - 直接 `Store.fetch` 只做一次连续读取，才是真正的存储面路径。
+2. **“直接 Store.fetch + torch.frombuffer”是正确的高层读取形态**：
+   - 它同时适用于预计算 npy 和 live 训练读取；
+   - 也避免了 10GB 中间文件的搬运成本。
+3. **Python 热路径需要分阶段收敛**：
+   - 已把 rowid 生成挪到 native；
+   - 但 `DiskPleEmbedding.forward` 的 per-row bytes dict / join、`DiskPleNGramEmbedding` 的 Python batch 组装仍在；
+   - 所以“磁盘被隐藏后，Python 可能成为新瓶颈”仍是真实风险。
+4. **微基准必须区分冷/热和真实 I/O**：
+   - 同一个 `Store.fetch` 在页缓存热时可能 0.03s，冷时可能数十秒；
+   - 正式 A/B 必须记录介质、冷热、是否重复读取。
+5. **完整模型不是正确性前置条件**：
+   - 小表 bit-exact + 稀疏真实行 + mini 官方模型已经覆盖主要正确性风险；
+   - 完整模型只应作为最终内存/性能 gate，不应阻塞开发。
+
+## 21.4 本轮技术债（在 V99–V111 基础上新增/更新）
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V112 | `DiskPleEmbedding.forward` 仍走 Python per-row bytes dict/join | serving 热路径可能成为新瓶颈 | 用 `fetch_e_t_tensor`/native gather 替换 serving 内层 |
+| V113 | 没有正式 live-store benchmark harness | 无法断言 20k/1M token 的真实收益 | 固定 tokens/rows/冷热/CSV/阈值 |
+| V114 | 没有冷热分离的性能门禁 | 数字容易被页缓存欺骗 | 基准脚本加 `--cache-mode cold/warm`，记录介质 |
+| V115 | 多 PLE 模块/多 outstanding prefetch 尚未合并去重 | 长服务可能重复读、线程失控 | prefetch 调度器 + 去重 + shared executor |
+| V116 | full-model Qwen4Exp 仍未实机 | 最终 memory/performance gate 未过 | 云/大内存环境或缩小版官方模型继续逼近 |
+| V117 | 三仓库版本/README/CI 未完全同点收编 | 发布物与实际代码可能漂移 | 每版本 gate 中固化跨仓 retest 指南 |
+
+原有仍开放：V99（真实模型预取 A/B）、V100（超时/回退）、V104（memory vs disk）、V105（hit-rate/wait 分布）、V106（MTP/Cache）、V107（完整加载）、V108（可复现环境）、V109（三仓库收编）、V110（view 自动消费）、V111（benchmark harness）。
+
+## 21.5 借鉴矩阵（本轮：如何不与已有设计冲突）
+
+| 来源 | 借什么 | 不借 | 为什么不冲突 |
+|---|---|---|---|
+| **DuckDB** | 嵌入式单目录、manifest、Arrow/IPC 零拷贝 | 不借 SQL/OLAP/查询优化 | 我们只做定长点查的存储层 |
+| **SQLite** | 每线程连接、integrity check、嵌入式产品形态 | 不借关系模型/事务 | 我们可复用它“稳定嵌入”的工程习惯 |
+| **PostgreSQL/Redis/Memcached** | 连接池、后台预取、LRU、hit-rate、future/等待 | 不借 SQL/KV 语义 | 我们只需要服务化和冷热分层方法论 |
+| **RocksDB/FoundationDB** | 不可变段、checksum、原子发布、manifest | 不借 LSM/分布式事务 | 我们的表是不可变静态大段 |
+| **DiskANN/Milvus** | 冷热分层、顺序化读、滑窗、cache 统计 | 不借 ANN/向量检索 | 我们无近邻语义，只借 I/O 布局经验 |
+| **vLLM/SGLang** | engine hook、continuous batching、去重、async overlap、统计 | 不借推理内核/CUDA kernel | 我们做存储数据面，引擎只做薄 adapter |
+| **llama.cpp** | CPU-first、实测文化、顺序预热、低依赖 | 不借 GGUF/模型推理实现 | 我们借测量和启动策略 |
+| **Arrow/IPC** | 跨语言零拷贝、批次结构 | 不借查询引擎/执行器 | 只做输出形态 |
+| **MLPerf/fio** | 固定输入、固定命令、CSV、阈值、cache-mode | 不借各自领域指标 | 我们借可复现实验规范 |
+| **engram-peft/qwen35-ple** | 配置驱动、契约测试、golden、跨仓 CI | 不借存储/训练内核 | 我们与它们是上层/下层关系，以契约为界 |
+
+不冲突原则不变：
+
+- 只做存储、布局、读取、服务化，不做模型内核。
+- 接入都是薄 adapter / hook / patch，不 fork 上游。
+- 性能结论必须来自真实 PLE + 固定基准 + 冷热标注。
+- 跨仓正确性只走契约 + golden。
+- 先可信，再性能，再服务。
+
+## 21.6 后续开发计划（重排）
+
+### Track 0：先把“测得准”解决（最高优先，不改大量架构）
+- [ ] 建正式 benchmark harness：固定 tokens、固定 rowids、cold/warm、重复次数、CSV。
+- [ ] 20k / 1M live-store 在目标机器复测。
+- [ ] 区分：Python 组装、Store.fetch、torch 转换、实际磁盘 I/O 四段计时。
+- [ ] 写入基线 CSV + 阈值门禁。
+
+**退出标准**：任何“快/慢”结论都能用一条命令复现且注明冷热。
+
+### Track 1：消除剩余 Python 热路径
+- [ ] `DiskPleEmbedding`/`DiskPleNGramEmbedding` serving 内层改用 tensor 快路径。
+- [ ] 评估 Rust/PyO3 native gather + FP8 dequant + flatten。
+- [ ] 保持与现有 bit-exact golden 一致。
+
+**退出标准**：磁盘隐藏后，Python 不再是主要开销；serving 路径与训练 live 路径共用同一 fast path。
+
+### Track 2：Prefetch 生产化
+- [ ] 超时、错误回退到同步。
+- [ ] 多 PLE 模块 / 多 outstanding 合并去重、共享 executor。
+- [ ] hit-rate、wait p50/p95/p99、fetch/convert 分段统计。
+
+**退出标准**：长服务稳定，统计完整。
+
+### Track 3：真实模型性能验证
+- [ ] full Qwen4Exp 或足够大的 mini 官方模型实机加载。
+- [ ] memory vs disk A/B、sync vs prefetch A/B、tok/s。
+- [ ] CSV + 阈值。
+
+**退出标准**：能判断是否满足 ≤5% 性能契约。
+
+### Track 4：服务化 / 推理引擎
+- [ ] Store 连接池 / 每线程句柄。
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] Arrow IPC、`engramdb:view` 自动消费。
+
+**退出标准**：至少一个真实引擎不改源码可用，并有 serving 数据。
+
+### Track 5：工程稳定
+- [ ] uv lock / Dockerfile 固化 e2e 环境。
+- [ ] 三仓库版本 bump + README + retest 指南同点收编。
+- [ ] runtime / 官方类 smoke 纳入 CI 或 nightly。
+
+**退出标准**：换机器也能 10 分钟内复现当前最好结论。
+
+## 21.7 本轮纪律
+
+1. **Python 快不代表磁盘快，磁盘快不代表 Python 快**：必须分段计时。
+2. **冷热是性能结论的一部分**，不标注冷热的数据不能当门禁。
+3. **先测量再优化**：不再在未知瓶颈上继续堆 Python 逻辑。
+4. **正确性继续用小资源闭环**，完整模型只做最终 gate。
+5. **跨仓只走契约 + golden + retest 指南**，避免版本漂移。
+6. **版本、文档、代码、retest 指南同点收编**。

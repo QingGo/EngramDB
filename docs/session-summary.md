@@ -1171,4 +1171,26 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
 - 同时新增 Rust `rowids_for_seq_with_history`（含 PyO3 导出）并让标准真实 PLE adapter 在可用时走 native rowid。
 - Smoke：`python_wheel_smoke.py` 全绿；`cargo test -p engramdb-keygen` 4 passed；qwen35 小规模 precompute 跑通。
 
+## 5. Session 30 系统性思考（第三轮系统复盘）
+
+- **终极目标不变**：磁盘优先的确定性 n-gram 记忆表基础设施，像 DuckDB 之于分析数据库。
+- **本轮最重要的位置判断**：慢的不是存储核心，而是 Python 适配层；修复后，下一个风险是“磁盘被隐藏后 Python serving 热路径再次成为瓶颈”。
+- **新增技术债 V112–V117**：
+  - V112 serving 仍走 Python bytes dict/join；
+  - V113 没有正式 live-store bench harness；
+  - V114 没有冷热分离门禁；
+  - V115 多 PLE/多 outstanding 未合并去重；
+  - V116 full-model 未实机；
+  - V117 三仓库版本/README/retest 未完全同点收编。
+- **借鉴矩阵**：DuckDB/SQLite/Redis/RocksDB/DiskANN/vLLM/SGLang/llama.cpp/Arrow/MLPerf/engram-peft，均只借“方法、形态、工程纪律”，不借模型内核或查询/KV语义。
+- **后续计划重排**：
+  1. Track 0 先做“测得准”：固定输入、冷/热、CSV、阈值。
+  2. Track 1 消除剩余 Python serving 热路径。
+  3. Track 2 prefetch 生产化。
+  4. Track 3 真实模型性能验证。
+  5. Track 4 服务化/引擎接入。
+  6. Track 5 工程稳定性。
+- 详见 `docs/roadmap.md` Section 21。
+
+
 
