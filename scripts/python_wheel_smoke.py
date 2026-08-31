@@ -581,6 +581,34 @@ def test_rowids_for_seq() -> None:
     print("rowids_for_seq OK:", rows[0][:4])
 
 
+def test_store_pool() -> None:
+    from engramdb import StorePool, ThreadLocalStore
+
+    with tempfile.TemporaryDirectory(prefix="engramdb-pool-") as td:
+        root = Path(td)
+        _make_table(root, "pool", rows=8, width=4)
+        directory = str(root / "pool")
+        pool = StorePool(
+            directory,
+            shards=1,
+            rows_per_shard=8,
+            width=4,
+            pool_size=2,
+        )
+        try:
+            with pool as store:
+                assert store.fetch([1, 3]) == bytes([1] * 4) + bytes([3] * 4)
+
+            tls = ThreadLocalStore(pool)
+            handle = tls.get()
+            assert handle.fetch([0]) == bytes([0] * 4)
+            tls.release_current()
+        finally:
+            pool.close()
+    print("StorePool OK")
+
+
+
 def main() -> None:
     from importlib.metadata import version as _dist_version
 
@@ -614,6 +642,7 @@ def main() -> None:
     test_official_loader_placeholder_patch()
     test_official_loader_sharded_load()
     test_rowids_for_seq()
+    test_store_pool()
     test_database_arrow_server()
     test_disk_ple_lru()
     test_prefetch_lru()
