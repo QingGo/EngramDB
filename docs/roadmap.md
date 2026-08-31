@@ -1924,7 +1924,8 @@ LLM-CompileForge  推理 runtime（后续）
 | control / shuffle / worker 分片 | ✅ 已实现 |
 | DataLoader 多 worker | ✅ 每个 worker 自动重开 Store（pickle 支持） |
 | per-batch fetch 时间、总读取量 | ✅ `LiveETBatch` + `FetchStats` |
-| WSL Store-P / 1M 性能闭环 | ❌ 仍待 Track B/C |
+| WSL Store-P / 1M 性能闭环 | ✅ 已跑 p4view + Python 懒加载；serving/完整模型仍待 |
+| StorePool / 线程安全句柄 | ✅ `StorePool` / `ThreadLocalStore` |
 
 ## 23.2 本轮完成
 
@@ -1938,8 +1939,12 @@ LLM-CompileForge  推理 runtime（后续）
 - `run_phase0.py` 改为导入统一模块。
 - 新增 `scripts/run_live_et_dataset_smoke.py`。
 - 新增 `scripts/bench_store_vs_view.py`（Store-I vs Store-P A/B 骨架）。
-- 新增 `tests/test_live_store.py`（9 tests）。
-- qwen35 README 增加三行接入示例。
+- 新增 `scripts/bench_lazy_windows.py`（逐窗口懒加载，1M/CSV/percentile）。
+- 新增 `engramdb.pool.StorePool` / `ThreadLocalStore`，`Database.fetch` 改用池。
+- 新增 `tests/test_live_store.py`（9 tests），`python_wheel_smoke.py` 加 StorePool。
+- WSL p4view：Store-P 20k/100k A/B，8t 约 22M rows/s。
+- WSL Python 懒加载：1M Store-P 约 23.9s。
+- qwen35 README 增加三行接入示例和本机/WSL 数据。
 
 ## 23.3 关键坑
 
@@ -1955,10 +1960,11 @@ LLM-CompileForge  推理 runtime（后续）
 - [x] 任意实验脚本三行接入 live-store：`LiveETStore` + `LiveETDataset` + `for batch in dataset`
 - [x] 不再全量加载 e_t
 - [x] 支持 direct iteration / DataLoader / control / sharding / metrics
-- [ ] 仍缺：WSL 真实 1M 性能、Store-P A/B、正式每窗口 CSV 门禁
+- [x] WSL Store-P A/B + WSL 1M 懒加载 CSV 已跑
+- [ ] 仍缺：完整模型训练 real/control/3-seed、serving A/B、Store-P 访问序视图端到端
 
 ## 23.5 下一轮最高优先
 
-1. **Track B**：WSL Store-P 构建 + Store-I/Store-P/lazy/full-memory 同口径 A/B。
-2. **Track C**：用 `LiveETDataset` 跑 1M token real/control/3-seed，输出每窗口 fetch 时间 CSV。
-3. **Track D/E**：Store 连接池、服务化、live-store smoke 入 CI/nightly。
+1. **Track C 完整版**：用 `LiveETDataset` 在 WSL 跑真实模型 1M token real/control/3-seed，并把 fetch 时间与 loss 一起记录。
+2. **Track B 纵深**：构建访问序 Store-P 视图、多线程批量预取，验证端到端训练/推理路径。
+3. **Track D/E**：Store 连接池接入服务（已落地基础）、vLLM/SGLang/llama.cpp serving A/B、live-store smoke 入 CI/nightly。
