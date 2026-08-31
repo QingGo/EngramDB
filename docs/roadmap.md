@@ -1447,6 +1447,7 @@ LLM-CompileForge  推理 runtime（后续）
 - [x] PyO3 `Store.fetch` 释放 GIL，Store 支持跨线程/每线程实例（并发 fetch smoke 已过）。
 - [x] `DiskPle.prefetch(rowids)` + future/wait（支持有 cache 与无 cache）。
 - [x] 模型级 forward pre-hook，提前对当前步所有 PLE 模块发起预取。
+- [x] 真实 Store 上的 prefetch micro A/B（`prefetch_real_ab.py`）：模拟 30ms 计算窗口时，总耗时从 ~192ms 降到 ~34ms。
 - [ ] Rust 原生 rowid + gather + dequant，或至少把 gather/dequant 移入热路径。
 - [ ] 用 hit-rate、prefetch_wait、fetch_s、convert_s 做 A/B。
 
