@@ -1739,24 +1739,26 @@ LLM-CompileForge  推理 runtime（后续）
 ## 21.6 后续开发计划（重排）
 
 ### Track 0：先把“测得准”解决（最高优先，不改大量架构）
-- [ ] 建正式 benchmark harness：固定 tokens、固定 rowids、cold/warm、重复次数、CSV。
-- [ ] 20k / 1M live-store 在目标机器复测。
-- [ ] 区分：Python 组装、Store.fetch、torch 转换、实际磁盘 I/O 四段计时。
-- [ ] 写入基线 CSV + 阈值门禁。
+- [x] 建正式 benchmark harness：固定 tokens、固定 rowids、重复次数、CSV、阈值（qwen35 `scripts/bench_live_store.py`）。
+- [ ] 20k / 1M live-store 在目标机器复测并沉淀基线。
+- [ ] 进一步区分：Python 组装、Store.fetch、torch 转换、实际磁盘 I/O 四段计时。
+- [x] 写入 CSV + 阈值门禁（`--max-store-s / --max-tensor-s / --max-tensor-dedup-s`）。
 
 **退出标准**：任何“快/慢”结论都能用一条命令复现且注明冷热。
 
 ### Track 1：消除剩余 Python 热路径
-- [ ] `DiskPleEmbedding`/`DiskPleNGramEmbedding` serving 内层改用 tensor 快路径。
+- [x] `DiskPleEmbedding` no-cache serving 路径改为直接 `Store.fetch` 连续读取，跳过 per-row dict/join。
+- [ ] `DiskPleEmbedding` cache>0 路径仍可能受 Python bytes join 影响，需要继续评估。
 - [ ] 评估 Rust/PyO3 native gather + FP8 dequant + flatten。
-- [ ] 保持与现有 bit-exact golden 一致。
+- [x] 保持与现有 bit-exact golden 一致（small bit-exact 仍 0.0 maxdiff）。
 
 **退出标准**：磁盘隐藏后，Python 不再是主要开销；serving 路径与训练 live 路径共用同一 fast path。
 
 ### Track 2：Prefetch 生产化
-- [ ] 超时、错误回退到同步。
-- [ ] 多 PLE 模块 / 多 outstanding 合并去重、共享 executor。
-- [ ] hit-rate、wait p50/p95/p99、fetch/convert 分段统计。
+- [x] 超时（可选 `prefetch_timeout`）、错误回退到同步。
+- [x] 共享 executor 参数（`prefetch_executor`）已放到 `DiskPleEmbedding`/`DiskPleNGramEmbedding`/official loader。
+- [ ] 多 PLE 模块之间的行合并去重尚未实现。
+- [x] hit-rate、wait p50/p90/p99 统计已落地（`get_wait_distribution()`）。
 
 **退出标准**：长服务稳定，统计完整。
 

@@ -1684,5 +1684,13 @@ MINI_OFFICIAL_PREFETCH_AB_OK
   - 借鉴 DuckDB/SQLite/Redis/RocksDB/DiskANN/vLLM/SGLang/llama.cpp/Arrow/MLPerf/engram-peft。
 - 结论：先解决“测不准”，再消除 serving Python 热路径，再做真实模型 A/B 和服务化。
 
+## Session 31 Track 0/1/2 推进记录
+
+- 完成 qwen35 `bench_live_store.py` 阈值门禁。
+- 完成 `DiskPleEmbedding` no-cache 直接 `Store.fetch` 快路径。
+- 完成 prefetch 错误回退、可选超时、共享 executor 参数、wait 分布统计。
+- 未完成：cache>0 路径优化、多 PLE 行级合并去重、native gather/dequant、1M 冷热基线。
+
+
 
 

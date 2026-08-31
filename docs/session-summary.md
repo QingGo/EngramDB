@@ -1192,5 +1192,24 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
   6. Track 5 工程稳定性。
 - 详见 `docs/roadmap.md` Section 21。
 
+## 6. Session 31：Track 0/1/2 推进记录
+
+- **Track 0**：
+  - qwen35 新增 `scripts/bench_live_store.py`，支持固定 tokens、warmup、reps、CSV、中位数；
+  - 新增阈值门禁：`--max-store-s` / `--max-tensor-s` / `--max-tensor-dedup-s`，可返回 `LIVE_STORE_BENCH_OK/FAIL`。
+- **Track 1**：
+  - `DiskPleEmbedding` no-cache forward 改用直接 `Store.fetch` 连续读取；
+  - 跳过 Python per-row dict/join；
+  - bit-exact 小表仍 0.0；
+  - cache>0 路径仍待进一步优化。
+- **Track 2**：
+  - prefetch 错误会回退到同步；
+  - 支持可选 `prefetch_timeout`；
+  - `prefetch_executor` 可跨模块共享；
+  - 新增 `get_wait_distribution()` 返回 p50/p90/p99/max；
+  - 多 PLE 行级合并去重仍未完成。
+- Smoke：`python_wheel_smoke.py` 全绿；qwen35 phase B 3 passed；bit-exact small 通过。
+
+
 
 
