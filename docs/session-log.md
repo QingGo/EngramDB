@@ -1781,6 +1781,7 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
   - 100k Store-I：781 窗口，wall 60.51s
   - 100k Store-P：781 窗口，wall 0.58s
   - 1M Store-P：7812 窗口，wall 7.09s
+    - 1M Store-P control 三 seed：wall 17.2–17.9s（随机访问惩罚约 2.4×）
 - EngramDB 新增 `StorePool` / `ThreadLocalStore`：
   - 有界 Store 连接池、acquire/release、context manager；
   - 每线程独立 Store 句柄；
