@@ -52,6 +52,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.cache_size = int(cache_size)
         self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
         self._cache: OrderedDict[int, bytes] = OrderedDict()
+        self._prefetched: dict[int, bytes] = {}
         self._pending: list[Any] = []
         self._pending_rows: set[int] = set()
         self._prefetch_executor = ThreadPoolExecutor(
@@ -103,7 +104,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         return fetched
 
     def _settle_prefetches(self) -> None:
-        """Move completed prefetch results into the LRU cache."""
+        """Move completed prefetch results into cache or the no-cache buffer."""
         if not self._pending:
             return
         alive: list[Any] = []
@@ -117,6 +118,8 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
                     while len(self._cache) > self.cache_size:
                         self._cache.popitem(last=False)
                         self._stats["evictions"] += 1.0
+                else:
+                    self._prefetched.update(fetched)
             else:
                 alive.append(fut)
         self._pending = alive
@@ -157,20 +160,25 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             self._stats["prefetch_wait_s"] += time.perf_counter() - t0
             self._settle_prefetches()
 
+        fetched: dict[int, bytes] = {}
+        if self.cache_size <= 0 and self._prefetched:
+            fetched.update(self._prefetched)
+            self._prefetched.clear()
+
         missing: list[int] = []
         seen: set[int] = set()
         for r in flat:
-            if r in self._cache:
+            if r in self._cache or r in fetched:
                 self._stats["hits"] += 1.0
             else:
                 self._stats["misses"] += 1.0
-            if r not in self._cache and r not in seen:
+            if r not in self._cache and r not in fetched and r not in seen:
                 seen.add(r)
                 missing.append(r)
         self._stats["calls"] += 1.0
         if not missing:
-            return {}
-        fetched = self._fetch_rows(missing)
+            return fetched
+        fetched.update(self._fetch_rows(missing))
         if self.cache_size > 0:
             self._cache.update(fetched)
             self._stats["inserts"] += float(len(fetched))
