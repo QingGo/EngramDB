@@ -1609,3 +1609,39 @@ PREFETCH_AB_SMOKE_OK
 
 ## 4. 技术债
 V99–V111，见 `docs/roadmap.md` Section 20.4。
+
+## Session 28 尝试与踩坑记录
+
+### 1. 尝试
+
+- 去掉 PyO3 `Store` 的 `unsendable`，让 Store 可跨线程。
+- 在 `Store.fetch` 中用 `py.allow_threads` 包裹 `BadgeGather::gather_pp`。
+- 给 `DiskPleEmbedding` 加后台 `ThreadPoolExecutor`、`prefetch()`、future/wait。
+- 给 `DiskPleNGramEmbedding` 加 `prefetch(input_ids)`。
+- 加模型级 `forward_pre_hook` 自动预取。
+- 在真实 Store 上做 sync vs prefetch 微基准。
+- 从原始 safetensors 按字节偏移只读真实 PLE 行，做稀疏真实行 oracle。
+- 增加并发 Store fetch smoke、prefetch smoke、phase B 测试。
+
+### 2. 踩坑
+
+1. `py.allow_threads` 闭包不能 `move` 走 `out`，否则后面无法构造 `PyBytes`；改为捕获 `&mut out`。
+2. PyO3 `Store` 必须确认内部 `BadgeGather` 是 Send/Sync 后才能去 `unsendable`。
+3. 无 cache 模式下 prefetch 结果如果不单独保存，`forward` 会再次同步 fetch；增加 `_prefetched` 缓冲解决。
+4. prefetch 微基准先跑 sync 会预热 OS 页缓存，导致 prefetch 的 `fetch_s` 偏小；正式 A/B 需要冷/热分离。
+5. 本地 Transformers 没有 Qwen4Exp，完整官方模型无法实机验证；用小资源组合验证替代。
+6. 磁盘 I/O 被隐藏后，Python 侧 rowid/转换/flatten 可能成为新的热点，不能只看 fetch 时间。
+
+### 3. 关键结果
+
+```text
+Store concurrent fetch OK
+DiskPleEmbedding prefetch OK
+SPARSE_REAL_ROW_ORACLE_OK
+144 real rows byte-identical
+DiskPle real-Store maxdiff vs checkpoint rows: 0.0
+[sync]     total=192.390ms fetch_s=188.817ms
+[prefetch] total=34.117ms  fetch_s=1.434ms wait_s=0.028ms issued=1024
+PREFETCH_AB_SMOKE_OK
+3 passed
+```

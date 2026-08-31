@@ -183,3 +183,6 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
   - 真实 Store 微基准：模拟 30ms 计算窗口下 192ms → 34ms。
   - 新增技术债 V99–V111：真实模型预取 A/B、prefetch 生产化、Python 热路径 native、真实 memory vs disk A/B、serving。
   - 下一步：真实模型 sync vs prefetch A/B，然后 Rust 原生热路径，再做服务化。
+
+  **Session 28 综合整理**：完整计划/发现/尝试/踩坑/完成/未完成/未来计划已写入 `docs/session-summary.md` 的 Session 28 综合整理章节；尝试与踩坑详细版见 `docs/session-log.md`。
+

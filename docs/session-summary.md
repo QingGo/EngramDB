@@ -962,3 +962,173 @@ V99–V111，详见 `docs/roadmap.md` Section 20.4。核心：
 4. 小资源验证优先，全模型只做最终 gate。
 5. 跨仓正确性只走契约 + golden。
 6. 版本、文档、代码同点收编。
+
+# Session 28 综合整理（Consolidated Round Review）
+
+## 1. 本轮计划
+
+1. 用小资源完成真实 PLE 行验证：
+   - 稀疏真实行 oracle
+   - 真实 checkpoint ↔ Store-I → DiskPle 位级对比
+2. 进入性能关键路径：
+   - PyO3 `Store.fetch` 释放 GIL
+   - Store 支持并发读取
+   - `DiskPle.prefetch()` + future/wait
+   - 模型级 forward pre-hook
+   - 真实 Store 上做 prefetch micro A/B
+3. 把发现、技术债、后续计划整理进 roadmap / session 文档。
+
+## 2. 发现
+
+1. **PLE 行只依赖 token ids**，不依赖 hidden states，因此预取理论可行。
+2. **当前 PyO3 `Store` 原本 `unsendable`，`fetch` 持 GIL**，这是异步化的第一个阻塞。
+3. **去掉 `unsendable` + `allow_threads` 后，同一个 Store 可被多线程并发 fetch**，且性能正确。
+4. **稀疏真实行 oracle 可以绕过全表加载**：
+   - 9 个 token
+   - 144 个真实 PLE 行
+   - checkpoint ↔ Store-I byte-identical
+   - DiskPle real-Store dequant maxdiff=0.0
+5. **预取 micro A/B 能看到明显收益**：
+   - sync ~192ms
+   - prefetch ~34ms
+   - 在模拟 30ms 计算窗口下，磁盘 fetch 基本被掩盖
+6. **但 micro 不等于真实模型**：
+   - 当前用 `time.sleep` 模拟前面层计算
+   - 没有真实 PLE 层到达时间 / prefetch wait 分布
+7. **磁盘被掩盖后，Python 热路径可能成为新瓶颈**：
+   - rowid、列表转 tensor、FP8 dequant、flatten 都在 Python。
+8. **官方 Qwen4Exp 完整模型仍受环境限制**，但正确性不需要它作为前置。
+
+## 3. 做的尝试
+
+1. 修改 PyO3 `Store`：
+   - 去掉 `unsendable`
+   - `fetch` 用 `py.allow_threads` 包裹 `BadgeGather::gather_pp`
+2. 重构 `DiskPleEmbedding`：
+   - 增加后台 `ThreadPoolExecutor`
+   - 增加 `_pending` / `_pending_rows`
+   - 增加 `prefetch()`
+   - 增加 `_settle_prefetches()` 消费后台结果
+   - 支持 cache 和 no-cache 两种模式
+3. 给 `DiskPleNGramEmbedding` 增加 `prefetch(input_ids)`：
+   - 不修改内部 context
+   - 复用当前每 batch history 计算 rowid
+4. 在 `official_loader` 增加 `install_disk_ple_prefetch_hook()`：
+   - 模型级 pre-hook
+   - `install_disk_ple_in_official_model(..., prefetch=True)` 自动启用
+5. 新写 `sparse_real_row_oracle.py`：
+   - 从原始 safetensors 按字节偏移只读命中的真实 FP8 行
+   - 与 Store fetch 对比
+   - 与 DiskPle dequant 输出对比
+6. 新写 `prefetch_real_ab.py`：
+   - 真实 Store
+   - sync vs prefetch + 模拟 compute window
+7. 增加 smoke/tests：
+   - Store 并发 fetch
+   - DiskPle prefetch
+   - 原有 python wheel smoke
+   - qwen35 phase B tests
+
+## 4. 踩过的坑
+
+1. **`py.allow_threads` 闭包不能 move `out`**：
+   - 第一次直接把 `out` mov进闭包，编译错误；
+   - 改为闭包捕获 `&mut out`，闭包结束后仍可使用 `out`。
+2. **`Store` 原本 `unsendable`**：
+   - 直接放后台线程会受限；
+   - 需要确认 `BadgeGather` 是 Send/Sync 后去掉 `unsendable`。
+3. **no-cache 模式下 prefetch 结果会被重复 fetch**：
+   - 如果 `cache_size=0`，`_settle_prefetches` 不落 cache；
+   - 后来增加 `_prefetched` 缓冲区，专门消费后台预取结果。
+4. **微基准可能受 OS 页缓存影响**：
+   - 先跑 sync 会预热，后续 prefetch 的 `fetch_s` 可能偏小；
+   - 正式 A/B 需要冷/热分离并记录介质。
+5. **预取微基准不是真实模型**：
+   - `time.sleep` 不是前面层计算；
+   - 不能据此宣布满足性能契约。
+6. **本地 Transformers 没有 Qwen4Exp**：
+   - 完整官方模型仍不能在本机跑；
+   - 因此用冻结官方快照 + mini 模型 + 稀疏真实行组合验证。
+7. **Python 热路径容易在优化后浮现**：
+   - 磁盘 I/O 被隐藏后，不能忽略 Python 侧转换成本。
+
+## 5. 完成的内容
+
+### 正确性/真实行
+- [x] 稀疏真实行 oracle：144 行 byte-identical
+- [x] DiskPle 读真实 Store 与 checkpoint 行 dequant maxdiff=0.0
+
+### 性能基础
+- [x] PyO3 `Store.fetch` 释放 GIL
+- [x] Store 并发 fetch smoke
+- [x] `DiskPleEmbedding.prefetch()` + future/wait
+- [x] 无 cache prefetch
+- [x] `DiskPleNGramEmbedding.prefetch()`
+- [x] 模型级 forward pre-hook
+- [x] 官方完整加载路径默认启用 prefetch
+- [x] 真实 Store prefetch micro A/B
+
+### 测试/文档
+- [x] python wheel smoke 通过
+- [x] qwen35 phase B tests 3 passed
+- [x] docs 更新：roadmap Section 20、session-summary、session-log、handoff
+
+## 6. 未完成的内容
+
+- [ ] 真实官方 Qwen4Exp 完整模型加载/forward
+- [ ] 真实模型 sync vs prefetch A/B
+- [ ] 记录真实 PLE 层到达时间、prefetch wait 分布、hit-rate
+- [ ] Rust 原生 rowid + gather + dequant 热路径
+- [ ] prefetch executor 生命周期 / shutdown / 超时
+- [ ] Store 连接池 / 服务化
+- [ ] MTP / Transformers Cache 集成
+- [ ] memory vs disk 真实性能 A/B
+- [ ] vLLM / SGLang / llama.cpp serving A/B
+- [ ] `engramdb:view` 自动消费
+- [ ] 可复现环境固化
+- [ ] 三仓库版本 bump + README 同点收编
+- [ ] runtime/官方类 CI 或 nightly
+
+## 7. 未来计划
+
+按风险/可信度排序：
+
+1. **真实模型预取 A/B**
+   - 真实 PLE 层
+   - 记录 wait/hit-rate
+   - sync vs prefetch tok/s
+2. **Prefetch 生产化**
+   - executor 生命周期
+   - 超时 / 回退 / 去重
+   - 统计增强
+3. **Rust/PyO3 原生热路径**
+   - native rowid + gather + dequant
+   - 减少 Python 开销
+4. **真实 memory vs disk A/B**
+   - CSV + 阈值
+5. **服务化 / 推理引擎**
+   - Store 连接池
+   - vLLM / SGLang / llama.cpp
+6. **工程稳定**
+   - 可复现环境
+   - 版本收编
+   - CI/nightly
+
+## 8. 当前状态
+
+```text
+EngramDB   master 03cbf41（Session 28 系统性思考）
+qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
+真实行验证：SPARSE_REAL_ROW_ORACLE_OK
+预取微基准：PREFETCH_AB_SMOKE_OK
+官方完整模型：仍未实机
+```
+
+## 9. 本轮纪律
+
+1. 微基准不是最终结论，必须上真实模型。
+2. 异步必须测量真实 wait/hit-rate。
+3. 磁盘被隐藏后，Python 热路径要同步评估。
+4. 小资源验证优先，全模型只做最终 gate。
+5. 跨仓正确性只走契约 + golden。
+6. 版本、文档、代码同点收编。
