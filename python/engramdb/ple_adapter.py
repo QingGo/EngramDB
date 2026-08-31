@@ -252,6 +252,7 @@ class DiskPleNGramEmbedding(nn.Module):
             dtype=dtype,
             cache_size=cache_size,
         )
+        self.store = store
         self._context: list[list[int]] = []
 
     def reset_history(self) -> None:
