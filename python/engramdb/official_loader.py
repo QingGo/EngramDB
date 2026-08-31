@@ -175,12 +175,20 @@ def install_disk_ple_in_official_model(
             "install_disk_ple_in_official_model requires `info` or `model_dir`"
         )
 
-    from .ple_adapter import DiskPleNGramEmbedding
+    from .ple_adapter import (
+        DiskPleNGramEmbedding,
+        head_offsets,
+        head_vocab_sizes,
+    )
 
     embedding_dim = int(info["ple_embed_dim"])
     multipliers = info.get("layer_multipliers") or info.get("rowid_multipliers")
     scale = _resolve_scale(info, scale)
     num_heads = _resolve_num_heads(info)
+    ngram_base = int(info.get("ngram_vocab_size_base") or 20_000_000)
+    divisor = int(info.get("make_ngram_vocab_size_divisible_by") or 128)
+    prime_sizes = head_vocab_sizes(base=ngram_base, heads=num_heads)
+    head_off = head_offsets(prime_sizes)
 
     replaced: list[str] = []
     layer_filter = set(layer_ids) if layer_ids is not None else None
@@ -214,6 +222,9 @@ def install_disk_ple_in_official_model(
             cache_size=cache_size,
             ngram_size=int(info.get("ngram_size", 3)),
             heads_per_ngram=int(info.get("heads_per_ngram", 8)),
+            prime_sizes=prime_sizes,
+            offsets=head_off,
+            divisor=divisor,
         )
         setattr(parent, leaf, disk)
         replaced.append(path)

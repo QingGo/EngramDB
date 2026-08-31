@@ -117,6 +117,9 @@ def disk_ple_from_discovery(
                 layer_multipliers = [int(x) for x in info[key]]
                 break
     ngram_heads = (int(info["ngram_size"]) - 1) * int(info["heads_per_ngram"])
+    ngram_base = int(info.get("ngram_vocab_size_base") or PLE_BASE)
+    divisor = int(info.get("make_ngram_vocab_size_divisible_by") or PLE_DIVISOR)
+    prime_sizes = head_vocab_sizes(base=ngram_base, heads=ngram_heads)
     return DiskPleNGramEmbedding(
         store=store,
         embedding_dim=int(info["ple_embed_dim"]),
@@ -126,6 +129,9 @@ def disk_ple_from_discovery(
         cache_size=cache_size,
         ngram_size=int(info["ngram_size"]),
         heads_per_ngram=int(info["heads_per_ngram"]),
+        prime_sizes=prime_sizes,
+        offsets=head_offsets(prime_sizes),
+        divisor=divisor,
     )
 
 
