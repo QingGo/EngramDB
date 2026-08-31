@@ -1325,3 +1325,153 @@ LLM-CompileForge  推理 runtime（后续）
 
 6. **版本、文档、代码同点收编**
    避免“代码已经推进，发布物和 README 还停在上一版”。
+
+# 19. 第十五轮系统性思考（Session 27：Phase B1/B2 代码落地 + 异步预取方向）
+
+## 19.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、
+> 推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+三条不可妥协的轴线：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；EngramDB 参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录可嵌入 + 可服务；manifest 可校验；Arrow 零拷贝；engine 薄 adapter 不改上游 |
+| C. 科学契约 | 每个性能/正确性结论有真实 PLE + 固定输入 + CSV/阈值；bit-exact 必须官方类或 golden 双保险 |
+
+本轮之后：
+
+- Phase B1 从“设计”变成“可执行代码”：占位构造 + 非 PLE 分片加载 + 磁盘替换。
+- Phase B2 小表 bit-exact 已通过：batch、EOS、chunked streaming 均 max-abs=0。
+- 但完整官方 Qwen4Exp 实机、真实 PLE 行 A/B、异步预取仍未闭环。
+
+## 19.2 当前坐标
+
+| 层 | 状态 |
+|---|---|
+| 存储/rowid/发现/发布门禁 | ✅ 已闭环 |
+| engram-peft 配置驱动自动注入 | ✅ |
+| qwen35-ple 配置桥接 + 跨仓 CI | ✅ |
+| 真实 FP8 Store-I e2e | ✅ |
+| 官方加载占位 patch + 非 PLE 分片加载 | ✅ 代码落地 |
+| 官方快照结构 smoke | ✅ |
+| 官方类小表 bit-exact（batch/EOS/streaming） | ✅ |
+| 完整官方 Qwen4Exp 实机验证 | ❌ 无 Qwen4Exp Transformers |
+| 真实 PLE 行官方类 bit-exact | ❌ |
+| memory vs disk A/B | ❌ |
+| 异步预取 / 计算掩盖 I/O | ❌ |
+| Rust/PyO3 原生热路径 | ❌ |
+| serving A/B | ❌ |
+
+## 19.3 本轮关键发现
+
+1. **PLE 行只依赖 token ids，不依赖 hidden states**，因此异步预取在原理上完全可行。
+2. **当前 PyO3 `Store` 不能直接做后台预取**：
+   - `Store::fetch` 没有释放 GIL；
+   - `Store` 是 `#[pyclass(unsendable)]`；
+   - 没有 `prefetch()` / future 语义。
+3. **DiskPleNGramEmbedding 曾不保留 batch 维度**：现在已修复，支持 `[B,S,E]`、每 batch 独立 n-gram context、chunked streaming。
+4. **小表 bit-exact 已经证明 rowid、素数表、EOS、偏移和 batch/context 逻辑正确**，但还不能替代真实 PLE 行验证。
+5. **可以用“稀疏真实行 oracle”绕开完整 48GB 表**：对固定 token 集合，只从真实 checkpoint 中读这些 token 踩到的行到内存，构造官方内存 embedding，与 DiskPle 的 Store 读取做位级对比。
+6. **完整官方模型验证的核心阻塞不是 EngramDB，而是环境和资源**：需要包含 Qwen4Exp 的 Transformers + 足够内存/时间。
+
+## 19.4 本轮新增技术债（V86 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V86 | PyO3 `Store.fetch` 持 GIL 且 `Store` 不可跨线程 | 异步预取/计算掩盖无法实现 | `allow_threads` + Store 改为 Send/每线程 Store，或原生 prefetch handle |
+| V87 | 没有 `DiskPle.prefetch()` / future / 模型级 pre-hook | 无法提前发起 PLE 行读取 | 增加 prefetch API + forward pre-hook |
+| V88 | 完整官方 Qwen4Exp 未实机验证 | B1 退出标准未达到 | 找含 Qwen4Exp 的 Transformers/大内存环境 |
+| V89 | 小表 bit-exact 是合成数据 | 不能证明真实 shard/dtype 路径 | 稀疏真实行 oracle + 固定 token 集合对拍 |
+| V90 | DiskPle 自管理 context，未接 Transformers Cache/MTP | streaming/MTP 边界未完全可信 | 接 Cache，或先明确单段/内部流式限制 |
+| V91 | 没有真实 memory vs disk A/B | 性能契约悬空 | 固定 seed/reps/tokens，输出 tok/s + hit-rate + fetch/convert |
+| V92 | 热路径仍 Python rowid + gather + dequant | 性能上不去 | Rust/PyO3 native hot path + 预取重叠 |
+| V93 | 官方类/torch 运行时测试只在本地，不在 CI | 回归保护弱 | 可用环境加 nightly runtime smoke |
+| V94 | e2e 依赖临时 PYTHONPATH/手工包 | 换机器不可复现 | uv lock / Dockerfile / 可复现 env |
+| V95 | 三仓库版本/README 未同点收编 | 发布物与代码分叉 | 下一版本统一 bump |
+| V96 | Store 线程安全/连接复用未做 | 服务化/并发不可靠 | 每线程 Store 池或 Rust 安全句柄 |
+| V97 | `engramdb:view` 自动消费未做 | 配置面只有 store | 后续实现 view reader 注入 |
+| V98 | 没有可用的大内存/云验收路径 | 完整模型 A/B 长期卡住 | 明确远程/云执行方案 |
+
+## 19.5 借鉴矩阵（本轮：如何不冲突地接近目标）
+
+| 来源 | 借什么 | 明确不借 | 为什么对我们有用 |
+|---|---|---|---|
+| **DuckDB** | 嵌入式目录库、manifest、Arrow、可发布 | 不借 SQL/OLAP | 确立“存储基础设施”形态 |
+| **SQLite** | 单文件、每线程连接、integrity 检查 | 不借关系模型/事务 | Store 可校验、可嵌入、可并发 |
+| **HuggingFace Transformers** | 构造前 hook、state_dict 过滤、构造后替换 | 不重写模型定义 | 已解决“加载时跳过 PLE 大表” |
+| **vLLM / SGLang** | 模型加载 hook、权重替换、调度/cache | 不借推理内核 | 不改源码接入真实引擎 |
+| **llama.cpp** | CPU-first、单二进制、测量文化、低依赖 | 不借 GGUF/推理 kernel | 最低成本验证磁盘表可服务 |
+| **CUDA/GPU 推理流水线** | 异步 stream / event、计算与传输重叠 | 不借 CUDA kernel | 同样思路可用于 CPU 的线程池 + future |
+| **RocksDB / FoundationDB** | 不可变段、checksum、原子发布 | 不借 LSM/事务 | 大表发布可靠、可回滚 |
+| **DiskANN / Memcached** | LRU、冷热分层、预取、命中率 | 不借 ANN/通用 KV | 在线读路径优化必须带命中率证据 |
+| **Arrow/IPC** | 零拷贝、跨语言、批次 | 不借查询/执行引擎 | 服务化传输原始行/e_t |
+| **MLPerf / fio** | 固定输入、阈值、CSV、cache-mode | 不借领域指标 | 性能结论可回归 |
+| **PyPA / maturin / abi3** | wheel 矩阵、abi3、发布 | 不借 Python 框架 | 降低安装门槛 |
+| **engram-peft / qwen35-ple** | 配置驱动、契约测试、编排 | 不借存储/训练内核 | 跨仓契约稳定 |
+| **DeepSeek / Qwen 官方** | 精确定义、bit-exact 参考 | 不自创 hash/重训表 | 语义事实标准 |
+
+关键不冲突原则：
+
+- 只做 **存储、布局、读取、服务化**，不做模型/训练/推理内核。
+- 所有引擎接入都是 **薄 adapter / hook / patch**，不 fork 上游。
+- 所有“快”的结论必须来自 **真实 PLE + 固定基准**。
+- 跨仓改动只走 **契约 + golden**。
+- 先做 **可信正确性**，再做 **性能**，最后做 **服务化**。
+
+## 19.6 后续开发计划（按“风险/不可信度”排序）
+
+### Track 1：把 B1/B2 从“小表可信”推到“真实可信”
+- [ ] 找到可用环境：Qwen4Exp 版 Transformers + 大内存/云机器。
+- [ ] 跑 `qwen4_ple_custom_loader.py --load-model`：
+  - 验证不加载 PLE 大表；
+  - 非 PLE 权重加载完整；
+  - 模型可 forward / generate。
+- [ ] 稀疏真实行 oracle：
+  - 固定 token 序列；
+  - 只从真实 checkpoint 读取这些 token 命中的 PLE 行；
+  - 与 DiskPle 的 Store 读取做 bit-exact。
+- [ ] 将真实行 oracle 纳入可复现 smoke。
+
+**退出标准**：官方类 + 真实 PLE 行 bit-exact；完整模型加载不分配 PLE 大表。
+
+### Track 2：异步预取 + Rust 热路径（性能关键）
+- [ ] PyO3 `Store.fetch` 释放 GIL，Store 支持跨线程/每线程实例。
+- [ ] `DiskPle.prefetch(rowids)` + future/wait。
+- [ ] 模型级 forward pre-hook，提前对当前步所有 PLE 模块发起预取。
+- [ ] Rust 原生 rowid + gather + dequant，或至少把 gather/dequant 移入热路径。
+- [ ] 用 hit-rate、prefetch_wait、fetch_s、convert_s 做 A/B。
+
+**退出标准**：能证明“前面层计算掩盖 PLE 通信”，且有分段数据。
+
+### Track 3：真实 memory vs disk A/B
+- [ ] 固定模型、固定输入、固定 seed、多次重复。
+- [ ] memory 表 vs EngramDB 磁盘表。
+- [ ] 输出 tok/s、延迟分布、hit-rate、fetch/convert、LRU 开关。
+- [ ] 落 CSV + 阈值门禁。
+
+**退出标准**：得到可判断“是否 ≤5% 性能差距”的数据。
+
+### Track 4：服务化 / 推理引擎
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] Store 每线程连接池/线程安全句柄。
+- [ ] Arrow IPC / 服务化发布形态。
+- [ ] `engramdb:view` 自动消费。
+
+**退出标准**：至少一个真实引擎不改源码使用 EngramDB PLE，并有 serving 数据。
+
+### Track 5：工程稳定
+- [ ] 固化 e2e 环境（uv lock / Dockerfile / 安装脚本）。
+- [ ] 三仓库版本 bump + README 同点收编。
+- [ ] 把官方类/runtime smoke 纳入可用 CI 或 nightly。
+
+## 19.7 本轮纪律
+
+1. **先可信，再性能，再服务**：小表 bit-exact 只是正确性第一步，不能替代真实行。
+2. **性能结论必须带 hit-rate 和分段计时**。
+3. **“异步”必须证明真的 overlap**：要看 GIL 是否释放、Store 是否可跨线程。
+4. **完整模型验证尽早找环境**：不要让环境阻塞拖成隐形债务。
+5. **跨仓改动继续只走契约 + golden**。
+6. **版本、文档、代码同点收编**。

@@ -885,3 +885,41 @@ qwen35-ple main  a5ca602（config bridge + real FP8 e2e）
 4. 可复现环境优先于临时 hack。
 5. 跨仓正确性只走契约 + golden。
 6. 版本、文档、代码必须同点收编。
+
+# Session 27 系统性思考（第十五轮：B1/B2 代码落地 + 异步预取方向）
+
+## 1. 本轮定位
+从“真实 FP8 e2e 能跑”推进到：
+- 官方加载占位已真正落地；
+- 官方类小表 bit-exact 已通过；
+- 开始系统性思考异步预取与真实行验收。
+
+## 2. 本轮发现
+1. PLE 行只依赖 token ids，理论上可以提前预取。
+2. 当前 PyO3 Store 持 GIL、不可跨线程，不能直接异步。
+3. DiskPleNGramEmbedding 已修复 batch 维度，并支持每 batch context 和 chunked streaming。
+4. 小表 bit-exact 证明 rowid/素数表/EOS/context 逻辑正确，但仍是合成数据。
+5. 可以用“稀疏真实行 oracle”绕开完整表加载，做真实行官方类对拍。
+6. 完整官方模型验证的主阻塞是 Qwen4Exp Transformers + 大内存环境。
+
+## 3. 新增技术债
+V86–V98，详见 `docs/roadmap.md` Section 19.4。核心是：
+- V86 PyO3 Store 持 GIL / unsendable
+- V87 无 prefetch API / 模型级 pre-hook
+- V89 小表 bit-exact 非真实行
+- V91 无 memory vs disk A/B
+- V92 Python 热路径未 native 化
+
+## 4. 下一步
+- Track 1：找 Qwen4Exp 环境 + 稀疏真实行 oracle，把 B1/B2 推到真实可信。
+- Track 2：异步预取 + Rust 热路径。
+- Track 3：真实 memory vs disk A/B。
+- Track 4：serving / 推理引擎。
+- Track 5：工程稳定 + 版本收编。
+
+## 5. 本轮纪律
+1. 先可信，再性能，再服务。
+2. 性能结论必须带 hit-rate 和分段计时。
+3. “异步”必须证明真的 overlap。
+4. 跨仓正确性只走契约 + golden。
+5. 版本、文档、代码同点收编。

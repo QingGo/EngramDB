@@ -1539,3 +1539,34 @@ generated shape [1, 10]
   - `docs/session-summary.md` Session 26
   - 本文件
   - `docs/handoff.md` 已同步
+
+# Session 27 复盘（Phase B1/B2 代码落地 + 异步预取方向）
+
+## 1. 完成
+- `patch_official_ngram_embedding_for_disk_load()`：官方 ngram 构造前 1 行占位。
+- `load_official_checkpoint_without_ngram_shards()`：safetensors 分片跳过 ngram，只加载非 PLE。
+- `qwen4_ple_custom_loader.py --load-model`：占位 → 加载 → 替换。
+- `qwen4_ple_official_loader_smoke.py`：冻结官方快照结构 smoke。
+- `DiskPleNGramEmbedding` 支持自定义 prime_sizes/offsets、batch 维度、每 batch context、chunked streaming。
+- `qwen4_ple_bit_exact_small.py`：小表官方 vs DiskPle bit-exact，batch + EOS + streaming 均 max-abs=0。
+- `tests/test_phase_b_official_loader.py`：3 个 runtime 测试。
+- 新增 docs/phase-b1-b2-progress.md。
+
+## 2. 关键结果
+```text
+OFFICIAL_SNAPSHOT_DISK_PLE_STRUCTURE_OK
+OFFICIAL_DISK_PLE_BIT_EXACT_SMALL_OK
+batch maxdiff 0.0
+streaming maxdiff 0.0
+3 passed
+```
+
+## 3. 踩坑/发现
+- 本地 Transformers 5.9.0 无 `qwen4_exp`，完整官方模型仍不能在本机跑。
+- `DiskPleNGramEmbedding` 原先把 batch 展平，已修复。
+- 小表 bit-exact 必须使用官方生成的 multipliers，不能直接用真实 Qwen 默认值。
+- PyO3 `Store::fetch` 持 GIL 且 `unsendable`，是异步预取的核心阻塞。
+- 异步预取理论可行：PLE rowid 只依赖 token ids，不依赖 hidden states。
+
+## 4. 技术债
+V86–V98，见 `docs/roadmap.md` Section 19.4。

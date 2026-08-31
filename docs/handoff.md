@@ -160,3 +160,12 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 ---
 使用方式：将以上全文作为第一个 prompt 粘贴给新 agent（大模型上下文为空时）；工作途中
 建议同时提供 `docs/session-log.md` 尾部与本文件，防止其基于猜测回溯。
+
+  **Session 27（第十五轮：Phase B1/B2 代码落地 + 异步预取方向）**：
+  - Phase B1 已真正落地：`patch_official_ngram_embedding_for_disk_load()`、`load_official_checkpoint_without_ngram_shards()`、`qwen4_ple_custom_loader.py --load-model` 完整链路。
+  - Phase B2 小表 bit-exact 通过：官方冻结快照 vs `DiskPleNGramEmbedding`，覆盖 batch/EOS/chunked streaming，max-abs=0。
+  - `DiskPleNGramEmbedding` 支持自定义 prime table、batch 维度、每 batch context。
+  - 新增 `qwen4_ple_official_loader_smoke.py`、`qwen4_ple_bit_exact_small.py`、`tests/test_phase_b_official_loader.py`。
+  - 核心新债务：V86 PyO3 Store 持 GIL/unsendable、V87 无 prefetch API、V89 非真实行 bit-exact、V91 无真实 A/B、V92 Python 热路径。
+  - 下一步：找 Qwen4Exp Transformers + 大内存环境，做完整模型验证和稀疏真实行 oracle；然后做异步预取 + Rust 热路径；再做真实 A/B 与服务化。
+  - 系统思考全文见 `docs/roadmap.md` Section 19。
