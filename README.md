@@ -227,6 +227,26 @@ raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
 
 服务端与客户端见 `python/README.md` 或 `docs/`。
 
+线程安全 Store 连接池：
+
+```python
+from engramdb import StorePool, ThreadLocalStore
+
+pool = StorePool("/path/to/rows", shards=128, rows_per_shard=2_500_012, width=160, pool_size=4)
+
+# 上下文管理：借出一个句柄，使用后自动归还
+with pool as store:
+    data = store.fetch(rowids)
+
+# 每线程一个句柄（适合多 worker / 服务线程）
+tls = ThreadLocalStore(pool)
+handle = tls.get()
+try:
+    data = handle.fetch(rowids)
+finally:
+    tls.release_current()
+```
+
 #### 5.1.4 快速 e_t tensor 读取与预取统计（v0.2.9+）
 
 训练/预计算不要用 Python 逐行 bytes 拼接，直接用一次 `Store.fetch` + `torch.frombuffer`：
@@ -408,6 +428,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 | 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
 | Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
+| 连接池 | `StorePool` / `ThreadLocalStore` 线程安全句柄管理 |
 | 性能契约 | 存储面已闭环，端到端待实机 |
 
 ---
