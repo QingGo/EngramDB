@@ -91,6 +91,28 @@ def test_store_and_vllm_gather() -> None:
 
 
 
+def test_store_concurrent_fetch() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    row_width = 8
+    rows = [bytes([i] * row_width) for i in range(64)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-concurrent-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), row_width)
+        try:
+            def fetch_all(_: int) -> int:
+                return len(store.fetch(list(range(64))))
+
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                results = list(ex.map(fetch_all, range(8)))
+            assert results == [64 * row_width] * 8
+            print("Store concurrent fetch OK")
+        finally:
+            store.close()
+
+
 def test_database_arrow_server() -> None:
     from engramdb import Database
     from engramdb.server import EngramDBServer
@@ -490,6 +512,7 @@ def main() -> None:
 
     test_page_reader()
     test_store_and_vllm_gather()
+    test_store_concurrent_fetch()
     test_safetensors_i64_reader()
     test_discover_ple_metadata()
     test_official_loader_filter()
