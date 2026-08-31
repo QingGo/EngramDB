@@ -62,6 +62,24 @@ reader = engramdb.PageReader(page_size=4096)
 pages = reader.read_pages([fd0, fd1], [offset0, offset1])
 ```
 
+### 线程安全的 Store 连接池
+
+```python
+from engramdb import StorePool, ThreadLocalStore
+
+pool = StorePool("path/to/rows", shards=128, rows_per_shard=2_500_012, width=160, pool_size=4)
+
+with pool as store:          # 借一个句柄，用完自动归还
+    data = store.fetch(rowids)
+
+tls = ThreadLocalStore(pool) # 每线程一个句柄
+handle = tls.get()
+try:
+    data = handle.fetch(rowids)
+finally:
+    tls.release_current()
+```
+
 ### PLE rowid、自动发现、FP8 scale
 
 ```python
