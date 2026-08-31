@@ -892,7 +892,8 @@ qwen35-ple main  a5ca602（config bridge + real FP8 e2e）
 从“真实 FP8 e2e 能跑”推进到：
 - 官方加载占位已真正落地；
 - 官方类小表 bit-exact 已通过；
-- 开始系统性思考异步预取与真实行验收。
+- 真实 PLE 行稀疏 oracle 已通过；
+- 异步预取基础已落地（GIL 释放、prefetch/future、模型级 hook）。
 
 ## 2. 本轮发现
 1. PLE 行只依赖 token ids，理论上可以提前预取。

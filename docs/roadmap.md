@@ -1381,8 +1381,8 @@ LLM-CompileForge  推理 runtime（后续）
 
 | # | 债务 | 影响 | 处置 |
 |---|---|---|---|
-| V86 | PyO3 `Store.fetch` 持 GIL 且 `Store` 不可跨线程 | 异步预取/计算掩盖无法实现 | `allow_threads` + Store 改为 Send/每线程 Store，或原生 prefetch handle |
-| V87 | 没有 `DiskPle.prefetch()` / future / 模型级 pre-hook | 无法提前发起 PLE 行读取 | 增加 prefetch API + forward pre-hook |
+| V86 | PyO3 `Store.fetch` 持 GIL 且 `Store` 不可跨线程 | 异步预取/计算掩盖无法实现 | ✅ 已用 `py.allow_threads` + Store 去掉 `unsendable`；并发 fetch smoke 通过 |
+| V87 | 没有 `DiskPle.prefetch()` / future / 模型级 pre-hook | 无法提前发起 PLE 行读取 | ✅ 已增加 `DiskPle.prefetch()`、future/wait、模型级 forward pre-hook |
 | V88 | 完整官方 Qwen4Exp 未实机验证 | B1 退出标准未达到 | 找含 Qwen4Exp 的 Transformers/大内存环境 |
 | V89 | 小表 bit-exact 是合成数据 | 不能证明真实 shard/dtype 路径 | 稀疏真实行 oracle + 固定 token 集合对拍 |
 | V90 | DiskPle 自管理 context，未接 Transformers Cache/MTP | streaming/MTP 边界未完全可信 | 接 Cache，或先明确单段/内部流式限制 |
@@ -1444,9 +1444,9 @@ LLM-CompileForge  推理 runtime（后续）
 **退出标准（全模型）**：完整官方模型加载不分配 PLE 大表，并进入性能 A/B。
 
 ### Track 2：异步预取 + Rust 热路径（性能关键）
-- [ ] PyO3 `Store.fetch` 释放 GIL，Store 支持跨线程/每线程实例。
-- [ ] `DiskPle.prefetch(rowids)` + future/wait。
-- [ ] 模型级 forward pre-hook，提前对当前步所有 PLE 模块发起预取。
+- [x] PyO3 `Store.fetch` 释放 GIL，Store 支持跨线程/每线程实例（并发 fetch smoke 已过）。
+- [x] `DiskPle.prefetch(rowids)` + future/wait（支持有 cache 与无 cache）。
+- [x] 模型级 forward pre-hook，提前对当前步所有 PLE 模块发起预取。
 - [ ] Rust 原生 rowid + gather + dequant，或至少把 gather/dequant 移入热路径。
 - [ ] 用 hit-rate、prefetch_wait、fetch_s、convert_s 做 A/B。
 

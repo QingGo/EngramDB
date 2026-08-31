@@ -1551,6 +1551,8 @@ generated shape [1, 10]
 - `qwen4_ple_bit_exact_small.py`：小表官方 vs DiskPle bit-exact，batch + EOS + streaming 均 max-abs=0。
 - `tests/test_phase_b_official_loader.py`：3 个 runtime 测试。
 - `sparse_real_row_oracle.py`：低资源真实行 oracle。
+- PyO3 `Store.fetch` 释放 GIL；Store 支持并发 fetch。
+- `DiskPle.prefetch()` + future/wait；模型级 forward pre-hook。
 - 新增 docs/phase-b1-b2-progress.md。
 
 ## 2. 关键结果

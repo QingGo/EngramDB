@@ -174,3 +174,5 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
   - 原始 checkpoint FP8 行与 EngramDB Store-I byte-identical；
   - `DiskPleNGramEmbedding` 读真实 Store 与原始 checkpoint 行 dequant 后 maxdiff=0.0。
   - 结论：不需要完整大模型也能完成真实 PLE 行的位级验证；完整模型只留作内存/性能 gate。
+
+  **性能关键路径进展**：PyO3 `Store.fetch` 已通过 `py.allow_threads` 释放 GIL，Store 去掉 `unsendable` 并验证并发 fetch；新增 `DiskPleEmbedding.prefetch()`、`DiskPleNGramEmbedding.prefetch()`、模型级 forward pre-hook 和 future/wait。下一步用真实 Store 做 hit-rate / prefetch_wait / tok/s A/B。
