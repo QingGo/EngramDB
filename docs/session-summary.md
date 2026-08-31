@@ -1453,14 +1453,15 @@ WSL Store-P / 大规模性能 ❌
 ### 7. 当前状态
 
 ```text
-EngramDB master 9beb72e + StorePool
-qwen35-ple main d342475 + Track A/B/C bench
+EngramDB master 2b83abe + StorePool/Database pool
+qwen35-ple main 80cb9f7 + Track A/B/C bench
 v0.2.9 已发布
 通用 LiveETDataset ✅
 DataLoader 多 worker ✅
 StorePool / ThreadLocalStore ✅
 Store-P 懒加载 ✅（本机 1M 约 7.1s）
-WSL Store-P / 多线程 / serving A/B ❌
+WSL Store-P A/B ✅（p4view 20k/100k, 8t ~22M rows/s）
+WSL Python 懒加载 / serving A/B ❌
 ```
 
 

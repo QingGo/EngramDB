@@ -1786,6 +1786,10 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
   - 有界 Store 连接池、acquire/release、context manager；
   - 每线程独立 Store 句柄；
   - `python_wheel_smoke.py` 已加入 StorePool smoke。
+- WSL Store-P A/B（p4view，`/home/zeng/qwen38-rows`）：
+  - 20k grams：Store-I A 1.33M rows/s，Store-P B 1t 6.48M，8t 17.81M
+  - 100k grams：Store-I A 1.56M rows/s，Store-P B 1t 6.07M，8t 22.22M
+  - Store-P 构建 20k 2.9s，100k 11.9s
 
 
 
