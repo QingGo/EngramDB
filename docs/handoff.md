@@ -176,3 +176,10 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
   - 结论：不需要完整大模型也能完成真实 PLE 行的位级验证；完整模型只留作内存/性能 gate。
 
   **性能关键路径进展**：PyO3 `Store.fetch` 已通过 `py.allow_threads` 释放 GIL，Store 去掉 `unsendable` 并验证并发 fetch；新增 `DiskPleEmbedding.prefetch()`、`DiskPleNGramEmbedding.prefetch()`、模型级 forward pre-hook 和 future/wait。下一步用真实 Store 做 hit-rate / prefetch_wait / tok/s A/B。
+
+  **Session 28（第十六轮：性能关键路径）**：
+  - 真实行低资源验证闭环：checkpoint ↔ Store-I byte-identical，DiskPle real-Store maxdiff=0.0。
+  - PyO3 `Store.fetch` 释放 GIL，Store 支持并发；`DiskPle.prefetch()` + future/wait + 模型级 pre-hook 落地。
+  - 真实 Store 微基准：模拟 30ms 计算窗口下 192ms → 34ms。
+  - 新增技术债 V99–V111：真实模型预取 A/B、prefetch 生产化、Python 热路径 native、真实 memory vs disk A/B、serving。
+  - 下一步：真实模型 sync vs prefetch A/B，然后 Rust 原生热路径，再做服务化。

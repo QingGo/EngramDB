@@ -1576,3 +1576,36 @@ DiskPle real-Store maxdiff vs checkpoint rows: 0.0
 
 ## 4. 技术债
 V86–V98，见 `docs/roadmap.md` Section 19.4。
+
+# Session 28 复盘（性能关键路径：预取管线落地）
+
+## 1. 完成
+- PyO3 `Store.fetch` 释放 GIL，`Store` 去掉 `unsendable`。
+- 并发 Store fetch smoke：同一 Store 多线程读取通过。
+- `DiskPleEmbedding.prefetch()` + future/wait，支持有 cache / 无 cache。
+- `DiskPleNGramEmbedding.prefetch()`。
+- 模型级 `forward_pre_hook`：提前预取所有 DiskPle。
+- 官方加载路径启用 prefetch。
+- `sparse_real_row_oracle.py`：真实 checkpoint 行 ↔ Store ↔ DiskPle bit-exact。
+- `prefetch_real_ab.py`：真实 Store 预取微基准。
+
+## 2. 关键结果
+```text
+Store concurrent fetch OK
+DiskPleEmbedding prefetch OK
+SPARSE_REAL_ROW_ORACLE_OK
+144 real rows byte-identical
+DiskPle real-Store maxdiff vs checkpoint rows: 0.0
+[sync]     total=192.390ms fetch_s=188.817ms
+[prefetch] total=34.117ms  fetch_s=1.434ms wait_s=0.028ms issued=1024
+PREFETCH_AB_SMOKE_OK
+```
+
+## 3. 踩坑/发现
+- `py.allow_threads` 闭包不能 move `out`，需要借用后再使用。
+- 无 cache 模式也必须消费 prefetch 结果，否则会重复同步 fetch。
+- prefetch 微基准只是模拟计算窗口，不是真实模型端到端。
+- Python 热路径在磁盘被隐藏后可能成为新瓶颈，需要 Rust native。
+
+## 4. 技术债
+V99–V111，见 `docs/roadmap.md` Section 20.4。

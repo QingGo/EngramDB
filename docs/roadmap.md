@@ -1482,3 +1482,146 @@ LLM-CompileForge  推理 runtime（后续）
 4. **完整模型验证尽早找环境**：不要让环境阻塞拖成隐形债务。
 5. **跨仓改动继续只走契约 + golden**。
 6. **版本、文档、代码同点收编**。
+
+# 20. 第十六轮系统性思考（Session 28：预取管线落地 + 真实行低资源验证）
+
+## 20.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、
+> 推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+三条不可妥协的轴线：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；EngramDB 参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录可嵌入 + 可服务；manifest 可校验；Arrow 零拷贝；engine 薄 adapter 不改上游 |
+| C. 科学契约 | 每个性能/正确性结论有真实 PLE + 固定输入 + CSV/阈值；bit-exact 必须官方类或 golden 双保险 |
+
+## 20.2 本轮坐标更新
+
+| 层 | 状态 |
+|---|---|
+| 存储/rowid/发现/发布门禁 | ✅ 已闭环 |
+| engram-peft 配置驱动自动注入 | ✅ |
+| qwen35-ple 配置桥接 + 跨仓 CI | ✅ |
+| 真实 FP8 Store-I e2e | ✅ |
+| 官方加载占位 + 非 PLE 分片加载 | ✅ 代码落地 |
+| 官方类小表 bit-exact（batch/EOS/streaming） | ✅ |
+| 稀疏真实行 oracle（checkpoint vs Store vs DiskPle） | ✅ maxdiff=0.0 |
+| PyO3 Store GIL 释放 + 并发 fetch | ✅ |
+| DiskPle prefetch / future / 模型级 pre-hook | ✅ |
+| 真实 Store 预取 micro A/B | ✅ 模拟计算窗口已见显著收益 |
+| 真实 full-model 性能 A/B | ❌ |
+| Rust 原生 rowid/gather/dequant | ❌ |
+| serving / vLLM / SGLang / llama.cpp | ❌ |
+| Store 连接池 / 服务化生命周期 | ❌ |
+
+## 20.3 本轮关键发现
+
+1. **小资源也能验证真实行正确性**：9 个 token、144 个真实 PLE 行，即可证明 checkpoint ↔ Store-I byte-identical，且 DiskPle real-Store dequant maxdiff=0.0。
+2. **异步预取已经不仅仅停留在设计**：
+   - PyO3 `Store.fetch` 释放 GIL，Store 可并发；
+   - `DiskPle.prefetch()` + future/wait 可用；
+   - 模型级 pre-hook 可在 forward 早期发起预取。
+3. **预取微基准显示有显著收益**：在真实 Store + 模拟 30ms 计算窗口下，同步 ~192ms → 预取 ~34ms。
+4. **但这还不是最终验收**：当前是用 `time.sleep` 模拟前面层计算，且只测了单次 batch；不能替代真实模型端到端 tok/s。
+5. **Python 热路径可能成为新的瓶颈**：rowid、列表转 tensor、FP8 dequant、flatten 仍在 Python 侧；预取隐藏了磁盘，不一定能隐藏 Python 开销。
+
+## 20.4 本轮新增技术债（V99 起）
+
+| # | 债务 | 影响 | 处置 |
+|---|---|---|---|
+| V99 | 预取收益只在模拟计算窗口下验证 | 不能证明真实模型端到端收益 | 在真实模型/真实 PLE 层做 sync vs prefetch A/B |
+| V100 | `forward` 会等待所有 pending prefetch | 磁盘慢时可能阻塞，且无优先级/取消 | 增加 adaptive wait、超时、按需同步取 |
+| V101 | Python 热路径仍做 rowid + convert | 预取藏住磁盘后 Python 成为瓶颈 | Rust/PyO3 native rowid + gather + dequant |
+| V102 | prefetch executor 没有生命周期管理 | 长服务可能累积线程/资源 | 增加 close/shutdown/共享 executor |
+| V103 | Store 并发只验证了单机 Python 线程 | 服务化连接池、每请求隔离未做 | Store 池/线程安全句柄 |
+| V104 | 没有真实 full-model A/B | 性能契约仍悬空 | 大模型环境固定输入/seed/reps CSV |
+| V105 | 没有 hit-rate / 真实等待分布 | 无法区分磁盘、Python、引擎开销 | 增加 hit-rate、p50/p95/p99、fetch/convert 分段 |
+| V106 | MTP / Transformers Cache 未接 | streaming/MTP 边界风险 | 接 Cache 或明确限制 |
+| V107 | 完整官方 Qwen4Exp 加载未实机 | B1 最终 gate 未过 | 云/大内存环境 |
+| V108 | 可复现环境未固化 | 换机器无法跑 | uv lock / Dockerfile |
+| V109 | 三仓库版本/README 未收编 | 发布物分叉 | 统一 bump |
+| V110 | `engramdb:view` 自动消费未做 | 配置面不完整 | view reader 注入 |
+| V111 | 还没有正式 benchmark harness/CSV 阈值 | 性能结论易漂移 | 固定输入 + CSV 门禁 |
+
+## 20.5 借鉴矩阵（本轮：性能路径如何不冲突）
+
+| 来源 | 借什么 | 明确不借 | 为什么有用 |
+|---|---|---|---|
+| **CUDA/GPU 推理** | async stream/event、计算与传输重叠 | 不借 CUDA kernel | 本轮已把相同思想落到 Rust thread + GIL release |
+| **数据库系统 (PostgreSQL/Redis)** | 后台预取、连接池、future/等待、LRU | 不借 SQL/缓存语义 | 服务化时需要连接生命周期和池化 |
+| **DuckDB** | 嵌入式目录库、manifest、Arrow | 不借 SQL/OLAP | 存储形态 |
+| **SQLite** | 每线程连接、integrity | 不借关系模型 | Store 可并发、可校验 |
+| **vLLM / SGLang** | prefill/decode 调度、continuous batching、engine hook | 不借推理内核 | 真实 serving 接入点 |
+| **llama.cpp** | CPU-first、低依赖、测量文化 | 不借 GGUF/kernel | 最低成本验证 |
+| **Memcached / DiskANN** | LRU、hit-rate、冷热分层 | 不借通用 KV/ANN | 预取必须带命中率证据 |
+| **Arrow / IPC** | 零拷贝、跨语言批次 | 不借查询引擎 | 服务化传输 |
+| **MLPerf / fio** | 固定输入、阈值、CSV、cache-mode | 不借领域指标 | 性能回归 |
+| **RocksDB / FoundationDB** | 不可变段、checksum、原子发布 | 不借 LSM/事务 | 大表发布可靠 |
+| **PyPA / maturin / abi3** | 发布矩阵、abi3 | 不借 Python 框架 | 安装门槛 |
+| **engram-peft / qwen35-ple** | 配置驱动、契约测试、跨仓 CI | 不借存储/训练内核 | 跨仓稳定 |
+
+不冲突原则不变：
+
+- 只做存储、布局、读取、服务化，不做模型内核。
+- 接入都是薄 adapter / hook / patch，不 fork 上游。
+- 性能结论必须来自真实 PLE + 固定基准。
+- 跨仓正确性只走契约 + golden。
+- 先可信，再性能，再服务。
+
+## 20.6 后续开发计划
+
+### Track 1：真实模型预取 A/B（最高优先）
+- [ ] 在真实 Qwen4Exp 或可运行 mini 官方模型中，接入模型级 prefetch hook。
+- [ ] 记录实际 PLE 层到达时间、prefetch 完成时间、wait 时间。
+- [ ] sync vs prefetch 的 end-to-end tok/s。
+- [ ] 固定输入、固定 seed、多次重复，落 CSV。
+
+**退出标准**：能证明真实模型里“前面层计算掩盖 PLE 通信”。
+
+### Track 2：Prefetch 生产化
+- [ ] prefetch executor 生命周期管理 / shutdown。
+- [ ] 多 outstanding future、超时、错误回退到同步。
+- [ ] hit-rate、wait 分布、fetch/convert 分段统计。
+- [ ] 多 PLE 模块并发 prefetch 的合并去重。
+
+**退出标准**：长服务稳定，统计完整。
+
+### Track 3：Rust/PyO3 热路径
+- [ ] native rowid 批量生成。
+- [ ] native gather + FP8 dequant + flatten。
+- [ ] 减少 Python 每 token 循环。
+- [ ] 保持与 Python bit-exact 一致。
+
+**退出标准**：热路径不再依赖 Python 逐行转换。
+
+### Track 4：真实 memory vs disk A/B
+- [ ] memory 表 vs EngramDB 磁盘表。
+- [ ] tok/s + hit-rate + fetch/convert + prefetch_wait。
+- [ ] CSV + 阈值门禁。
+
+**退出标准**：判断是否达到 ≤5% 性能差距。
+
+### Track 5：服务化 / 推理引擎
+- [ ] Store 连接池 / 每线程句柄。
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] Arrow IPC 服务化。
+- [ ] `engramdb:view` 自动消费。
+
+**退出标准**：至少一个真实引擎不改源码可用。
+
+### Track 6：工程稳定
+- [ ] 可复现环境。
+- [ ] 三仓库 bump + README。
+- [ ] runtime/官方类 CI 或 nightly。
+
+## 20.7 本轮纪律
+
+1. **预取微基准不是最终结论**，必须上真实模型。
+2. **“异步”必须测量真实 wait/hit-rate**，不能只看总时间。
+3. **Python 热路径要同步评估**：藏住磁盘后，Python 可能成为新瓶颈。
+4. **小资源验证优先**：稀疏真实行 + mini 官方模型足够验证正确性，全模型只做最终 gate。
+5. **跨仓正确性只走契约 + golden。**
+6. **版本、文档、代码同点收编。**

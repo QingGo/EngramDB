@@ -924,3 +924,41 @@ V86–V98，详见 `docs/roadmap.md` Section 19.4。核心是：
 3. “异步”必须证明真的 overlap。
 4. 跨仓正确性只走契约 + golden。
 5. 版本、文档、代码同点收编。
+
+# Session 28 系统性思考（第十六轮：预取管线落地 + 真实行低资源验证）
+
+## 1. 本轮定位
+- 低资源真实行验证完成：checkpoint ↔ Store ↔ DiskPle bit-exact。
+- 性能关键路径开始落地：GIL 释放、prefetch/future、模型级 pre-hook、真实 Store 微基准。
+- 仍未到最终性能验收：真实 full-model A/B、Rust 热路径、serving。
+
+## 2. 本轮发现
+1. 小资源也能验证真实行：9 token / 144 行即可 maxdiff=0.0。
+2. PyO3 `Store.fetch` 释放 GIL 后，同一 Store 可被多线程并发读。
+3. `DiskPle.prefetch()` 已能掩盖模拟计算窗口：192ms → 34ms。
+4. 但微基准不能替代真实模型；Python 热路径和 prefetch 生命周期仍是下一步风险。
+5. 完整 full-model 只应作为最终内存/性能 gate。
+
+## 3. 新增技术债
+V99–V111，详见 `docs/roadmap.md` Section 20.4。核心：
+- V99 未在真实模型验证预取收益
+- V100 prefetch 等待策略未生产化
+- V101 Python 热路径可能成新瓶颈
+- V104 无真实 memory vs disk A/B
+- V105 无 hit-rate/等待分布
+
+## 4. 下一步
+- Track 1：真实模型预取 A/B
+- Track 2：prefetch 生产化
+- Track 3：Rust/PyO3 热路径
+- Track 4：真实 memory vs disk A/B
+- Track 5：服务化 / 推理引擎
+- Track 6：工程稳定
+
+## 5. 本轮纪律
+1. 微基准不是最终结论。
+2. 异步必须测量真实 wait/hit-rate。
+3. Python 热路径要同步评估。
+4. 小资源验证优先，全模型只做最终 gate。
+5. 跨仓正确性只走契约 + golden。
+6. 版本、文档、代码同点收编。
