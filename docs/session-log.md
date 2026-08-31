@@ -1768,7 +1768,7 @@ test_live_store.py: 9 passed
 qwen35 full pytest: 25 passed, 7 skipped
 ruff 全绿
 DataLoader(num_workers=2) tiny Store OK
-Mac 外盘 2000 token Store-I store=0.162s / fetch_tensor=0.025s / Store-P view=0.021s（单次热态，非 WSL 结论）
+Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0.160s（单次热态，非 WSL 结论）
 ```
 
 
