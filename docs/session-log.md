@@ -1794,6 +1794,7 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
   - 20k Store-I：156 窗口，wall 22.41s
   - 100k Store-P：781 窗口，wall 1.86s
   - 1M Store-P：7812 窗口，wall 23.93s
+- WSL 多 worker Store-P：`LiveETViewStore` pickle 重开 View + `--workers 2` 已跑通。
 
 
 
