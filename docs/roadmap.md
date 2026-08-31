@@ -1932,6 +1932,7 @@ LLM-CompileForge  推理 runtime（后续）
   - `FetchStats`（windows/tokens/rows/unique_rows/fetch_seconds/cache_hits）
   - `LiveETStore`（rowids-only、懒加载、reset_stats、context manager、pickle 重开 Store）
   - `LiveETView`（lazy slice/permuted/subset）
+  - `LiveETViewStore`（Store-P 物化视图读取器，支持 padded slot）
   - `LiveETBatch`（tokens+e_t+start+fetch_seconds+rows）
   - `LiveETDataset`（IterableDataset 兼容、control/shuffle/worker_id/num_workers/max_windows）
 - `run_phase0.py` 改为导入统一模块。

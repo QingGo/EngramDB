@@ -1741,7 +1741,7 @@ README 更新 ✅
 ### 1. 尝试
 
 - 在 qwen35-ple 新建 `src/qwen35_ple/live_store.py`：
-  - `LiveETStore` / `LiveETView` / `LiveETDataset` / `LiveETBatch` / `FetchStats`；
+  - `LiveETStore` / `LiveETView` / `LiveETViewStore` / `LiveETDataset` / `LiveETBatch` / `FetchStats`；
   - control、shuffle、worker 分片；
   - per-batch fetch_seconds / rows / unique_rows / fetch stats。
 - `run_phase0.py` 删除内置类，改为统一模块导入。

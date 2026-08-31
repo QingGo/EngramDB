@@ -1433,7 +1433,7 @@ WSL Store-P / 大规模性能 ❌
 
 ### 5. 完成的内容
 
-- [x] `src/qwen35_ple/live_store.py`
+- [x] `src/qwen35_ple/live_store.py`（含 Store-P `LiveETViewStore`）
 - [x] `run_phase0.py` 去除内置 LiveET 类
 - [x] `scripts/run_live_et_dataset_smoke.py`
 - [x] `tests/test_live_store.py`（8 tests）
