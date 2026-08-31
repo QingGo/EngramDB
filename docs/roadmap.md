@@ -1424,18 +1424,23 @@ LLM-CompileForge  推理 runtime（后续）
 ## 19.6 后续开发计划（按“风险/不可信度”排序）
 
 ### Track 1：把 B1/B2 从“小表可信”推到“真实可信”
-- [ ] 找到可用环境：Qwen4Exp 版 Transformers + 大内存/云机器。
-- [ ] 跑 `qwen4_ple_custom_loader.py --load-model`：
-  - 验证不加载 PLE 大表；
-  - 非 PLE 权重加载完整；
-  - 模型可 forward / generate。
+- [ ] 做微缩官方模型验证（不必须全模型）：
+  - 用官方 modeling 代码/冻结快照构造 2 层或覆盖所有 `ple_layer_index` 的 mini 模型；
+  - 小 hidden/vocab，可使用合成非 PLE 权重；
+  - 跑占位 patch → filtered state dict → `install_disk_ple_in_official_model`；
+  - 验证官方类 + DiskPle 的 forward / generate 与内存路径 bit-exact。
 - [ ] 稀疏真实行 oracle：
   - 固定 token 序列；
   - 只从真实 checkpoint 读取这些 token 命中的 PLE 行；
   - 与 DiskPle 的 Store 读取做 bit-exact。
-- [ ] 将真实行 oracle 纳入可复现 smoke。
+- [ ] 将 mini 官方模型 + 真实行 oracle 纳入可复现 smoke。
+- [ ] 完整模型验证（作为最终 memory/performance gate，不是 bit-exact 前置）：
+  - 找 Qwen4Exp 版 Transformers + 大内存/云环境；
+  - 跑 `qwen4_ple_custom_loader.py --load-model`；
+  - 验证不加载 PLE 大表、非 PLE 权重完整加载、可 forward/generate。
 
-**退出标准**：官方类 + 真实 PLE 行 bit-exact；完整模型加载不分配 PLE 大表。
+**退出标准（bit-exact）**：mini 官方类 + 真实 PLE 行 bit-exact。
+**退出标准（全模型）**：完整官方模型加载不分配 PLE 大表，并进入性能 A/B。
 
 ### Track 2：异步预取 + Rust 热路径（性能关键）
 - [ ] PyO3 `Store.fetch` 释放 GIL，Store 支持跨线程/每线程实例。
