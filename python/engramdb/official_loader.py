@@ -151,6 +151,36 @@ def patch_official_ngram_embedding_for_disk_load(
         embedding_class.__init__ = original_init  # type: ignore[method-assign]
 
 
+def install_disk_ple_prefetch_hook(model: Any) -> Any:
+    """Install a model-level pre-hook that prefetches all disk PLE rows.
+
+    PLE rowids depend only on ``input_ids``, so calling ``prefetch`` before the
+    first transformer layer lets the disk I/O overlap with earlier-layer compute.
+    """
+    from .ple_adapter import DiskPleNGramEmbedding
+
+    disk_modules = [
+        m for m in model.modules() if isinstance(m, DiskPleNGramEmbedding)
+    ]
+    if not disk_modules:
+        raise RuntimeError(
+            "install_disk_ple_prefetch_hook requires at least one DiskPleNGramEmbedding"
+        )
+
+    def _prefetch_hook(module: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        del module
+        input_ids = kwargs.get("input_ids")
+        if input_ids is None and args:
+            input_ids = args[0]
+        if input_ids is None:
+            return None
+        for ple in disk_modules:
+            ple.prefetch(input_ids)
+        return None
+
+    return model.register_forward_pre_hook(_prefetch_hook)
+
+
 def install_disk_ple_in_official_model(
     model: Any,
     store: Any,
@@ -159,6 +189,7 @@ def install_disk_ple_in_official_model(
     scale: float | None = None,
     cache_size: int = 4096,
     layer_ids: list[int] | None = None,
+    prefetch: bool = False,
 ) -> list[str]:
     """Replace every official PLE ``ple_embedding`` with a disk-backed adapter.
 
@@ -233,6 +264,8 @@ def install_disk_ple_in_official_model(
         raise RuntimeError(
             "no official Qwen4ExpTextNGramEmbedding modules found in the model"
         )
+    if prefetch:
+        install_disk_ple_prefetch_hook(model)
     return replaced
 
 

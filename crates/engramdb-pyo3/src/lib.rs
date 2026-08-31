@@ -13,7 +13,7 @@ use engramdb_keygen::PleSpec;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-#[pyclass(unsendable)]
+#[pyclass]
 struct Store {
     batch: BadgeGather<'static>,
     rows_per_shard: u64,
@@ -41,9 +41,12 @@ impl Store {
         if rowids.is_empty() {
             return Ok(PyBytes::new(py, &[]));
         }
-        let mut out = vec![0u8; rowids.len() * self.width as usize];
-        self.batch
-            .gather_pp(&rowids, &mut out, 8)
+        let batch = &self.batch;
+        let width = self.width as usize;
+        let mut out = vec![0u8; rowids.len() * width];
+        let ids = &rowids;
+        let out_ref = &mut out;
+        py.allow_threads(move || batch.gather_pp(ids, out_ref, 8))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
         Ok(PyBytes::new(py, &out))
     }

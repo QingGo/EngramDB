@@ -10,6 +10,7 @@ example ``embed_tokens_per_layer`` on Qwen/Gemma-style models).
 from __future__ import annotations
 
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 import time
 from typing import Any
 
@@ -51,6 +52,11 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.cache_size = int(cache_size)
         self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
         self._cache: OrderedDict[int, bytes] = OrderedDict()
+        self._pending: list[Any] = []
+        self._pending_rows: set[int] = set()
+        self._prefetch_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="engramdb-prefetch"
+        )
         self._stats: dict[str, float] = {
             "calls": 0.0,
             "hits": 0.0,
@@ -59,6 +65,8 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             "evictions": 0.0,
             "fetch_s": 0.0,
             "convert_s": 0.0,
+            "prefetch_issued": 0.0,
+            "prefetch_wait_s": 0.0,
         }
 
     def reset_stats(self) -> None:
@@ -71,11 +79,69 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             "evictions": 0.0,
             "fetch_s": 0.0,
             "convert_s": 0.0,
+            "prefetch_issued": 0.0,
+            "prefetch_wait_s": 0.0,
         }
 
     def get_stats(self) -> dict[str, float]:
         """Return a copy of the performance counters."""
         return dict(self._stats)
+
+    def _fetch_rows(self, missing: list[int]) -> dict[int, bytes]:
+        """Synchronous store fetch helper; increments fetch timing stats."""
+        t0 = time.perf_counter()
+        raw = self.store.fetch(missing)
+        self._stats["fetch_s"] += time.perf_counter() - t0
+        expected = len(missing) * self.row_bytes
+        if len(raw) != expected:
+            raise RuntimeError(
+                f"EngramDB fetch returned {len(raw)} bytes, expected {expected}"
+            )
+        fetched: dict[int, bytes] = {}
+        for i, rowid in enumerate(missing):
+            fetched[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
+        return fetched
+
+    def _settle_prefetches(self) -> None:
+        """Move completed prefetch results into the LRU cache."""
+        if not self._pending:
+            return
+        alive: list[Any] = []
+        for fut in self._pending:
+            if fut.done():
+                fetched = fut.result()
+                self._pending_rows.difference_update(fetched.keys())
+                if self.cache_size > 0:
+                    self._cache.update(fetched)
+                    self._stats["inserts"] += float(len(fetched))
+                    while len(self._cache) > self.cache_size:
+                        self._cache.popitem(last=False)
+                        self._stats["evictions"] += 1.0
+            else:
+                alive.append(fut)
+        self._pending = alive
+
+    def prefetch(self, rowids: list[int]) -> Any:
+        """Asynchronously fetch uncached rows in a background thread.
+
+        Returns the ``concurrent.futures.Future`` or ``None`` when every row is
+        already cached/pending.  The next :meth:`forward` will wait for any
+        outstanding prefetches and reuse their results.
+        """
+        missing: list[int] = []
+        seen: set[int] = set()
+        for r in rowids:
+            if r in self._cache or r in self._pending_rows or r in seen:
+                continue
+            seen.add(r)
+            missing.append(r)
+        if not missing:
+            return None
+        self._pending_rows.update(missing)
+        self._stats["prefetch_issued"] += float(len(missing))
+        fut = self._prefetch_executor.submit(self._fetch_rows, missing)
+        self._pending.append(fut)
+        return fut
 
     def _get_missing(self, flat: list[int]) -> dict[int, bytes]:
         """Fetch uncached rows in batch and return a rowid -> bytes map.
@@ -84,6 +150,13 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         cache.  A cache size of zero intentionally disables caching, which is
         useful for raw-disk A/B benchmarks.
         """
+        if self._pending:
+            t0 = time.perf_counter()
+            for fut in self._pending:
+                fut.result()
+            self._stats["prefetch_wait_s"] += time.perf_counter() - t0
+            self._settle_prefetches()
+
         missing: list[int] = []
         seen: set[int] = set()
         for r in flat:
@@ -97,17 +170,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self._stats["calls"] += 1.0
         if not missing:
             return {}
-        t0 = time.perf_counter()
-        raw = self.store.fetch(missing)
-        self._stats["fetch_s"] += time.perf_counter() - t0
-        expected = len(missing) * self.row_bytes
-        if len(raw) != expected:
-            raise RuntimeError(
-                f"EngramDB fetch returned {len(raw)} bytes, expected {expected}"
-            )
-        fetched: dict[int, bytes] = {}
-        for i, rowid in enumerate(missing):
-            fetched[rowid] = raw[i * self.row_bytes:(i + 1) * self.row_bytes]
+        fetched = self._fetch_rows(missing)
         if self.cache_size > 0:
             self._cache.update(fetched)
             self._stats["inserts"] += float(len(fetched))

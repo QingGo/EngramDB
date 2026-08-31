@@ -257,6 +257,36 @@ class DiskPleNGramEmbedding(nn.Module):
     def reset_history(self) -> None:
         self._context = []
 
+    def prefetch(self, input_ids: torch.Tensor) -> None:
+        """Prefetch PLE rows for ``input_ids`` without consuming them.
+
+        This computes the same rowids as :meth:`forward` (using the current
+        per-batch n-gram context) and submits the missing disk reads to the
+        background prefetcher.  It does not modify the adapter's context state.
+        """
+        was_1d = input_ids.dim() == 1
+        if was_1d:
+            input_ids = input_ids.unsqueeze(0)
+        batch_size, _seq_len = input_ids.shape
+        while len(self._context) < batch_size:
+            self._context.append([self.eos] * (self.ngram_size - 1))
+        flat_rows: list[int] = []
+        for b in range(batch_size):
+            seq = input_ids[b].tolist()
+            rows = ple_rowids(
+                seq,
+                self.layer_multipliers,
+                self.eos,
+                sizes=self.prime_sizes,
+                offsets=self.head_offsets,
+                ngram_size=self.ngram_size,
+                heads_per_ngram=self.heads_per_ngram,
+                history=self._context[b],
+            )
+            for row in rows:
+                flat_rows.extend(row)
+        self.table.prefetch(flat_rows)
+
     def forward(self, input_ids: torch.Tensor, past_key_values: Any = None) -> torch.Tensor:
         del past_key_values  # history is managed internally by this adapter
         was_1d = input_ids.dim() == 1

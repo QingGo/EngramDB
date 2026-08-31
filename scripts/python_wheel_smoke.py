@@ -198,6 +198,43 @@ def test_disk_ple_lru() -> None:
             store.close()
 
 
+def test_prefetch_lru() -> None:
+    try:
+        import torch
+    except Exception:
+        print("DiskPleEmbedding prefetch skipped: torch not available")
+        return
+
+    from engramdb.vllm_plugin import DiskPleEmbedding
+
+    raw_width = 4
+    rows = [bytes([i] * raw_width) for i in range(8)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-prefetch-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), raw_width)
+        try:
+            emb = DiskPleEmbedding(
+                store,
+                num_embeddings=len(rows),
+                embedding_dim=1,
+                dtype=torch.float32,
+                cache_size=4,
+            )
+            fut = emb.prefetch([2, 0, 1])
+            assert fut is not None
+            out = emb(torch.tensor([2, 0, 2, 1]))
+            assert tuple(out.shape) == (4, 1)
+            stats = emb.get_stats()
+            assert stats["prefetch_issued"] == 3.0
+            assert stats["misses"] == 0.0
+            assert set(emb._cache.keys()).issubset({0, 1, 2})
+            print("DiskPleEmbedding prefetch OK")
+        finally:
+            store.close()
+
+
 def test_safetensors_i64_reader() -> None:
     import json
     import struct
@@ -461,6 +498,7 @@ def main() -> None:
     test_rowids_for_seq()
     test_database_arrow_server()
     test_disk_ple_lru()
+    test_prefetch_lru()
     print("python wheel smoke OK")
 
 
