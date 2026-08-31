@@ -59,7 +59,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
   ✅ v0.2.6 已发布（Rust serve/check/二进制协议、CPU A/B 脚本、cache_size=0 修复）；
   ✅ v0.2.7 已发布（真实 PLE Store/层 bit-exact、C ABI rowids、FP8 磁盘集成、兄弟项目契约）；
   ✅ v0.2.8 已发布（修复 v0.2.7 CI：rustfmt + 无 torch Python 导入；新增自动 weight_scale、Python rowids_for_seq、PyO3 native rowids、C ABI smoke 入 CI）；
-    ✅ v0.2.9 已发布（快速 `Store.fetch` / `fetch_e_t_tensor`、`PleDiskGather` 直连路径、native rowid history、qwen35 live-store）；
+    ✅ v0.2.9 与 v0.2.10 已发布（v0.2.10：`StorePool` / `ThreadLocalStore`、`Database` 池化读取、README/门禁更新）；v0.2.9 包含快速 `Store.fetch` / `fetch_e_t_tensor`、native rowid history、qwen35 live-store；
   版本只走 scripts/bump.sh（现已同时更新依赖版本引用和 Python `__version__`）。
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）；
