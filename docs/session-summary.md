@@ -1418,10 +1418,11 @@ WSL Store-P / 大规模性能 ❌
 
 ### 3. 做的尝试
 
-- 新建 `qwen35_ple/live_store.py`，包含 `FetchStats` / `LiveETStore` / `LiveETView` / `LiveETBatch` / `LiveETDataset`。
+- 新建 `qwen35_ple/live_store.py`，包含 `FetchStats` / `LiveETStore` / `LiveETView` / `LiveETViewStore` / `LiveETBatch` / `LiveETDataset`。
 - `LiveETStore` 支持 pickle，worker 中重开 Store。
 - `run_phase0.py` 改用统一模块。
-- 新增冒烟脚本和 8 个单元测试。
+- 新增冒烟脚本、Store-I vs Store-P A/B 脚本、懒加载逐窗口基准脚本和 9 个单元测试。
+- 新增 EngramDB `StorePool` / `ThreadLocalStore`。
 - 验证 `DataLoader(num_workers=2)` 在 tiny Store 上可跑。
 - 更新 qwen35 README / roadmap / session-log。
 
@@ -1437,6 +1438,8 @@ WSL Store-P / 大规模性能 ❌
 - [x] `run_phase0.py` 去除内置 LiveET 类
 - [x] `scripts/run_live_et_dataset_smoke.py`
 - [x] `scripts/bench_store_vs_view.py`（Store-I vs Store-P A/B 骨架）
+- [x] `scripts/bench_lazy_windows.py`（懒加载逐窗口基准）
+- [x] `engramdb.pool.StorePool` / `ThreadLocalStore`
 - [x] `tests/test_live_store.py`（9 tests）
 - [x] README 三行接入示例
 - [x] qwen35 与 EngramDB roadmap / session-log 更新
@@ -1450,12 +1453,14 @@ WSL Store-P / 大规模性能 ❌
 ### 7. 当前状态
 
 ```text
-EngramDB master 1bb923a + docs
-qwen35-ple main 4295584 + Track A 本地改动（待提交）
+EngramDB master 9beb72e + StorePool
+qwen35-ple main d342475 + Track A/B/C bench
 v0.2.9 已发布
 通用 LiveETDataset ✅
 DataLoader 多 worker ✅
-WSL Store-P / 1M 性能 ❌
+StorePool / ThreadLocalStore ✅
+Store-P 懒加载 ✅（本机 1M 约 7.1s）
+WSL Store-P / 多线程 / serving A/B ❌
 ```
 
 

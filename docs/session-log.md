@@ -1771,6 +1771,22 @@ DataLoader(num_workers=2) tiny Store OK
 Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0.160s（单次热态，非 WSL 结论）
 ```
 
+### 4. Track B/C/D 推进
+
+- qwen35 新增 `scripts/bench_lazy_windows.py`：
+  - 逐窗口懒加载，不物化全量 e_t；
+  - 支持 Store-I / Store-P；
+  - 输出每窗口 CSV + p50/p90/p99/max。
+- 本机 Mac 外盘懒加载实测：
+  - 100k Store-I：781 窗口，wall 60.51s
+  - 100k Store-P：781 窗口，wall 0.58s
+  - 1M Store-P：7812 窗口，wall 7.09s
+- EngramDB 新增 `StorePool` / `ThreadLocalStore`：
+  - 有界 Store 连接池、acquire/release、context manager；
+  - 每线程独立 Store 句柄；
+  - `python_wheel_smoke.py` 已加入 StorePool smoke。
+
+
 
 
 

@@ -197,7 +197,7 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
     **Session 30 系统性思考**：详见 `docs/roadmap.md` Section 21（终极目标、V112–V117、Track 0–5、借鉴矩阵）。
     **Session 31/32（懒加载 live-store + WSL 实测）**：`run_phase0.py --live-store` 改为按窗口懒加载，1M token 不再因 10GB e_t OOM；确认磁盘优先是正确路径；新债 V118–V122 见 roadmap Section 22。
      **Session 32 综合整理**：完整计划/发现/尝试/踩坑/完成/未完成/未来计划见 `docs/session-summary.md` 的 Session 32 综合整理章节；详细尝试与踩坑见 `docs/session-log.md`。
-  **Session 33（Track A 通用懒加载数据流）**：qwen35-ple 新增 `src/qwen35_ple/live_store.py`（`LiveETStore` / `LiveETView` / `LiveETViewStore` / `LiveETDataset` / `FetchStats` / `LiveETBatch`），支持 control、shuffle、DataLoader 多 worker（pickle 重开 Store）、每窗口 fetch 统计；`run_phase0.py` 已改为统一模块；新增 `scripts/run_live_et_dataset_smoke.py`、`scripts/bench_store_vs_view.py` 和 9 个测试；继续推进 Track B/C。
+  **Session 33（Track A 通用懒加载数据流 + B/C/D 起步）**：qwen35-ple 新增 `src/qwen35_ple/live_store.py`（`LiveETStore` / `LiveETView` / `LiveETViewStore` / `LiveETDataset` / `FetchStats` / `LiveETBatch`），支持 control、shuffle、DataLoader 多 worker（pickle 重开 Store）、每窗口 fetch 统计；`run_phase0.py` 已改为统一模块；新增 `scripts/run_live_et_dataset_smoke.py`、`scripts/bench_store_vs_view.py`、`scripts/bench_lazy_windows.py` 和 9 个测试；EngramDB 新增 `StorePool` / `ThreadLocalStore`。本机 Store-P 懒加载 1M 约 7.1s，Store-I 100k 约 60.5s；继续推进 WSL 复测与 serving A/B。
 
 
 
