@@ -10,7 +10,7 @@ example ``embed_tokens_per_layer`` on Qwen/Gemma-style models).
 from __future__ import annotations
 
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import time
 from typing import Any
 
@@ -40,6 +40,8 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         embedding_dim: int,
         dtype: Any = torch.float32 if torch is not None else None,
         cache_size: int = 4096,
+        prefetch_executor: Any = None,
+        prefetch_timeout: float | None = None,
     ) -> None:
         if nn is None:
             raise ImportError("DiskPleEmbedding requires PyTorch")
@@ -50,14 +52,18 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self.dtype = dtype
         self.row_bytes = self.embedding_dim * self.dtype.itemsize
         self.cache_size = int(cache_size)
+        self.prefetch_timeout = prefetch_timeout
         self.gather = PleDiskGather(store, row_bytes=self.row_bytes)
         self._cache: OrderedDict[int, bytes] = OrderedDict()
         self._prefetched: dict[int, bytes] = {}
         self._pending: list[Any] = []
+        self._pending_missing: list[list[int]] = []
         self._pending_rows: set[int] = set()
-        self._prefetch_executor = ThreadPoolExecutor(
+        self._prefetch_wait_samples: list[float] = []
+        self._prefetch_executor = prefetch_executor or ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="engramdb-prefetch"
         )
+        self._owns_prefetch_executor = prefetch_executor is None
         self._closed = False
         self._stats: dict[str, float] = {
             "calls": 0.0,
@@ -69,6 +75,8 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             "convert_s": 0.0,
             "prefetch_issued": 0.0,
             "prefetch_wait_s": 0.0,
+            "prefetch_errors": 0.0,
+            "prefetch_timeouts": 0.0,
         }
 
     def reset_stats(self) -> None:
@@ -83,11 +91,28 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
             "convert_s": 0.0,
             "prefetch_issued": 0.0,
             "prefetch_wait_s": 0.0,
+            "prefetch_errors": 0.0,
+            "prefetch_timeouts": 0.0,
         }
+        self._prefetch_wait_samples = []
 
     def get_stats(self) -> dict[str, float]:
         """Return a copy of the performance counters."""
         return dict(self._stats)
+
+    def get_wait_distribution(self) -> dict[str, float]:
+        """Return p50/p90/p99/max of per-future prefetch wait times (seconds)."""
+        samples = sorted(self._prefetch_wait_samples)
+        if not samples:
+            return {"p50": 0.0, "p90": 0.0, "p99": 0.0, "max": 0.0, "n": 0.0}
+        n = len(samples)
+        return {
+            "p50": samples[n // 2],
+            "p90": samples[min(n - 1, int(n * 0.90))],
+            "p99": samples[min(n - 1, int(n * 0.99))],
+            "max": samples[-1],
+            "n": float(n),
+        }
 
     def close(self) -> None:
         """Shut down the background prefetch executor.
@@ -100,10 +125,13 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self._closed = True
         for fut in self._pending:
             fut.cancel()
-        self._prefetch_executor.shutdown(wait=True)
+        if self._owns_prefetch_executor:
+            self._prefetch_executor.shutdown(wait=True)
         self._pending.clear()
+        self._pending_missing.clear()
         self._pending_rows.clear()
         self._prefetched.clear()
+        self._prefetch_wait_samples = []
 
     def __enter__(self) -> "DiskPleEmbedding":
         return self
@@ -131,9 +159,17 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         if not self._pending:
             return
         alive: list[Any] = []
-        for fut in self._pending:
+        alive_missing: list[list[int]] = []
+        for fut, missing in zip(self._pending, self._pending_missing):
             if fut.done():
-                fetched = fut.result()
+                try:
+                    fetched = fut.result()
+                except Exception:
+                    # Do not fail the forward path because a background read
+                    # failed; fall back to synchronous fetch later.
+                    self._stats["prefetch_errors"] += 1.0
+                    self._pending_rows.difference_update(missing)
+                    continue
                 self._pending_rows.difference_update(fetched.keys())
                 if self.cache_size > 0:
                     self._cache.update(fetched)
@@ -145,7 +181,9 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
                     self._prefetched.update(fetched)
             else:
                 alive.append(fut)
+                alive_missing.append(missing)
         self._pending = alive
+        self._pending_missing = alive_missing
 
     def prefetch(self, rowids: list[int]) -> Any:
         """Asynchronously fetch uncached rows in a background thread.
@@ -169,6 +207,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self._stats["prefetch_issued"] += float(len(missing))
         fut = self._prefetch_executor.submit(self._fetch_rows, missing)
         self._pending.append(fut)
+        self._pending_missing.append(missing)
         return fut
 
     def _get_missing(self, flat: list[int]) -> dict[int, bytes]:
@@ -181,7 +220,18 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         if self._pending:
             t0 = time.perf_counter()
             for fut in self._pending:
-                fut.result()
+                fut_t0 = time.perf_counter()
+                try:
+                    if self.prefetch_timeout is not None:
+                        fut.result(timeout=self.prefetch_timeout)
+                    else:
+                        fut.result()
+                except FutureTimeoutError:
+                    self._stats["prefetch_timeouts"] += 1.0
+                except Exception:
+                    # Real failures are counted and skipped in _settle_prefetches.
+                    pass
+                self._prefetch_wait_samples.append(time.perf_counter() - fut_t0)
             self._stats["prefetch_wait_s"] += time.perf_counter() - t0
             self._settle_prefetches()
 
@@ -216,11 +266,30 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         if torch is None:
             raise RuntimeError("DiskPleEmbedding.forward requires PyTorch")
         flat = indices.reshape(-1).cpu().tolist()
+        if self.cache_size <= 0 and not self._pending and not self._prefetched:
+            # Fast no-cache path: fetch the full flat list in one contiguous
+            # Store.fetch and skip the Python per-row dict/join entirely.
+            t0 = time.perf_counter()
+            raw = self.store.fetch(flat)
+            self._stats["fetch_s"] += time.perf_counter() - t0
+            self._stats["calls"] += 1.0
+            self._stats["misses"] += float(len(flat))
+            expected = int(indices.numel()) * self.embedding_dim
+            if len(raw) != expected * self.dtype.itemsize:
+                raise RuntimeError(
+                    f"EngramDB fetch returned {len(raw)} bytes, expected "
+                    f"{expected * self.dtype.itemsize}"
+                )
+            t1 = time.perf_counter()
+            data = torch.frombuffer(bytearray(raw), dtype=self.dtype)
+            self._stats["convert_s"] += time.perf_counter() - t1
+            return data.reshape(*indices.shape, self.embedding_dim)
+
         fetched = self._get_missing(flat)
         t0 = time.perf_counter()
         if self.cache_size <= 0:
-            # Raw no-cache path: every requested row is in `fetched` because the
-            # cache is intentionally empty on every call.
+            # Raw no-cache path with pending/prefetched rows: every requested
+            # row is in `fetched` because the cache is intentionally empty.
             raw = b"".join(fetched[r] for r in flat)
         else:
             raw = b"".join(self._cache[r] for r in flat)

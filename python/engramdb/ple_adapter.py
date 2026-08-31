@@ -213,6 +213,8 @@ class DiskPleNGramEmbedding(nn.Module):
         scale: float = 1.0,
         dtype: Any | None = None,
         cache_size: int = 4096,
+        prefetch_executor: Any = None,
+        prefetch_timeout: float | None = None,
         eos: int = PLE_EOS,
         prime_sizes: list[int] | None = None,
         offsets: list[int] | None = None,
@@ -251,6 +253,8 @@ class DiskPleNGramEmbedding(nn.Module):
             embedding_dim=self.head_dim,
             dtype=dtype,
             cache_size=cache_size,
+            prefetch_executor=prefetch_executor,
+            prefetch_timeout=prefetch_timeout,
         )
         self.store = store
         self._context: list[list[int]] = []

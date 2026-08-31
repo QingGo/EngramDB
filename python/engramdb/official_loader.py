@@ -193,6 +193,8 @@ def install_disk_ple_in_official_model(
     model_dir: str | None = None,
     scale: float | None = None,
     cache_size: int = 4096,
+    prefetch_executor: Any = None,
+    prefetch_timeout: float | None = None,
     layer_ids: list[int] | None = None,
     prefetch: bool = False,
 ) -> list[str]:
@@ -256,6 +258,8 @@ def install_disk_ple_in_official_model(
             layer_multipliers=multipliers,
             scale=scale,
             cache_size=cache_size,
+            prefetch_executor=prefetch_executor,
+            prefetch_timeout=prefetch_timeout,
             ngram_size=int(info.get("ngram_size", 3)),
             heads_per_ngram=int(info.get("heads_per_ngram", 8)),
             prime_sizes=prime_sizes,

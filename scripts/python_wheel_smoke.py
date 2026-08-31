@@ -312,6 +312,46 @@ def test_fetch_e_t_tensor() -> None:
             store.close()
 
 
+def test_disk_ple_nocache_fastpath() -> None:
+    try:
+        import torch
+    except Exception:
+        print("DiskPle no-cache fast path skipped: torch not available")
+        return
+
+    import struct
+
+    from engramdb.vllm_plugin import DiskPleEmbedding
+
+    rows = [struct.pack("<f", float(i)) for i in range(4)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-nocache-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), 4)
+        try:
+            emb = DiskPleEmbedding(
+                store,
+                num_embeddings=4,
+                embedding_dim=1,
+                dtype=torch.float32,
+                cache_size=0,
+            )
+            out = emb(torch.tensor([2, 0, 2, 1]))
+            assert tuple(out.shape) == (4, 1)
+            assert out[0, 0].item() == 2.0
+            assert out[1, 0].item() == 0.0
+            stats = emb.get_stats()
+            assert stats["misses"] == 4.0
+            assert stats["fetch_s"] >= 0.0
+            emb.close()
+            assert emb._closed
+            print("DiskPle no-cache fast path OK")
+        finally:
+            store.close()
+
+
+
 def test_safetensors_i64_reader() -> None:
     import json
     import struct
@@ -578,6 +618,7 @@ def main() -> None:
     test_disk_ple_lru()
     test_prefetch_lru()
     test_fetch_e_t_tensor()
+    test_disk_ple_nocache_fastpath()
     print("python wheel smoke OK")
 
 
