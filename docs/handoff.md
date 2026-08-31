@@ -199,6 +199,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
      **Session 32 综合整理**：完整计划/发现/尝试/踩坑/完成/未完成/未来计划见 `docs/session-summary.md` 的 Session 32 综合整理章节；详细尝试与踩坑见 `docs/session-log.md`。
   **Session 33（Track A 通用懒加载数据流 + B/C/D 起步）**：qwen35-ple 新增 `src/qwen35_ple/live_store.py`（`LiveETStore` / `LiveETView` / `LiveETViewStore` / `LiveETDataset` / `FetchStats` / `LiveETBatch`），支持 control、shuffle、DataLoader 多 worker（pickle 重开 Store）、每窗口 fetch 统计；`run_phase0.py` 已改为统一模块；新增 `scripts/run_live_et_dataset_smoke.py`、`scripts/bench_store_vs_view.py`、`scripts/bench_lazy_windows.py` 和 9 个测试；EngramDB 新增 `StorePool` / `ThreadLocalStore`。本机 Store-P 懒加载 1M 约 7.1s，Store-I 100k 约 60.5s；WSL p4view Store-P 20k/100k A/B 已跑（8t 约 22M rows/s）；WSL Python 懒加载也已跑（1M Store-P 约 23.9s）；继续推进 serving A/B 与完整模型训练。
 
+  **Session 34（第二十轮系统性思考）**：终极目标不变；已确认“读取快”不等于“实验能跑”；新增技术债 V123–V132（语义 slot 映射、访问序、真实模型 1M、WSL golden、serving、门禁、Arrow、WSL 复现、全表 Store-P）；完整思考见 `docs/roadmap.md` Section 24、`docs/session-summary.md` Session 34。
+
 
 
 

@@ -1797,6 +1797,34 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
 - WSL 多 worker Store-P：`LiveETViewStore` pickle 重开 View + `--workers 2` 已跑通。
 - **v0.2.10 已发布并推送**：`StorePool` / `ThreadLocalStore`、`Database` 池化读取、README 更新、release gate 全绿。
 
+## Session 34 系统性思考记录（第二十轮）
+
+### 1. 问题
+
+- 我们已经证明“Store-P 读取比 Store-I 快两个数量级”；
+- 但还没有证明“快读取能变成真实模型增益”。
+- 因此本轮系统性思考聚焦：**如何从 I/O 基准可靠走向端到端实验，而不是继续堆 bench**。
+
+### 2. 结论
+
+- **终极目标不变**：磁盘优先的确定性 n-gram 记忆表基础设施。
+- **当前最大短板不是磁盘速度，而是缺少可用的语义访问路径**：
+  - rowid-tuple → Store-P slot 映射；
+  - access-order 视图 + 调度；
+  - 真实模型 1M real/control/3-seed loss 对比。
+- **新增技术债 V123–V132**，详见 `docs/roadmap.md` Section 24。
+- **借鉴矩阵**：DuckDB/SQLite、PyTorch Dataset、HF streaming、Arrow、DiskANN/Milvus、RocksDB、vLLM/SGLang、llama.cpp/GGUF、XMemTransfer/Memory Grafting、engram-peft/PEFT、io_uring/AIO。
+- **计划**：
+  1. P0：语义映射 + access-order + 1M 真实模型三线实验。
+  2. P1：性能门禁 + WSL 复现脚本 + golden 对齐。
+  3. P2：serving A/B + Arrow IPC + 连接池深化。
+  4. P3：全表 Store-P + 三仓同步 + 发布。
+
+### 3. 已做
+
+- v0.2.10 发布。
+- 文档补齐 Section 24 / Session 34 综合整理。
+
 
 
 

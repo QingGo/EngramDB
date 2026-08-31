@@ -1465,6 +1465,61 @@ WSL Python 懒加载 ✅（20k Store-I 22.4s / 100k Store-P 1.9s / 1M Store-P 23
 WSL serving A/B / 完整模型训练 ❌
 ```
 
+## Session 34 综合整理（系统性思考：从 I/O 快走向端到端实验）
+
+### 1. 终极目标
+
+不做新目标，继续聚焦：
+
+> 让确定性哈希 n-gram 记忆表成为任何小模型/训练器/推理引擎都能廉价使用的磁盘优先存储基础设施，像 DuckDB 之于分析数据库。
+
+验收轴不变：性能 ≤5%/≥50 tok/s；形态单目录+可服务+Arrow薄适配；科学结论必须有真实 PLE+固定输入+CSV/阈值。
+
+### 2. 本轮定位
+
+- v0.2.10 已发布并推送。
+- Track A 完成；Track B/C 完成“读取基准”；
+- 关键缺口是“rowid→Store-P slot 语义映射”和“真实模型 1M 实验”。
+- 已确认 Store-P 是解决 WSL 随机 IO 的正确路径，但访问序、语义索引、完整模型仍是下一阶段核心。
+
+### 3. 本轮技术债摘要
+
+| # | 债 |
+|---|---|
+| V123 | 缺少 rowid-tuple → Store-P slot 语义映射 |
+| V124 | 访问序 Store-P 视图/调度未端到端 |
+| V125 | 未跑真实模型 1M real/control/3-seed |
+| V126 | WSL 全量 pytest golden 漂移 |
+| V127 | vLLM/SGLang/llama.cpp serving A/B 未做 |
+| V128 | 懒加载基准未进正式门禁 |
+| V129 | StorePool 与 LiveET/DataLoader 深度集成不足 |
+| V130 | Arrow IPC 未实际验证 |
+| V131 | WSL 复现环境未脚本化 |
+| V132 | 未规划 WSL 全表 Store-P 构建策略 |
+
+### 4. 借鉴方向
+
+- 存储/IO：DuckDB、RocksDB、DiskANN、io_uring。
+- 数据流：PyTorch IterableDataset、HF Datasets streaming、Arrow。
+- 推理：vLLM/SGLang 的 batch/prefetch、llama.cpp 的 mmap。
+- 实验：XMemTransfer/Memory Grafting、engram-peft/PEFT。
+
+只借形态与调度，不借各自的查询/训练/推理内核。
+
+### 5. 下一步优先级
+
+1. **P0**：语义 slot 映射 + access-order 视图 + 真实模型 1M 三线实验。
+2. **P1**：懒加载基准固化为门禁 + WSL 复现脚本 + golden 漂移修复。
+3. **P2**：serving A/B + Arrow IPC + StorePool 深度集成。
+4. **P3**：全表 Store-P 构建 + 三仓同步 + 发布。
+
+### 6. 当前版本
+
+```text
+EngramDB v0.2.10 (tag pushed)
+qwen35-ple main 06be3d0 (pushed)
+```
+
 
 
 

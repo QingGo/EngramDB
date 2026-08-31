@@ -1968,3 +1968,119 @@ LLM-CompileForge  推理 runtime（后续）
 1. **Track C 完整版**：用 `LiveETDataset` 在 WSL 跑真实模型 1M token real/control/3-seed，并把 fetch 时间与 loss 一起记录。
 2. **Track B 纵深**：构建访问序 Store-P 视图、多线程批量预取，验证端到端训练/推理路径。
 3. **Track D/E**：Store 连接池接入服务（已落地基础）、vLLM/SGLang/llama.cpp serving A/B、live-store smoke 入 CI/nightly。
+
+---
+
+# 24. 第二十轮系统性思考（Session 34：从中继试跑到真正端到端）
+
+## 24.1 终极目标（不变）
+
+> **让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。**
+
+三条不变验收轴：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s（配 MTP 冲 100）；参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录嵌入式 + 可服务化；manifest 可校验；Arrow 零拷贝；引擎薄 adapter 不改上游 |
+| C. 科学契约 | 真实 PLE + 固定输入 + 冷热标注 + CSV/阈值；bit-exact 有 golden/官方类双保险 |
+
+## 24.2 本轮（v0.2.10 + WSL/Store-P/懒加载）坐标更新
+
+| 层 | 状态 |
+|---|---|
+| Track A 通用懒加载数据流 | ✅ 完成：`LiveETStore` / `LiveETView` / `LiveETDataset` / `LiveETViewStore` |
+| Track B 存储面 A/B | ✅ 初闭环：WSL p4view + Python 懒加载均跑通；仍缺语义访问序映射 |
+| Track C 完整实验 | ⚠️ 只完成 I/O 基准，未完成真实模型 1M real/control/3-seed loss 对比 |
+| Track D 服务化 | ⚠️ `StorePool` / `ThreadLocalStore` 已落地；vLLM/SGLang/llama.cpp A/B 未做 |
+| Track E 工程稳定 | ⚠️ README/门禁/版本已推进；WSL 复现脚本、CI nightly、跨仓 golden 对齐未完成 |
+| v0.2.10 | ✅ 已发布并推送 |
+
+## 24.3 本轮关键发现
+
+1. **Store-I 随机读是唯一真正的存储瓶颈**：
+   - WSL 20k token Store-I 懒加载 22.4s；
+   - 100k Store-P 懒加载 1.86s；
+   - 1M Store-P 懒加载 23.9s。
+   - 结论：磁盘优先不是问题，Store-I scatter 才是问题。
+2. **Store-P 把 16 次散读折叠成 1 次定长读，收益约两个数量级**：
+   - 本机 100k Store-I 60.5s vs Store-P 0.58s；
+   - WSL p4view 8 线程 Store-P 22M rows/s vs Store-I 1.4M rows/s。
+3. **访问序是关键**：
+   - Store-P 顺序 1M 约 7.1s（本机）；
+   - permuted/control 三 seed 17.2–17.9s（约 2.4× 惩罚）。
+   - 说明“物化视图”只是第一步，“按访问序排布/调度”才是最终性能形态。
+4. **多 worker 可行**：
+   - `LiveETViewStore` pickle 重开 View 后，`DataLoader(num_workers=2)` 在 WSL 可跑。
+5. **连接管理已初步产品化**：
+   - `StorePool` / `ThreadLocalStore` 进入 Python API，`Database.fetch` 默认走池。
+6. **完整模型实验仍然缺失**：
+   - 所有数字都是“读取基准”，不是模型 loss / tok/s；
+   - 不能把 I/O 快误认为科学结论。
+
+## 24.4 本轮新增技术债
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V123 | 没有 token/rowid → Store-P slot 的语义映射 | 训练无法直接使用 Store-P，只能用 raw slot 基准 | 实现行元组→slot 索引/哈希映射，随 view 一起构建 manifest |
+| V124 | 访问序 Store-P 视图与调度未端到端 | 控制/随机访问惩罚约 2.4× | 构建 access-order view + LiveETDataset 访问序重排 |
+| V125 | 没有完整模型 1M real/control/3-seed 实验 | 无法判断 PLE 嫁接是否真正有增益 | 用 LiveETDataset 驱动真实模型，输出 loss + fetch 时间 CSV |
+| V126 | WSL 全量 pytest 存在 golden 漂移（1 个失败） | 跨仓正确性防线被削弱 | 固定 engram-peft 版本/重建 golden，或记录已知失败 |
+| V127 | vLLM/SGLang/llama.cpp serving A/B 未做 | 产品形态未验收 | 实现薄 adapter + 真实小模型 A/B |
+| V128 | 懒加载基准未进正式门禁/CI | 性能回归不可检测 | 将 20k/100k/1M 指标固化成 CSV 阈值脚本 |
+| V129 | StorePool 尚未与 LiveET/训练 DataLoader 深度集成 | 连接生命周期仍偏基础 | 提供 per-thread pool + wait/borrow 统计 |
+| V130 | Arrow IPC 路径未在本地/WSL 验证 | 零拷贝契约未闭环 | 安装 pyarrow 跑 `view_read_arrow` / `fetch_arrow` 端到端 |
+| V131 | WSL 复现环境未脚本化 | 换机后需要手工装 engramdb/qwen35 | 写 `scripts/wsl_repro.sh` 固定版本与本仓代码 |
+| V132 | 未规划 WSL 全表 Store-P 构建策略 | 320M gram 全表构建/校验可能耗时数小时 | 分批增量构建 + manifest/校验 + 可续跑 |
+
+## 24.5 借鉴矩阵
+
+| 来源 | 借什么 | 明确不借 | 为什么不冲突 |
+|---|---|---|---|
+| **DuckDB / SQLite** | 嵌入式、单目录、直接文件访问、零拷贝返回 | 不借 SQL/事务/查询优化器 | 我们只做“确定性记忆表存储”，不引入数据库语言 |
+| **PyTorch IterableDataset / DataLoader** | 流式窗口、worker sharding、collate | 不借训练循环/sampler 策略 | 我们只提供存储侧数据源 |
+| **HuggingFace Datasets streaming** | 大数据集不落内存、按需 map、分片、可复现 | 不借 NLP 处理 | 我们处理的是 PLE 特征流，不是文本 |
+| **Arrow / IPC** | 列式零拷贝、schema、块传输 | 不借查询引擎/执行器 | 用于 Store-P 输出和跨进程边界 |
+| **DiskANN / Milvus / FAISS** | 冷热分层、顺序化访问、批量预取、I/O 调度 | 不借 ANN/向量检索算法 | 只借 I/O 布局与批量策略 |
+| **RocksDB / FDB** | 不可变段、checksum、批量顺序读 | 不借 LSM/事务/分布式 | 保持静态大表+视图语义 |
+| **vLLM / SGLang** | continuous batching、异步 prefetch、指标 | 不借引擎调度/模型执行 | 我们只做存储侧 prefetch 与 reader |
+| **llama.cpp / GGUF** | mmap、offset 直读、主机侧 tensor 组装 | 不借量化/图执行 | Store-P 可作为 mmap 数据源 |
+| **XMemTransfer / Memory Grafting** | target-side reader、训练预算、实验方法 | 不搬它们的表结构 | 我们只借实验设计，不重复造记忆表 |
+| **engram-peft / PEFT** | 训练接口、adapter、配置桥接 | 不借核心训练内核 | 我们以薄 adapter 接入 |
+| **io_uring / Linux AIO** | 异步批量 I/O、多队列 | 不借具体引擎实现 | 用于 Rust/PyO3 底层 read path |
+
+## 24.6 后续开发计划（按“先实证、再放大”）
+
+### Phase 0：把“读取快”变成“实验能跑”
+- [ ] 实现 rowid-tuple → Store-P slot 语义映射与 manifest。
+- [ ] 实现 access-order Store-P 视图构建 + LiveETDataset 访问序调度。
+- [ ] 用真实模型在 WSL 跑 1M token real/control/3-seed，同时记录：
+  - 每窗口 fetch 时间、总读取量、cache/unique；
+  - val loss / PPL / QA log-likelihood。
+- [ ] 形成正式实验结果文档，并决定 PLE 嫁接是否继续放大。
+
+### Phase 1：把基准变成门禁
+- [ ] 固化 20k/100k/1M Store-P 懒加载 CSV + 阈值脚本。
+- [ ] 固化 WSL 复现环境脚本（Python/engramdb/qwen35 版本、路径、命令）。
+- [ ] 修复 WSL 全量 pytest 的 golden 漂移或明确记录已知失败。
+- [ ] 将 live-store smoke 和 StorePool smoke 纳入 CI/nightly。
+
+### Phase 2：把存储面推进到服务面
+- [ ] `StorePool` 与 LiveET/DataLoader 深度融合，提供 borrow/wait 统计。
+- [ ] Store-P mmap/PageReader 给 vLLM / SGLang / llama.cpp 的薄 adapter。
+- [ ] 真实小模型 serving A/B：内存 vs Store-I vs Store-P，输出 tok/s + 尾差。
+- [ ] Arrow IPC 端到端验证，替换 base64/JSON 大 payload。
+
+### Phase 3：产品化收口
+- [ ] WSL 全表 Store-P 分批构建与校验。
+- [ ] 三仓库版本/README/retest/CI 完全同步。
+- [ ] 根据完整模型结果决定是否进入 5M–20M token 阶段。
+
+## 24.7 本轮纪律
+
+1. **磁盘优先，不是“全量内存”的替代品而已**：Store-P/访问序才是磁盘优先的完全体。
+2. **I/O基准不是实验结论**：只有真实模型 loss / tok/s 才能支持科学判断。
+3. **所有性能结论必须包含**：介质、冷热、并发、访问序、CSV/阈值。
+4. **跨仓正确性靠版本固定 + golden**，不能靠“本地能跑”。
+5. **先打通端到端最小闭环，再谈放大**：先 1M 真实实验，再 5M/20M。
+6. **每次发布前 release gate 必绿；版本只走 bump.sh。**
