@@ -82,7 +82,8 @@ def fetch_e_t_tensor(
         raw = store.fetch(rowids_list)
         arr = torch.frombuffer(bytearray(raw), dtype=dtype)
 
-    arr = arr.to(out_dtype)
+    if arr.dtype != out_dtype:
+        arr = arr.to(out_dtype)
     if scale != 1.0:
         arr = arr * scale
     if head_dim is not None:
