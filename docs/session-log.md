@@ -1550,6 +1550,7 @@ generated shape [1, 10]
 - `DiskPleNGramEmbedding` 支持自定义 prime_sizes/offsets、batch 维度、每 batch context、chunked streaming。
 - `qwen4_ple_bit_exact_small.py`：小表官方 vs DiskPle bit-exact，batch + EOS + streaming 均 max-abs=0。
 - `tests/test_phase_b_official_loader.py`：3 个 runtime 测试。
+- `sparse_real_row_oracle.py`：低资源真实行 oracle。
 - 新增 docs/phase-b1-b2-progress.md。
 
 ## 2. 关键结果
@@ -1558,6 +1559,9 @@ OFFICIAL_SNAPSHOT_DISK_PLE_STRUCTURE_OK
 OFFICIAL_DISK_PLE_BIT_EXACT_SMALL_OK
 batch maxdiff 0.0
 streaming maxdiff 0.0
+SPARSE_REAL_ROW_ORACLE_OK
+144 real rows byte-identical
+DiskPle real-Store maxdiff vs checkpoint rows: 0.0
 3 passed
 ```
 

@@ -169,3 +169,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
   - 核心新债务：V86 PyO3 Store 持 GIL/unsendable、V87 无 prefetch API、V89 非真实行 bit-exact、V91 无真实 A/B、V92 Python 热路径。
   - 下一步：找 Qwen4Exp Transformers + 大内存环境，做完整模型验证和稀疏真实行 oracle；然后做异步预取 + Rust 热路径；再做真实 A/B 与服务化。
   - 系统思考全文见 `docs/roadmap.md` Section 19。
+
+  **Session 27 低资源验证补充**：新增 `scripts/sparse_real_row_oracle.py`，用 9 个固定 token、144 个真实 PLE 行验证：
+  - 原始 checkpoint FP8 行与 EngramDB Store-I byte-identical；
+  - `DiskPleNGramEmbedding` 读真实 Store 与原始 checkpoint 行 dequant 后 maxdiff=0.0。
+  - 结论：不需要完整大模型也能完成真实 PLE 行的位级验证；完整模型只留作内存/性能 gate。

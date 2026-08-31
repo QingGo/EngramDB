@@ -1429,10 +1429,11 @@ LLM-CompileForge  推理 runtime（后续）
   - 小 hidden/vocab，可使用合成非 PLE 权重；
   - 跑占位 patch → filtered state dict → `install_disk_ple_in_official_model`；
   - 验证官方类 + DiskPle 的 forward / generate 与内存路径 bit-exact。
-- [ ] 稀疏真实行 oracle：
+- [x] 稀疏真实行 oracle：
   - 固定 token 序列；
   - 只从真实 checkpoint 读取这些 token 命中的 PLE 行；
-  - 与 DiskPle 的 Store 读取做 bit-exact。
+  - 与 DiskPle 的 Store 读取做 bit-exact；
+  - 已跑通：144 个真实行 byte-identical，DiskPle real-Store maxdiff=0.0（`scripts/sparse_real_row_oracle.py`）。
 - [ ] 将 mini 官方模型 + 真实行 oracle 纳入可复现 smoke。
 - [ ] 完整模型验证（作为最终 memory/performance gate，不是 bit-exact 前置）：
   - 找 Qwen4Exp 版 Transformers + 大内存/云环境；

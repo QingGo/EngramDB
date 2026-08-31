@@ -899,7 +899,7 @@ qwen35-ple main  a5ca602（config bridge + real FP8 e2e）
 2. 当前 PyO3 Store 持 GIL、不可跨线程，不能直接异步。
 3. DiskPleNGramEmbedding 已修复 batch 维度，并支持每 batch context 和 chunked streaming。
 4. 小表 bit-exact 证明 rowid/素数表/EOS/context 逻辑正确，但仍是合成数据。
-5. 可以用“稀疏真实行 oracle”绕开完整表加载，做真实行官方类对拍。
+5. 已经用“稀疏真实行 oracle”绕开完整表加载：144 个真实行与 checkpoint byte-identical，DiskPle real-Store maxdiff=0.0。
 6. 完整官方模型验证的主阻塞是 Qwen4Exp Transformers + 大内存环境。
 
 ## 3. 新增技术债
