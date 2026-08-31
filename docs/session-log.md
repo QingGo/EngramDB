@@ -1701,6 +1701,42 @@ MINI_OFFICIAL_PREFETCH_AB_OK
 - 结论：这是磁盘优先的正确路径，但 IO 性能仍需 Store-P / Rust / 多线程解决。
 - 新增技术债 V118–V122，写入 roadmap Section 22。
 
+## Session 32 尝试与踩坑详细记录
+
+### 1. 尝试
+
+- 发布 v0.2.9：快速 Store.fetch / fetch_e_tensor / native rowid history / README 同步。
+- qwen35 增加 `bench_live_store.py` + 阈值。
+- `DiskPleEmbedding` no-cache 快路径、prefetch 错误回退、超时、共享 executor、wait 分布。
+- `run_phase0.py --live-store` 懒加载改造：
+  - `LiveETStore`：只保留 rowids
+  - `LiveETView`：窗口级 lazy fetch
+  - control 懒加载置换
+- README 更新：根 README、python README、qwen35 README。
+
+### 2. 踩坑
+
+1. FP8 tensor CPU 索引不支持，需要先转 float32。
+2. `fetch_e_t_tensor` 的 flat rowids 是 T×16，reshape 为 `[T,16,160]`。
+3. PyTorch pre-hook 可能只传 2 个参数。
+4. WSL 全量 live-store 1M OOM。
+5. WSL Store.fetch 慢是 IO/介质问题，不是 Python 层。
+6. `DiskPleEmbedding.close()` 要先于 Store close。
+
+### 3. 结果
+
+```text
+v0.2.9 发布 ✅
+python wheel smoke OK ✅
+qwen35 phase B 3 passed ✅
+bit-exact small OK ✅
+LIVE_STORE_BENCH_OK/FAIL ✅
+1M 全量 live-store ❌ OOM
+懒加载 live-store ✅
+README 更新 ✅
+```
+
+
 
 
 

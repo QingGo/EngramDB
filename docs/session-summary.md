@@ -1223,6 +1223,183 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
 - 下一步：将懒加载提炼为正式数据流，并在 WSL 做 Store-P / 多线程 / Rust 批量同口径 A/B。
 - 详见 `docs/roadmap.md` Section 22。
 
+# Session 32 综合整理（Consolidated Round Review）
+
+## 1. 本轮计划
+
+1. 完成 Track 0：可复现 live-store benchmark + CSV + 阈值。
+2. 完成 Track 1：减少 serving/training Python 热路径。
+3. 完成 Track 2：prefetch 错误回退、超时、共享 executor、wait 统计。
+4. 根据 WSL 实测，把 `--live-store` 从“全量加载 e_t”改为“按窗口懒加载”。
+5. 更新 README/pyREADME/retest 指南，反映 v0.2.9+ 新 API 和推荐使用方式。
+6. 再次系统性思考，把终极目标、技术债、借鉴矩阵、后续计划写入 roadmap。
+
+## 2. 本轮发现
+
+1. **全量加载 e_t 是反模式**：
+   - 1M × 2560 × 4B ≈ 10GB；
+   - WSL 15GB 内存会 OOM；
+   - 违背 EngramDB 磁盘优先设计本质。
+2. **懒加载是正确形态**：
+   - 只保留 `[T,16]` rowids（约 128MB / 1M token）；
+   - 每个训练/评测窗口按需读取；
+   - 内存从 10GB 降到 KB/MB 级。
+3. **懒加载解决内存，不解决 WSL IO**：
+   - 100k token / 1.6M 行 ≈ 56s；
+   - 原始 Store-I 随机 scatter 在 WSL 虚拟盘上仍是瓶颈；
+   - 必须靠 Store-P / Rust/C 批量 / 多线程 / 顺序化解决。
+4. **Python 适配层不再是主要慢路径**：
+   - `PleDiskGather.fetch` 已改为直接 `Store.fetch`；
+   - `fetch_e_t_tensor` 提供一次 fetch + torch 转换；
+   - no-cache `DiskPleEmbedding.forward` 也走连续 buffer 快路径。
+5. **prefetch 可以更健壮**：
+   - 错误回退到同步；
+   - 可选超时；
+   - 共享 executor；
+   - wait 分布可测量。
+
+## 3. 做的尝试
+
+1. 发布 v0.2.9，包含：
+   - `PleDiskGather.fetch` 直连化；
+   - `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`；
+   - native rowid + history + PyO3 导出；
+   - README/retest 指南同步。
+2. qwen35 `bench_live_store.py`：
+   - 固定 token/rowids；
+   - warmup/reps；
+   - CSV/中位数/阈值；
+   - `LIVE_STORE_BENCH_OK/FAIL`。
+3. `DiskPleEmbedding` 生产化：
+   - no-cache fast path；
+   - prefetch 错误回退；
+   - `prefetch_timeout`；
+   - `prefetch_executor` 共享；
+   - `get_wait_distribution()`。
+4. `run_phase0.py --live-store` 懒加载改造：
+   - 新增 `LiveETStore` / `LiveETView`；
+   - 不预加载完整 e_t；
+   - 训练/评测按窗口读取；
+   - control 支持 lazy permutation。
+5. README 更新：
+   - 根 README 增加快速 e_t / prefetch / 状态行；
+   - python README 修复“Store 是 unsendable”的过时说明；
+   - qwen35 README 更新 live-store 推荐方式。
+
+## 4. 踩过的坑
+
+1. **FP8 tensor 不能直接 CPU 索引**：
+   - `fetch_e_t_tensor(dedup=True)` 直接 `batch[idx]` 报 `index_cpu not implemented for Float8_e4m3fn`；
+   - 修复：先 `.to(float32)` 再索引。
+2. **`fetch_e_t_tensor` 的 flat rowids 语义是 T×16**：
+   - 返回 shape 应为 `[T,16,160]`，不是 `[len(rowids),16,160]`；
+   - 否则 reshape 会报错。
+3. **PyTorch pre-hook 签名差异**：
+   - 有些版本只传 `(module, args)`，不传 `kwargs`；
+   - 修复为 `kwargs=None` 默认兼容。
+4. **全量 live-store OOM**：
+   - 1M e_t 在 WSL 触发系统杀进程；
+   - 改为懒加载后解决。
+5. **WSL Store.fetch 慢不是 Python 层**：
+   - 100k token ≈ 56s；
+   - 是随机 IO/介质/Store-I 路径问题，不能靠全量内存绕开。
+6. **关闭顺序**：
+   - `DiskPleEmbedding.close()` 应在 Store close 之前调用；
+   - 否则后台 prefetch future 可能在 Store 关闭后读取。
+
+## 5. 完成的内容
+
+### 发布
+- [x] EngramDB v0.2.9 发布并推送 tag。
+- [x] Mac/WSL 验收通过。
+
+### 快速读取路径
+- [x] `PleDiskGather.fetch` 直接 `Store.fetch`。
+- [x] `engramdb.fetch_e_t_tensor()`。
+- [x] `PleDiskGather.fetch_tensor()`。
+- [x] qwen35 `real_ple.fetch_e_t` / precompute 切换到快路径。
+- [x] `run_phase0.py --live-store` 懒加载。
+
+### 热路径/生产化
+- [x] `DiskPleEmbedding` no-cache fast path。
+- [x] prefetch 错误回退。
+- [x] 可选超时。
+- [x] 共享 executor 参数。
+- [x] wait 分布统计。
+- [x] native rowid + history（Rust + PyO3）。
+
+### 基准/文档
+- [x] `bench_live_store.py` + 阈值。
+- [x] README / pyREADME / qwen README 更新。
+- [x] retest 指南 + 验收记录。
+- [x] roadmap Section 22 系统性思考。
+
+## 6. 未完成的内容
+
+- [ ] 多 PLE 模块行级合并去重。
+- [ ] `cache_size > 0` 下 `DiskPleEmbedding.forward` 的 Python bytes join 优化。
+- [ ] Rust/PyO3 native gather + FP8 dequant + flatten。
+- [ ] WSL Store-P 视图构建与 A/B。
+- [ ] WSL 多线程 / C-Rust 批量读取实测。
+- [ ] 1M token 懒加载正式基准（每 step fetch 时间/CSV）。
+- [ ] 通用 `LiveETDataset` / `IterableDataset` 抽象。
+- [ ] 完整 Qwen4Exp 官方模型加载/性能验证。
+- [ ] Store 连接池 / 服务化。
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] MTP / Transformers Cache 集成。
+- [ ] `engramdb:view` 自动消费。
+- [ ] 三仓库版本/README/CI 完全同点收编。
+
+## 7. 未来的计划
+
+### Track A：正式懒加载数据流
+- 把 `LiveETStore` / `LiveETView` 提炼为通用模块或 EngramDB Python API。
+- 实现 `IterableDataset` / 多 worker / 分片。
+- 记录每窗口 fetch 时间。
+
+### Track B：WSL/真实介质性能闭环
+- WSL 构建 Store-P。
+- Store-I vs Store-P vs 懒加载 vs 全量内存同口径 A/B。
+- Rust/C 批量 + 多线程实测。
+- CSV + 阈值。
+
+### Track C：真实模型训练/推理验证
+- 1M token real/control/seeds 懒加载实验。
+- 对比 loss/耗时。
+- 推进 CPU 100 tok/s 推理闭环。
+
+### Track D：服务化
+- Store 连接池。
+- vLLM / SGLang / llama.cpp serving A/B。
+- Arrow IPC 数据流。
+
+### Track E：工程稳定
+- 可复现 WSL 环境。
+- 三仓库版本/README/retest 同步。
+- live-store smoke 入 CI/nightly。
+
+## 8. 当前状态
+
+```text
+EngramDB master 23b059f
+qwen35-ple main 4295584
+v0.2.9 已发布
+快速读取路径 ✅
+懒加载 live-store ✅
+WSL Store-P / 大规模性能 ❌
+完整模型端到端 ❌
+```
+
+## 9. 本轮纪律
+
+1. 内存不是用来替代磁盘的。
+2. 懒加载解决内存，不代表解决 IO。
+3. 所有大规模实验要记录 per-window fetch 时间。
+4. 真实介质上的 Store-P 必须实测，不能外推。
+5. 小资源正确性继续闭环，完整模型只做最终 gate。
+6. 版本、文档、代码、retest 指南同点收编。
+
+
 
 
 
