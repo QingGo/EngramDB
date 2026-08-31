@@ -1436,7 +1436,8 @@ WSL Store-P / 大规模性能 ❌
 - [x] `src/qwen35_ple/live_store.py`（含 Store-P `LiveETViewStore`）
 - [x] `run_phase0.py` 去除内置 LiveET 类
 - [x] `scripts/run_live_et_dataset_smoke.py`
-- [x] `tests/test_live_store.py`（8 tests）
+- [x] `scripts/bench_store_vs_view.py`（Store-I vs Store-P A/B 骨架）
+- [x] `tests/test_live_store.py`（9 tests）
 - [x] README 三行接入示例
 - [x] qwen35 与 EngramDB roadmap / session-log 更新
 

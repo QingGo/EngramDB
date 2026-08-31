@@ -1937,7 +1937,8 @@ LLM-CompileForge  推理 runtime（后续）
   - `LiveETDataset`（IterableDataset 兼容、control/shuffle/worker_id/num_workers/max_windows）
 - `run_phase0.py` 改为导入统一模块。
 - 新增 `scripts/run_live_et_dataset_smoke.py`。
-- 新增 `tests/test_live_store.py`（8 tests）。
+- 新增 `scripts/bench_store_vs_view.py`（Store-I vs Store-P A/B 骨架）。
+- 新增 `tests/test_live_store.py`（9 tests）。
 - qwen35 README 增加三行接入示例。
 
 ## 23.3 关键坑

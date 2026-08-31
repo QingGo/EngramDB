@@ -1746,7 +1746,8 @@ README 更新 ✅
   - per-batch fetch_seconds / rows / unique_rows / fetch stats。
 - `run_phase0.py` 删除内置类，改为统一模块导入。
 - 新增 `scripts/run_live_et_dataset_smoke.py`。
-- 新增 `tests/test_live_store.py`（8 tests）。
+- 新增 `scripts/bench_store_vs_view.py`（Store-I vs Store-P A/B 骨架）。
+- 新增 `tests/test_live_store.py`（9 tests）。
 - README 增加三行接入示例。
 - 验证 DataLoader(num_workers=2) 在 tiny Store 上运行。
 
