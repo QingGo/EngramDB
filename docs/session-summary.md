@@ -1210,6 +1210,20 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
   - 多 PLE 行级合并去重仍未完成。
 - Smoke：`python_wheel_smoke.py` 全绿；qwen35 phase B 3 passed；bit-exact small 通过。
 
+## 7. Session 32：懒加载 live-store 与磁盘优先路径确认
+
+- WSL 实测确认：全量 `--live-store` 1M e_t 会 OOM（约 10GB）。
+- 实现 `LiveETStore` / `LiveETView`：
+  - 只保留 `[T,16]` rowids；
+  - 每个训练/评测窗口按需从 Store 读取；
+  - control 模式也支持懒加载置换；
+  - no-reader / real / control 均可跑。
+- 结论：**推荐用法是磁盘优先 + 按窗口 lazy fetch，不是全量加载 e_t。**
+- 新债：V118 WSL 随机 IO 慢、V119 懒加载需抽象为通用 Dataset、V120 Store-P WSL 未验证、V121 无 1M lazy 基准、V122 Store 连接生命周期。
+- 下一步：将懒加载提炼为正式数据流，并在 WSL 做 Store-P / 多线程 / Rust 批量同口径 A/B。
+- 详见 `docs/roadmap.md` Section 22。
+
+
 
 
 

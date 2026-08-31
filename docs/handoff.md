@@ -195,6 +195,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
    - 当前仍是低资源 smoke；完整模型、冷热分离、CSV 阈值、超时/回退/合并去重未完成。
     - 20k 预计算慢路径修复：`PleDiskGather.fetch` 改为直接 `Store.fetch`；新增 `fetch_e_t_tensor`；qwen35 `real_ple.fetch_e_t` / `precompute_real_ple_features.py` / `run_phase0 --live-store` 已切换。
     **Session 30 系统性思考**：详见 `docs/roadmap.md` Section 21（终极目标、V112–V117、Track 0–5、借鉴矩阵）。
+    **Session 31/32（懒加载 live-store + WSL 实测）**：`run_phase0.py --live-store` 改为按窗口懒加载，1M token 不再因 10GB e_t OOM；确认磁盘优先是正确路径；新债 V118–V122 见 roadmap Section 22。
+
 
 
 

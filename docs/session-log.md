@@ -1691,6 +1691,17 @@ MINI_OFFICIAL_PREFETCH_AB_OK
 - 完成 prefetch 错误回退、可选超时、共享 executor 参数、wait 分布统计。
 - 未完成：cache>0 路径优化、多 PLE 行级合并去重、native gather/dequant、1M 冷热基线。
 
+## Session 32 懒加载 live-store 记录
+
+- WSL 反馈：全量 `--live-store` 1M 会 OOM；100k token Store.fetch 约 56s，远低于 README。
+- 实现 `LiveETStore` / `LiveETView`：
+  - 不保留全量 e_t，只保留 rowids；
+  - 训练/评测按窗口懒加载；
+  - control 支持 lazy permutation。
+- 结论：这是磁盘优先的正确路径，但 IO 性能仍需 Store-P / Rust / 多线程解决。
+- 新增技术债 V118–V122，写入 roadmap Section 22。
+
+
 
 
 

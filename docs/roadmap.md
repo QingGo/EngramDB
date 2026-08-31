@@ -1791,3 +1791,122 @@ LLM-CompileForge  推理 runtime（后续）
 4. **正确性继续用小资源闭环**，完整模型只做最终 gate。
 5. **跨仓只走契约 + golden + retest 指南**，避免版本漂移。
 6. **版本、文档、代码、retest 指南同点收编**。
+
+
+# 22. 第十八轮系统性思考（Session 32：懒加载 live-store + WSL 实测 + 磁盘优先路径确认）
+
+## 22.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、
+> 推理引擎都能廉价使用的磁盘优先存储基础设施——像 DuckDB 之于分析数据库。
+
+三条不变验收轴：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 模型端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；EngramDB 参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录嵌入式 + 可服务化；manifest 可校验；Arrow 零拷贝；engine 薄 adapter 不改上游 |
+| C. 科学契约 | 每个结论有真实 PLE + 固定输入 + 冷热标注 + CSV/阈值；bit-exact 有官方类或 golden 双保险 |
+
+## 22.2 本轮坐标更新
+
+| 层 | 状态 |
+|---|---|
+| `--live-store` 全量加载 1M e_t | ❌ 已确认不可行（10GB OOM） |
+| 懒加载 `LiveETStore` / `LiveETView` | ✅ 已实现，按训练/评测窗口按需读取 |
+| 1M token 内存占用模型 | ✅ 已明确：只保留 rowids，不再保留全量 e_t |
+| WSL Store-I 随机读 | ❌ 100k token ≈ 56s，远低于 README 高性能 |
+| Store-P / Rust 批量 / 多线程 WSL 实测 | ❌ 未做 |
+| 磁盘优先使用方式 | ✅ 已从设计层确认并落地 |
+
+## 22.3 本轮关键发现
+
+1. **“全量加载 e_t 才能跑”是错误方向**：
+   - 1M × 2560 × 4B ≈ 10GB，在 WSL 15GB 内存下必然 OOM；
+   - 这违背了 EngramDB 的磁盘优先设计。
+2. **按窗口懒加载是正确的产品形态**：
+   - 只保留 `[T,16]` rowids，约 128MB / 1M token；
+   - 每个训练 step 只读当前 `seq_len × 16` 行；
+   - 内存占用从 10GB 降到 KB/MB 级。
+3. **懒加载解决了内存问题，但没有解决 WSL 随机 IO 性能问题**：
+   - `Store.fetch` 在 WSL 上 100k token / 1.6M 行约 56s；
+   - 这说明 Store-I 原始随机 scatter 在虚拟磁盘上仍是瓶颈。
+4. **性能问题要用 Store-P / Rust / 顺序化解决，而不是用“全量内存”绕开**：
+   - 全量内存是把存储层问题转嫁给 RAM；
+   - 正确路径是优化读放大和访问模式。
+5. **后续需要把懒加载抽象成可复用 Dataset / DataLoader**：
+   - 目前只在 `run_phase0.py` 内部实现；
+   - 下一个目标是变成通用 live-store 数据流。
+
+## 22.4 新增/更新技术债（在 V112–V117 基础上）
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V118 | WSL Store-I 随机读远低于 README 数字 | 大规模训练/全量扫描仍慢 | WSL 上建 Store-P + Rust/C 批量 + 多线程实测 |
+| V119 | live-store 懒加载只在 run_phase0 内部 | 无法复用到其他实验/训练器 | 提炼为通用 `LiveETDataset` / `IterableDataset` |
+| V120 | 没有验证 Store-P 在 WSL 上的真实收益 | 无法判断是否应切 Store-P | 构建 WSL Store-P 视图并做同口径 A/B |
+| V121 | 没有 1M token 懒加载正式实验基准 | 不知道每 step/窗口真实 fetch 成本 | 固定 steps/seq_len/seed，记录每 step fetch 时间 |
+| V122 | Store 连接生命周期仍非生产级 | 长服务/分布式训练有风险 | Store 池、线程安全句柄、显式 close/上下文 |
+
+原 V112–V117 依然开放或部分开放。
+
+## 22.5 借鉴矩阵（本轮增量）
+
+| 来源 | 借什么 | 不借 | 为什么不冲突 |
+|---|---|---|---|
+| **PyTorch IterableDataset / DataLoader** | 流式、按 batch 拉取、worker 并发 | 不借训练循环 | 我们只做“按需从磁盘取特征”的数据源 |
+| **HuggingFace Datasets（streaming）** | 不落全量内存、按需 map、可复现分片 | 不借 NLP 处理 | 我们借“大数据集不常驻内存”的形态 |
+| **Arrow Dataset / IPC** | 分块、列式零拷贝、schema | 不借查询引擎 | 我们可把 Store 输出装成 Arrow 流 |
+| **DiskANN / Milvus** | 冷热分层、顺序化、批量预取、缓存统计 | 不借 ANN/向量检索 | 继续只借 I/O 布局经验 |
+| **vLLM/SGLang continuous batching** | 按 batch 调度、async prefetch、指标 | 不借推理内核 | 我们提供存储侧数据流 |
+| **DuckDB** | 嵌入式、目录即库、不依赖大内存 | 不借 SQL | 形态对齐 |
+| **RocksDB/FDB** | 不可变段、checksum、批量顺序读 | 不借 LSM/事务 | 保持静态大表语义 |
+
+不冲突原则不变：
+
+- 只做存储、布局、读取、服务化，不做模型内核。
+- 接入都是薄 adapter / hook / patch，不 fork 上游。
+- 性能结论必须来自真实 PLE + 固定基准 + 冷热标注。
+- 跨仓正确性只走契约 + golden。
+- 先可信，再性能，再服务。
+
+## 22.6 后续开发计划
+
+### Track A：把懒加载变成正式数据流（最高优先）
+- [ ] 将 `LiveETStore` / `LiveETView` 从 `run_phase0.py` 提炼为 qwen35-ple 通用模块或 EngramDB Python API。
+- [ ] 实现 `IterableDataset` / batch 级 reader：`__iter__` 每次只取一个窗口。
+- [ ] 支持 control、分片、多 worker。
+- [ ] 记录 per-batch fetch 时间、命中/未命中、总读取量。
+
+**退出标准**：任意实验脚本可以用 3 行接入 live-store 数据流，不再全量加载 e_t。
+
+### Track B：WSL/真实介质上的性能闭环
+- [ ] 在 WSL 构建 Store-P 视图。
+- [ ] Store-I vs Store-P vs 懒加载 vs 全量内存 同口径 A/B。
+- [ ] 测试多线程 / C-Rust 批量读取。
+- [ ] 输出 CSV + 阈值。
+
+**退出标准**：能解释 WSL 慢在哪里，并给出可复现的最优路径。
+
+### Track C：真实模型训练/推理验证
+- [ ] 用懒加载 live 数据流跑 1M token real/control/seeds。
+- [ ] 对比全量 npy / 懒加载 / Store-P 的 loss 与耗时。
+- [ ] 如果可行，推进 100 tok/s CPU 推理闭环。
+
+### Track D：服务化
+- [ ] Store 连接池 / 每线程句柄。
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] Arrow IPC 数据流。
+
+### Track E：工程稳定
+- [ ] 固化 WSL 复现环境。
+- [ ] 三仓库版本、README、retest 指南同点收编。
+- [ ] 正式 CI / nightly 加入 live-store smoke。
+
+## 22.7 本轮纪律
+
+1. **内存不是用来替代磁盘的**：全量 e_t 是反模式。
+2. **懒加载解决内存，不代表解决 IO**：必须继续优化 Store-P / 顺序化 / 多线程。
+3. **所有大规模实验要有 per-batch / per-window fetch 时间**，否则无法区分训练慢和读取慢。
+4. **真实介质上的 Store-P 必须实测**，不能拿 Mac/NVMe 数字外推到 WSL。
+5. **继续小资源正确性闭环，完整模型/1M 只是最终性能 gate。**
