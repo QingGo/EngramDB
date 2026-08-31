@@ -22,7 +22,6 @@ Example::
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 try:
@@ -68,8 +67,8 @@ def nth_prime_after(start: int, count: int) -> int:
     return p
 
 
-def head_vocab_sizes() -> list[int]:
-    return [nth_prime_after(PLE_BASE - 1, i + 1) for i in range(PLE_HEADS)]
+def head_vocab_sizes(base: int = PLE_BASE, heads: int = PLE_HEADS) -> list[int]:
+    return [nth_prime_after(base - 1, i + 1) for i in range(heads)]
 
 
 def head_offsets(sizes: list[int] | None = None) -> list[int]:
@@ -80,10 +79,13 @@ def head_offsets(sizes: list[int] | None = None) -> list[int]:
     return offsets
 
 
-def padded_vocab_size() -> int:
-    sizes = head_vocab_sizes()
+def padded_vocab_size(
+    sizes: list[int] | None = None,
+    divisor: int = PLE_DIVISOR,
+) -> int:
+    sizes = sizes or head_vocab_sizes()
     total = sum(sizes)
-    return (total + PLE_DIVISOR - 1) // PLE_DIVISOR * PLE_DIVISOR
+    return (total + divisor - 1) // divisor * divisor
 
 
 def disk_ple_from_discovery(
@@ -122,6 +124,8 @@ def disk_ple_from_discovery(
         layer_multipliers=layer_multipliers,
         scale=float(scale),
         cache_size=cache_size,
+        ngram_size=int(info["ngram_size"]),
+        heads_per_ngram=int(info["heads_per_ngram"]),
     )
 
 
@@ -149,18 +153,31 @@ def ple_rowids(
     tokens: list[int],
     multipliers: list[int],
     eos: int = PLE_EOS,
+    sizes: list[int] | None = None,
+    offsets: list[int] | None = None,
+    ngram_size: int = PLE_NGRAM_SIZE,
+    heads_per_ngram: int = PLE_HEADS_PER_NGRAM,
+    history: list[int] | None = None,
 ) -> list[list[int]]:
-    """Return [T, PLE_HEADS] rowids for a token sequence (cold path)."""
-    sizes = head_vocab_sizes()
-    offsets = head_offsets(sizes)
-    hist = [eos, eos] + list(tokens)
-    shifted = [_shift_right_ignore_eos(hist, sh, eos) for sh in range(PLE_NGRAM_SIZE)]
+    """Return ``[len(tokens), len(sizes)]`` rowids for a token sequence.
+
+    When ``history`` is supplied it is used as the already-known n-gram context
+    (for streaming/decode); otherwise the sequence is treated as starting after
+    EOS padding.
+    """
+    sizes = sizes or head_vocab_sizes()
+    offsets = offsets or head_offsets(sizes)
+    if history is None:
+        hist = [eos, eos] + list(tokens)
+    else:
+        hist = list(history) + list(tokens)
+    shifted = [_shift_right_ignore_eos(hist, sh, eos) for sh in range(ngram_size)]
     ids_all = []
     for pos in range(len(hist)):
         row = []
-        for ngram in range(2, PLE_NGRAM_SIZE + 1):
-            start = (ngram - 2) * PLE_HEADS_PER_NGRAM
-            end = start + PLE_HEADS_PER_NGRAM
+        for ngram in range(2, ngram_size + 1):
+            start = (ngram - 2) * heads_per_ngram
+            end = start + heads_per_ngram
             mixed = shifted[0][pos] * multipliers[0]
             for order in range(1, ngram):
                 mixed ^= shifted[order][pos] * multipliers[order]
@@ -168,7 +185,7 @@ def ple_rowids(
                 rid = (mixed % sizes[h]) + offsets[h]
                 row.append(rid)
         ids_all.append(row)
-    return ids_all[PLE_NGRAM_SIZE - 1:]
+    return ids_all[-len(tokens):] if tokens else []
 
 
 class DiskPleNGramEmbedding(nn.Module):
@@ -191,21 +208,37 @@ class DiskPleNGramEmbedding(nn.Module):
         dtype: Any | None = None,
         cache_size: int = 4096,
         eos: int = PLE_EOS,
+        prime_sizes: list[int] | None = None,
+        offsets: list[int] | None = None,
+        ngram_size: int = PLE_NGRAM_SIZE,
+        heads_per_ngram: int = PLE_HEADS_PER_NGRAM,
+        divisor: int = PLE_DIVISOR,
     ) -> None:
         super().__init__()
         if dtype is None:
             if torch is None:
                 raise ImportError("DiskPleNGramEmbedding requires PyTorch")
             dtype = torch.float8_e4m3fn
-        self.num_embeddings = num_embeddings or padded_vocab_size()
+        if prime_sizes is None:
+            prime_sizes = head_vocab_sizes(heads=int(num_heads))
+        self.prime_sizes = [int(x) for x in prime_sizes]
+        self.num_heads = len(self.prime_sizes)
+        self.head_offsets = (
+            [int(x) for x in offsets]
+            if offsets is not None
+            else head_offsets(self.prime_sizes)
+        )
+        self.ngram_size = int(ngram_size)
+        self.heads_per_ngram = int(heads_per_ngram)
+        if num_embeddings is None:
+            num_embeddings = padded_vocab_size(self.prime_sizes, divisor)
+        self.num_embeddings = int(num_embeddings)
         self.embedding_dim = int(embedding_dim)
-        self.num_heads = int(num_heads)
         self.head_dim = self.embedding_dim // self.num_heads
         self.layer_multipliers = list(layer_multipliers or [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071])
         self.scale = float(scale)
         self.eos = int(eos)
-        self.ngram_size = PLE_NGRAM_SIZE
-        self.heads_per_ngram = PLE_HEADS_PER_NGRAM
+        self.divisor = int(divisor)
         self.table = DiskPleEmbedding(
             store=store,
             num_embeddings=self.num_embeddings,
@@ -213,18 +246,40 @@ class DiskPleNGramEmbedding(nn.Module):
             dtype=dtype,
             cache_size=cache_size,
         )
-        self._context: list[int] = [self.eos] * (self.ngram_size - 1)
+        self._context: list[list[int]] = []
 
     def reset_history(self) -> None:
-        self._context = [self.eos] * (self.ngram_size - 1)
+        self._context = []
 
     def forward(self, input_ids: torch.Tensor, past_key_values: Any = None) -> torch.Tensor:
         del past_key_values  # history is managed internally by this adapter
-        tokens = input_ids.reshape(-1).tolist()
-        token_history = self._context + tokens
-        rowids = ple_rowids(tokens, self.layer_multipliers, self.eos)
-        self._context = token_history[-(self.ngram_size - 1):]
+        was_1d = input_ids.dim() == 1
+        if was_1d:
+            input_ids = input_ids.unsqueeze(0)
+        batch_size, seq_len = input_ids.shape
+        while len(self._context) < batch_size:
+            self._context.append([self.eos] * (self.ngram_size - 1))
 
-        rids = torch.tensor(rowids, dtype=torch.int64).unsqueeze(0)
+        batch_rows: list[list[list[int]]] = []
+        for b in range(batch_size):
+            seq = input_ids[b].tolist()
+            history = self._context[b]
+            rows = ple_rowids(
+                seq,
+                self.layer_multipliers,
+                self.eos,
+                sizes=self.prime_sizes,
+                offsets=self.head_offsets,
+                ngram_size=self.ngram_size,
+                heads_per_ngram=self.heads_per_ngram,
+                history=history,
+            )
+            batch_rows.append(rows)
+            self._context[b] = (history + seq)[-(self.ngram_size - 1):]
+
+        rids = torch.tensor(batch_rows, dtype=torch.int64)
         raw = self.table(rids).to(torch.float32)
-        return (raw * self.scale).flatten(-2)
+        out = (raw * self.scale).flatten(-2)
+        if was_1d:
+            out = out.squeeze(0)
+        return out

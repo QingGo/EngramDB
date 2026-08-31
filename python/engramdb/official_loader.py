@@ -212,6 +212,8 @@ def install_disk_ple_in_official_model(
             layer_multipliers=multipliers,
             scale=scale,
             cache_size=cache_size,
+            ngram_size=int(info.get("ngram_size", 3)),
+            heads_per_ngram=int(info.get("heads_per_ngram", 8)),
         )
         setattr(parent, leaf, disk)
         replaced.append(path)

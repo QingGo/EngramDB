@@ -1274,9 +1274,9 @@ LLM-CompileForge  推理 runtime（后续）
 **退出标准**：官方 Qwen4Exp 模型在不加载 PLE 大表的情况下完成构造和加载。
 
 ### Phase B2：官方类 bit-exact
-- [ ] 在官方 `Qwen4ExpTextPLELayer` / `Qwen4ExpTextNGramEmbedding` 中替换 `DiskPleNGramEmbedding`。
-- [ ] 用小批量真实 token 与内存 PLE 层输出做 max-abs 对比。
-- [ ] 覆盖 EOS 重置、多段输入、batch、MTP/streaming 边界。
+- [x] 在官方 `Qwen4ExpTextPLELayer` / `Qwen4ExpTextNGramEmbedding` 中替换 `DiskPleNGramEmbedding`（冻结官方快照结构 smoke）。
+- [x] 小批量合成表与内存 PLE 层输出 max-abs=0（`scripts/qwen4_ple_bit_exact_small.py`，覆盖 batch + EOS）。
+- [ ] 覆盖多段输入、MTP/streaming 边界及真实 PLE 行验证。
 
 **退出标准**：官方类 + 磁盘 adapter 与官方内存路径 bit-exact。
 
