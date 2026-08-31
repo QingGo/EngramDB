@@ -1910,3 +1910,53 @@ LLM-CompileForge  推理 runtime（后续）
 3. **所有大规模实验要有 per-batch / per-window fetch 时间**，否则无法区分训练慢和读取慢。
 4. **真实介质上的 Store-P 必须实测**，不能拿 Mac/NVMe 数字外推到 WSL。
 5. **继续小资源正确性闭环，完整模型/1M 只是最终性能 gate。**
+
+---
+
+# 23. 第十九轮系统性思考（Session 33：Track A 通用懒加载数据流落地）
+
+## 23.1 本轮坐标更新
+
+| 层 | 状态 |
+|---|---|
+| `LiveETStore` / `LiveETView` 从 `run_phase0.py` 提炼 | ✅ 已落地 `src/qwen35_ple/live_store.py` |
+| `LiveETDataset` / `IterableDataset` 兼容流 | ✅ 已实现窗口级迭代 |
+| control / shuffle / worker 分片 | ✅ 已实现 |
+| DataLoader 多 worker | ✅ 每个 worker 自动重开 Store（pickle 支持） |
+| per-batch fetch 时间、总读取量 | ✅ `LiveETBatch` + `FetchStats` |
+| WSL Store-P / 1M 性能闭环 | ❌ 仍待 Track B/C |
+
+## 23.2 本轮完成
+
+- qwen35-ple `src/qwen35_ple/live_store.py`：
+  - `FetchStats`（windows/tokens/rows/unique_rows/fetch_seconds/cache_hits）
+  - `LiveETStore`（rowids-only、懒加载、reset_stats、context manager、pickle 重开 Store）
+  - `LiveETView`（lazy slice/permuted/subset）
+  - `LiveETBatch`（tokens+e_t+start+fetch_seconds+rows）
+  - `LiveETDataset`（IterableDataset 兼容、control/shuffle/worker_id/num_workers/max_windows）
+- `run_phase0.py` 改为导入统一模块。
+- 新增 `scripts/run_live_et_dataset_smoke.py`。
+- 新增 `tests/test_live_store.py`（8 tests）。
+- qwen35 README 增加三行接入示例。
+
+## 23.3 关键坑
+
+1. **PyO3 `Store` 不可 pickle**：
+   - DataLoader 多进程会失败；
+   - 解决：`LiveETStore` 保存目录/分片/行数/宽度并在 worker 中重开。
+2. **`__len__` 与迭代不一致**：
+   - 修复为 `(n - seq_len)//step + 1`，保留 tiny-sequence 单窗口 fallback。
+3. **macOS spawn 需要 `if __name__ == "__main__"`**。
+
+## 23.4 Track A 退出标准检查
+
+- [x] 任意实验脚本三行接入 live-store：`LiveETStore` + `LiveETDataset` + `for batch in dataset`
+- [x] 不再全量加载 e_t
+- [x] 支持 direct iteration / DataLoader / control / sharding / metrics
+- [ ] 仍缺：WSL 真实 1M 性能、Store-P A/B、正式每窗口 CSV 门禁
+
+## 23.5 下一轮最高优先
+
+1. **Track B**：WSL Store-P 构建 + Store-I/Store-P/lazy/full-memory 同口径 A/B。
+2. **Track C**：用 `LiveETDataset` 跑 1M token real/control/3-seed，输出每窗口 fetch 时间 CSV。
+3. **Track D/E**：Store 连接池、服务化、live-store smoke 入 CI/nightly。

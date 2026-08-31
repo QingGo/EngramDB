@@ -1400,6 +1400,64 @@ WSL Store-P / 大规模性能 ❌
 6. 版本、文档、代码、retest 指南同点收编。
 
 
+## Session 33 综合整理（Track A 通用懒加载数据流）
+
+### 1. 本轮计划
+
+- 把 `LiveETStore` / `LiveETView` 从 `run_phase0.py` 提炼为 qwen35-ple 通用模块。
+- 实现 `IterableDataset` / 窗口级 reader，支持 control、分片、多 worker。
+- 记录 per-batch fetch 时间、总读取量。
+- 让任意实验脚本三行接入，不再全量加载 e_t。
+
+### 2. 本轮发现
+
+1. PyTorch DataLoader 多进程不能直接 pickle PyO3 `Store`，必须保存重开参数。
+2. `LiveETDataset` 应同时支持 numpy 预计算数组（兼容旧路径）和 live Store。
+3. 多 worker 分片可通过 `get_worker_info()` 自动完成，无需调用方手动传 worker id。
+4. 懒加载抽象完成后，Track A 退出标准基本满足；性能瓶颈仍在 Storage I/O 层。
+
+### 3. 做的尝试
+
+- 新建 `qwen35_ple/live_store.py`，包含 `FetchStats` / `LiveETStore` / `LiveETView` / `LiveETBatch` / `LiveETDataset`。
+- `LiveETStore` 支持 pickle，worker 中重开 Store。
+- `run_phase0.py` 改用统一模块。
+- 新增冒烟脚本和 8 个单元测试。
+- 验证 `DataLoader(num_workers=2)` 在 tiny Store 上可跑。
+- 更新 qwen35 README / roadmap / session-log。
+
+### 4. 踩过的坑
+
+1. **PyO3 Store 不可 pickle** → `LiveETStore.__getstate__/__setstate__` 保存并重开。
+2. **`__len__` 与 `_window_starts()` 不一致** → 统一为 `(n-seq_len)//step+1`。
+3. **macOS spawn 必须 `if __name__ == "__main__"`** → 冒烟脚本加 main guard。
+
+### 5. 完成的内容
+
+- [x] `src/qwen35_ple/live_store.py`
+- [x] `run_phase0.py` 去除内置 LiveET 类
+- [x] `scripts/run_live_et_dataset_smoke.py`
+- [x] `tests/test_live_store.py`（8 tests）
+- [x] README 三行接入示例
+- [x] qwen35 与 EngramDB roadmap / session-log 更新
+
+### 6. 未完成的内容
+
+- [ ] Track B：WSL Store-P 构建与 A/B。
+- [ ] Track C：1M token 懒加载正式实验与每窗口 CSV。
+- [ ] Track D/E：连接池、服务化、CI nightly live-store smoke。
+
+### 7. 当前状态
+
+```text
+EngramDB master 1bb923a + docs
+qwen35-ple main 4295584 + Track A 本地改动（待提交）
+v0.2.9 已发布
+通用 LiveETDataset ✅
+DataLoader 多 worker ✅
+WSL Store-P / 1M 性能 ❌
+```
+
+
 
 
 

@@ -1736,6 +1736,40 @@ LIVE_STORE_BENCH_OK/FAIL ✅
 README 更新 ✅
 ```
 
+## Session 33 Track A 通用懒加载数据流记录
+
+### 1. 尝试
+
+- 在 qwen35-ple 新建 `src/qwen35_ple/live_store.py`：
+  - `LiveETStore` / `LiveETView` / `LiveETDataset` / `LiveETBatch` / `FetchStats`；
+  - control、shuffle、worker 分片；
+  - per-batch fetch_seconds / rows / unique_rows / fetch stats。
+- `run_phase0.py` 删除内置类，改为统一模块导入。
+- 新增 `scripts/run_live_et_dataset_smoke.py`。
+- 新增 `tests/test_live_store.py`（8 tests）。
+- README 增加三行接入示例。
+- 验证 DataLoader(num_workers=2) 在 tiny Store 上运行。
+
+### 2. 踩坑
+
+1. **PyO3 Store 不可 pickle**：
+   - DataLoader 多进程失败；
+   - 修复：`LiveETStore` 保存 `store_path/shards/rows_per_shard/width`，`__setstate__` 重开。
+2. **`LiveETDataset.__len__` 与迭代不一致**：
+   - 修复为 `(n - seq_len)//step + 1`，保留 tiny-sequence 单窗口 fallback。
+3. **macOS spawn**：
+   - 多进程测试必须放在 `if __name__ == "__main__"` 中。
+
+### 3. 结果
+
+```text
+test_live_store.py: 8 passed
+qwen35 full pytest: 23 passed, 7 skipped
+ruff 全绿
+DataLoader(num_workers=2) tiny Store OK
+```
+
+
 
 
 
