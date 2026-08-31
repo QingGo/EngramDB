@@ -227,6 +227,56 @@ raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
 
 服务端与客户端见 `python/README.md` 或 `docs/`。
 
+#### 5.1.4 快速 e_t tensor 读取与预取统计（v0.2.9+）
+
+训练/预计算不要用 Python 逐行 bytes 拼接，直接用一次 `Store.fetch` + `torch.frombuffer`：
+
+```python
+from engramdb import Store, fetch_e_t_tensor
+
+store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
+e_t = fetch_e_t_tensor(
+    store,
+    flat_rowids,          # [T * 16] 扁平行列表
+    scale=0.00019931793212890625,
+    num_heads=16,
+    head_dim=160,
+    dtype=torch.float8_e4m3fn,
+    out_dtype=torch.float32,
+)
+# e_t.shape == (T, 16, 160)
+```
+
+`PleDiskGather.fetch` 也已改为直接返回 `Store.fetch` 的连续缓冲区，不再做 Python per-row 切片/join。
+
+`DiskPleEmbedding` 支持后台预取、超时、共享 executor、错误回退和统计：
+
+```python
+from engramdb.vllm_plugin import DiskPleEmbedding
+
+emb = DiskPleEmbedding(
+    store,
+    num_embeddings=...,
+    embedding_dim=160,
+    dtype=torch.float8_e4m3fn,
+    cache_size=4096,
+    prefetch_timeout=0.5,
+)
+emb.prefetch([rowid1, rowid2, ...])
+out = emb(torch.tensor([...]))
+stats = emb.get_stats()
+wait_dist = emb.get_wait_distribution()   # p50/p90/p99/max
+emb.close()
+```
+
+流式/带 n-gram history 的 rowid 可使用：
+
+```python
+from engramdb import rowids_for_seq_with_history
+rows = rowids_for_seq_with_history([eos, eos], [10, 11, 12])
+```
+
+
 ### 5.2 vLLM：不修改源码，启动前 patch PLE 表
 
 ```python
@@ -355,6 +405,8 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 | CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁 |
 | SGLang 适配 | 低层 reader + 模型类 patch hook |
 | vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
+| 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
+| Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
 | 性能契约 | 存储面已闭环，端到端待实机 |
 

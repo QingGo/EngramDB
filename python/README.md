@@ -90,6 +90,76 @@ store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, wi
 ple = disk_ple_from_discovery(store, info)  # 自动使用 weight_scale
 ```
 
+### 快速 e_t tensor 读取（v0.2.9+）
+
+训练/预计算不要再走 Python 逐行 `bytes` 拼接，使用一次 `Store.fetch` + `torch.frombuffer`：
+
+```python
+from engramdb import Store, fetch_e_t_tensor
+
+store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
+
+# flat_rowids 是 [T * 16] 的扁平行列表
+e_t = fetch_e_t_tensor(
+    store,
+    flat_rowids,
+    scale=0.00019931793212890625,
+    num_heads=16,
+    head_dim=160,
+    dtype=torch.float8_e4m3fn,
+    out_dtype=torch.float32,
+)
+# e_t.shape == (T, 16, 160)
+```
+
+也可以走 `PleDiskGather` 的 tensor 方法：
+
+```python
+from engramdb.vllm import PleDiskGather
+
+gather = PleDiskGather(store, row_bytes=160)
+e_t = gather.fetch_tensor(flat_rowids, scale=..., num_heads=16, head_dim=160)
+```
+
+`PleDiskGather.fetch` 也已改为直接返回 `Store.fetch` 的连续缓冲区，不再做 Python 去重/切片/join。
+
+流式/带 n-gram history 的 rowid 可使用：
+
+```python
+from engramdb import rowids_for_seq_with_history
+
+rows = rowids_for_seq_with_history([eos, eos], [10, 11, 12])
+```
+
+### DiskPleEmbedding 预取与运行统计
+
+```python
+from engramdb.vllm_plugin import DiskPleEmbedding
+from concurrent.futures import ThreadPoolExecutor
+
+shared_executor = ThreadPoolExecutor(max_workers=2)
+emb = DiskPleEmbedding(
+    store,
+    num_embeddings=...,
+    embedding_dim=160,
+    dtype=torch.float8_e4m3fn,
+    cache_size=4096,
+    prefetch_executor=shared_executor,
+    prefetch_timeout=0.5,
+)
+
+emb.prefetch([rowid1, rowid2, ...])
+out = emb(torch.tensor([...]))
+
+stats = emb.get_stats()
+wait = emb.get_wait_distribution()   # p50 / p90 / p99 / max
+emb.close()
+```
+
+后台预取失败会自动回退到同步读取；多个 PLE 模块可以共享同一个 `prefetch_executor`。
+
+
+
 ## 引擎适配层
 
 目标是 **不改 vLLM / SGLang 源码**，启动前执行一小段 hook 即可把 PLE 表切到 EngramDB。
@@ -228,8 +298,9 @@ with EngramDBClient("127.0.0.1", 8765) as client:
 - `fetch_arrow`（JSON 模式返回 base64 封装的 Arrow IPC；二进制模式返回裸 Arrow IPC stream）
 - `view_read`
 
-> 注意：PyO3 `Store` 是不可跨线程共享的 `unsendable` 对象，因此服务端 `Database.fetch`
-> 会在每个请求所在线程新开 Store；多线程共享连接的后端需要 Rust 侧安全句柄或线程池。
+> 注意：PyO3 `Store` 已不再是 `unsendable`，`fetch` 会释放 GIL，因此同一个 Store
+> 可以从多个 Python 线程并发读取（已有 `test_store_concurrent_fetch` 冒烟）。
+> 服务端 `Database.fetch` 仍会在请求线程中按需打开/复用 Store；生产级连接池化还在后续计划中。
 
 ## 定位（一句话）
 
