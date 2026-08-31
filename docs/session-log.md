@@ -1822,8 +1822,31 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
 
 ### 3. 已做
 
-- v0.2.10 发布。
+- v0.2.10 发布，release gate 全绿。
 - 文档补齐 Section 24 / Session 34 综合整理。
+- 新增 access-order Store-P 语义视图构建脚本：
+  - `qwen35-ple/scripts/build_corpus_store_p_view.py`
+  - 实现：tokens → rowids → flat keys → `engramdb view build --keys`
+  - 输出 view + keys + `slot_indices.npy`（slot i = token i）
+  - 本机验证：access-order Store-P 与 Store-I e_t `maxdiff=0.0`
+- `LiveETViewStore` 增加 `view()` 切片，修复实例属性遮蔽方法的问题。
+- `run_phase0.py` 新增 `--store-p-view` / `--store-p-slot-indices`，可直接进入 Store-P 训练路径。
+
+### 4. 本轮踩坑（补充）
+
+1. **WSL `engramdb` 旧二进制不支持 `--keys`**：
+   - 首次在 WSL 运行 access-order builder 失败；
+   - 需要先构建当前源码的 `engramdb`，或使用支持 `view build --keys` 的版本。
+2. **`LiveETViewStore.self.view` 遮蔽 `view()` 方法**：
+   - 调用 `view.view(...)` 时实际调用 View 对象；
+   - 修复：内部属性改为 `self._view`。
+3. **`p4view bench` / `gate.sh` 缺 `--keys`**：
+   - 导致 release gate 中 bench 失败；
+   - 已修复 `scripts/gate.sh`。
+4. **WSL qwen35 venv 符号链接损坏**：
+   - 使用 `uv pip install --python ... engramdb-python==0.2.9` 重建。
+5. **WSL 全量 pytest 有 1 个官方 golden 漂移**：
+   - 不是本轮代码引入，已记录为 V126。
 
 
 

@@ -1467,58 +1467,146 @@ WSL serving A/B / 完整模型训练 ❌
 
 ## Session 34 综合整理（系统性思考：从 I/O 快走向端到端实验）
 
-### 1. 终极目标
+### 1. 本轮计划
 
-不做新目标，继续聚焦：
+1. 做第二十轮系统性思考：明确终极目标、当前坐标、技术债、借鉴矩阵、开发计划。
+2. 继续推进 Track B/C/D/E：
+   - WSL Store-P 构建与 A/B；
+   - WSL Python 懒加载实测；
+   - StorePool / 多 worker；
+   - 发布 v0.2.10。
+3. 开始 P0：把 Store-P 从“raw slot 基准”推进到“语料语义访问路径”：
+   - 构建 access-order Store-P 视图；
+   - 让 `run_phase0.py` 可直接使用 Store-P；
+   - 为完整模型 1M 实验铺路。
 
-> 让确定性哈希 n-gram 记忆表成为任何小模型/训练器/推理引擎都能廉价使用的磁盘优先存储基础设施，像 DuckDB 之于分析数据库。
+### 2. 本轮发现
 
-验收轴不变：性能 ≤5%/≥50 tok/s；形态单目录+可服务+Arrow薄适配；科学结论必须有真实 PLE+固定输入+CSV/阈值。
+1. **Store-I 随机读是唯一真正的存储瓶颈**：
+   - WSL 20k Store-I lazy 22.4s；
+   - 100k Store-P lazy 1.86s；
+   - 1M Store-P lazy 23.9s。
+2. **Store-P 比 Store-I 快约两个数量级**：
+   - 本机 100k Store-I 60.5s vs Store-P 0.58s；
+   - WSL p4view Store-P 8t 约 22M rows/s vs Store-I 约 1.4M rows/s。
+3. **访问序是关键**：
+   - 本机 1M Store-P 顺序 7.1s；
+   - permuted/control 三 seed 17.2–17.9s，随机惩罚约 2.4×。
+4. **多 worker 可行**：
+   - `LiveETViewStore` pickle 重开 View 后，WSL `DataLoader(num_workers=2)` 可跑。
+5. **v0.2.10 可发布**：
+   - StorePool / ThreadLocalStore / Database 池化 / README / gate 修复全部通过。
+6. **access-order Store-P 语义映射可以做到精确**：
+   - 用 `engramdb view build --keys` 按语料 rowid 顺序建视图；
+   - 验证 `LiveETViewStore` 与 `LiveETStore` 同一批 token 的 e_t `maxdiff=0.0`。
 
-### 2. 本轮定位
+### 3. 做的尝试
 
-- v0.2.10 已发布并推送。
-- Track A 完成；Track B/C 完成“读取基准”；
-- 关键缺口是“rowid→Store-P slot 语义映射”和“真实模型 1M 实验”。
-- 已确认 Store-P 是解决 WSL 随机 IO 的正确路径，但访问序、语义索引、完整模型仍是下一阶段核心。
+- 在 WSL 用 `p4view` 构建 20k / 100k / 1M Store-P 视图并跑 A/B。
+- 在 WSL qwen35 venv 安装 `engramdb-python==0.2.9`，同步 `live_store.py` 与 benchmark 脚本。
+- 跑 WSL 20k Store-I / 100k Store-P / 1M Store-P 懒加载。
+- 跑 WSL Store-P 2 worker DataLoader。
+- 新增 `engramdb.pool.StorePool` / `ThreadLocalStore`，`Database.fetch` 改用池。
+- 新增 `scripts/build_corpus_store_p_view.py`：
+  - 根据 tokens 生成 rowids；
+  - 写 flat keys；
+  - 调 `engramdb view build --keys` 构建 access-order Store-P；
+  - 输出 `slot_indices.npy`（slot i = token i）。
+- 为 `LiveETViewStore` 增加 `view()` 切分，并让 `run_phase0.py --store-p-view` 可直接走 Store-P 训练路径。
+- 发布 v0.2.10，tag 已推送。
 
-### 3. 本轮技术债摘要
+### 4. 踩过的坑
 
-| # | 债 |
-|---|---|
-| V123 | 缺少 rowid-tuple → Store-P slot 语义映射 |
-| V124 | 访问序 Store-P 视图/调度未端到端 |
-| V125 | 未跑真实模型 1M real/control/3-seed |
-| V126 | WSL 全量 pytest golden 漂移 |
-| V127 | vLLM/SGLang/llama.cpp serving A/B 未做 |
-| V128 | 懒加载基准未进正式门禁 |
-| V129 | StorePool 与 LiveET/DataLoader 深度集成不足 |
-| V130 | Arrow IPC 未实际验证 |
-| V131 | WSL 复现环境未脚本化 |
-| V132 | 未规划 WSL 全表 Store-P 构建策略 |
+1. **WSL 原有 `engramdb` 二进制不支持 `--keys`**：
+   - `build_corpus_store_p_view.py` 在 WSL 首次运行失败；
+   - 需要先用新源码构建 `engramdb view build --keys` 版本。
+2. **`LiveETViewStore` 实例属性 `self.view` 遮蔽了同名方法 `view()`**：
+   - `view.view(...)` 实际调用 View 对象，报 `'FakeView' object is not callable`；
+   - 修复：内部属性改为 `self._view`，保留 `view()` 方法供 `_split` / 训练分隔使用。
+3. **`p4view bench` 旧命令缺 `--keys`**：
+   - `scripts/gate.sh` 传入的 keys 文件被当成未知位置参数；
+   - 修复为 `--keys probes/view-keys-20k.txt`。
+4. **WSL qwen35 venv 原本是损坏的 Mac 符号链接**：
+   - 使用 `uv pip install --python ... engramdb-python==0.2.9` 重建可用的 Python 环境。
+5. **WSL 全量 pytest 存在 golden 漂移**：
+   - 非本仓新增代码导致 1 个官方 golden 失败；
+   - V126 记录为待修，不可当作“当前全绿”。
 
-### 4. 借鉴方向
+### 5. 完成的内容
 
-- 存储/IO：DuckDB、RocksDB、DiskANN、io_uring。
-- 数据流：PyTorch IterableDataset、HF Datasets streaming、Arrow。
-- 推理：vLLM/SGLang 的 batch/prefetch、llama.cpp 的 mmap。
-- 实验：XMemTransfer/Memory Grafting、engram-peft/PEFT。
+- [x] v0.2.10 发布并推送 tag。
+- [x] `StorePool` / `ThreadLocalStore` / `Database` 池化读取。
+- [x] WSL Store-P p4view A/B（20k / 100k）。
+- [x] WSL Python 懒加载（20k Store-I / 100k Store-P / 1M Store-P）。
+- [x] Store-P 多 worker DataLoader 验证。
+- [x] `LiveETViewStore` pickle 与 `view()` 切片。
+- [x] access-order Store-P 构建脚本 `build_corpus_store_p_view.py`。
+- [x] 本机验证 access-order Store-P 与 Store-I e_t `maxdiff=0.0`。
+- [x] `run_phase0.py --store-p-view / --store-p-slot-indices` 接入训练入口。
+- [x] README / roadmap / session-log / handoff 更新。
+- [x] release gate 全绿。
 
-只借形态与调度，不借各自的查询/训练/推理内核。
+### 6. 未完成的内容
 
-### 5. 下一步优先级
+- [ ] V123：通用 rowid-tuple → full Store-P slot 语义索引（当前只完成“语料 access-order”）。
+- [ ] V124：access-order 视图 + LiveETDataset 自动访问序调度的端到端版本。
+- [ ] V125：真实模型 1M real/control/3-seed loss 实验。
+- [ ] V126：WSL golden 漂移修复。
+- [ ] V127：vLLM / SGLang / llama.cpp serving A/B。
+- [ ] V128：懒加载基准固化为正式门禁 / CI 阈值。
+- [ ] V129：StorePool 与 LiveET/DataLoader 深度集成与 wait 统计。
+- [ ] V130：Arrow IPC 在 Mac/WSL 实际验证。
+- [ ] V131：WSL 复现环境脚本化。
+- [ ] V132：WSL 全表 Store-P 分批构建策略。
 
-1. **P0**：语义 slot 映射 + access-order 视图 + 真实模型 1M 三线实验。
-2. **P1**：懒加载基准固化为门禁 + WSL 复现脚本 + golden 漂移修复。
-3. **P2**：serving A/B + Arrow IPC + StorePool 深度集成。
-4. **P3**：全表 Store-P 构建 + 三仓同步 + 发布。
+### 7. 未来的计划
 
-### 6. 当前版本
+#### Phase 0：把“读取快”变成“实验能跑”
+
+- 通用 rowid-tuple → Store-P slot 索引/manifest。
+- access-order Store-P 视图 + 访问序调度。
+- WSL 真实模型 1M real/control/3-seed，同时记录 loss + fetch 时间。
+
+#### Phase 1：把基准变成门禁
+
+- 固化 20k/100k/1M 懒加载 CSV + 阈值。
+- WSL 复现脚本。
+- golden 漂移修复。
+- live-store smoke / StorePool smoke 入 CI / nightly。
+
+#### Phase 2：服务化
+
+- vLLM / SGLang / llama.cpp 薄 adapter + A/B。
+- Arrow IPC 端到端。
+- StorePool 与训练/推理深度集成。
+
+#### Phase 3：产品化收口
+
+- WSL 全表 Store-P 分批构建与校验。
+- 三仓库版本/README/retest/CI 完全同步。
+- 根据 1M 结果决定是否进入 5M–20M token。
+
+### 8. 当前状态
 
 ```text
 EngramDB v0.2.10 (tag pushed)
-qwen35-ple main 06be3d0 (pushed)
+qwen35-ple main c244188 (access-order Store-P 已本地完成并待推)
+StorePool / ThreadLocalStore ✅
+WSL Store-P A/B ✅
+WSL 1M Store-P lazy 23.9s ✅
+access-order Store-P 语义视图 ✅（有限语料）
+完整模型 1M 三线实验 ❌
+serving / Arrow / 全表 Store-P ❌
 ```
+
+### 9. 本轮纪律
+
+1. 磁盘优先不是“全量内存的替代品”，Store-P + 访问序才是完全体。
+2. I/O 基准不是实验结论，只有真实模型 loss / tok/s 能支持科学判断。
+3. 性能结论必须包含介质、冷热、并发、访问序、CSV/阈值。
+4. 跨仓正确性靠版本固定 + golden，不靠“本地能跑”。
+5. 先打通端到端最小闭环，再谈 5M/20M 放大。
+6. 发布前 release gate 必绿，版本只走 bump.sh。
 
 
 
