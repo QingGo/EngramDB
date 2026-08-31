@@ -168,25 +168,27 @@ def test_disk_ple_lru() -> None:
 
     from engramdb.vllm_plugin import DiskPleEmbedding
 
-    row_width = 4
-    rows = [bytes([i] * row_width) for i in range(8)]
+    # Each float32 PLE row is 4 logical floats = 16 raw bytes on disk.
+    raw_width = 16
+    logical_dim = 4
+    rows = [bytes([i] * raw_width) for i in range(8)]
     with tempfile.TemporaryDirectory(prefix="engramdb-lru-") as directory:
         with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
             for row in rows:
                 f.write(row)
-        store = engramdb.Store(directory, 1, len(rows), row_width)
+        store = engramdb.Store(directory, 1, len(rows), raw_width)
         try:
             emb = DiskPleEmbedding(
                 store,
                 num_embeddings=len(rows),
-                embedding_dim=row_width,
+                embedding_dim=logical_dim,
                 dtype=torch.float32,
                 cache_size=4,
             )
             # A single 3-token lookup exercises miss + LRU fill + cache hit.
             indices = torch.tensor([2, 0, 2, 1, 2])
             out = emb(indices)
-            assert tuple(out.shape) == (5, row_width)
+            assert tuple(out.shape) == (5, logical_dim)
             assert out.dtype == torch.float32
             assert len(emb._cache) <= emb.cache_size
             # The cache should contain a subset of the accessed rows.
@@ -316,6 +318,92 @@ def test_official_loader_filter() -> None:
     print("official_loader filter OK")
 
 
+
+def test_official_loader_placeholder_patch() -> None:
+    try:
+        import torch
+    except Exception as exc:
+        print(f"official_loader placeholder patch skipped (no torch: {exc})")
+        return
+
+    import sys
+    import types
+
+    from engramdb.official_loader import patch_official_ngram_embedding_for_disk_load
+
+    fake_mod = types.ModuleType("fake_qwen4_exp_smoke")
+    fake_mod.nn = torch.nn
+    sys.modules[fake_mod.__name__] = fake_mod
+
+    class FakeNGramEmbedding(torch.nn.Module):
+        def __init__(self, rows: int = 1_000_000, dim: int = 8):
+            super().__init__()
+            self.ngram_embedding = torch.nn.Embedding(rows, dim)
+
+    FakeNGramEmbedding.__module__ = fake_mod.__name__
+    fake_mod.FakeNGramEmbedding = FakeNGramEmbedding
+
+    with patch_official_ngram_embedding_for_disk_load(
+        embedding_class=FakeNGramEmbedding
+    ):
+        inside = FakeNGramEmbedding(1_000_000, 8)
+        assert inside.ngram_embedding.weight.shape[0] == 1
+        assert inside.ngram_embedding._requested_num_embeddings == 1_000_000
+
+    outside = FakeNGramEmbedding(16, 8)
+    assert outside.ngram_embedding.weight.shape[0] == 16
+    print("official_loader placeholder patch OK")
+
+
+def test_official_loader_sharded_load() -> None:
+    try:
+        import torch
+        from safetensors.torch import save_file
+    except Exception as exc:
+        print(f"official_loader sharded load skipped (no torch/safetensors: {exc})")
+        return
+
+    import json as _json
+
+    from engramdb.official_loader import load_official_checkpoint_without_ngram_shards
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Sequential()
+            self.model.linear = torch.nn.Linear(3, 2)
+
+    with tempfile.TemporaryDirectory(prefix="engramdb-official-load-") as td:
+        root = Path(td)
+        shard_a = {
+            "model.linear.weight": torch.ones(2, 3),
+            "model.linear.bias": torch.zeros(2),
+        }
+        shard_b = {
+            "model.ple.ngram_embedding.shard_0.weight": torch.zeros(16, 8),
+            "model.ple.ngram_embedding.weight_scale": torch.tensor([1.0]),
+        }
+        save_file(shard_a, root / "model-00001.safetensors")
+        save_file(shard_b, root / "model-00002.safetensors")
+        (root / "model.safetensors.index.json").write_text(_json.dumps({
+            "weight_map": {
+                "model.linear.weight": "model-00001.safetensors",
+                "model.linear.bias": "model-00001.safetensors",
+                "model.ple.ngram_embedding.shard_0.weight": "model-00002.safetensors",
+                "model.ple.ngram_embedding.weight_scale": "model-00002.safetensors",
+            }
+        }))
+
+        model = FakeModel()
+        result = load_official_checkpoint_without_ngram_shards(
+            model, root, strict=False
+        )
+        assert result.loaded_tensors == 2
+        assert result.skipped_ngram_tensors == 2
+        assert torch.all(model.model.linear.weight == 1.0)
+        assert torch.all(model.model.linear.bias == 0.0)
+    print("official_loader sharded load OK")
+
 def test_rowids_for_seq() -> None:
     rows = engramdb.rowids_for_seq([1000, 99999, 42])
     assert len(rows) == 3
@@ -368,6 +456,8 @@ def main() -> None:
     test_safetensors_i64_reader()
     test_discover_ple_metadata()
     test_official_loader_filter()
+    test_official_loader_placeholder_patch()
+    test_official_loader_sharded_load()
     test_rowids_for_seq()
     test_database_arrow_server()
     test_disk_ple_lru()

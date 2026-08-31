@@ -8,7 +8,11 @@ heavy/optional dependencies are imported by the caller.
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from contextlib import contextmanager
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Any, Iterator
 
 try:
     import torch
@@ -46,6 +50,107 @@ def _resolve_scale(info: dict[str, Any] | None, scale: float | None) -> float:
     return 1.0
 
 
+def _resolve_num_heads(info: dict[str, Any] | None, fallback: int = 16) -> int:
+    if info is None:
+        return fallback
+    ngram_size = info.get("ngram_size")
+    heads_per_ngram = info.get("heads_per_ngram")
+    if ngram_size is not None and heads_per_ngram is not None:
+        return max(1, (int(ngram_size) - 1) * int(heads_per_ngram))
+    return fallback
+
+
+def _find_official_ngram_embedding_class() -> type | None:
+    """Locate the official Qwen4-Exp PLE n-gram embedding class.
+
+    The exact import path depends on the Transformers version.  This function
+    tries the known module first and leaves the door open for callers to pass
+    a class explicitly when a non-standard/customized modeling file is used.
+    """
+    try:
+        from transformers.models.qwen4_exp.modeling_qwen4_exp import (  # noqa: F401
+            Qwen4ExpTextNGramEmbedding as cls,
+        )
+        return cls
+    except Exception:
+        return None
+
+
+@contextmanager
+def patch_official_ngram_embedding_for_disk_load(
+    embedding_class: type | None = None,
+    placeholder_rows: int = 1,
+) -> Iterator[None]:
+    """Temporarily replace the giant PLE ``nn.Embedding`` with a tiny stub.
+
+    The official ``Qwen4ExpTextNGramEmbedding`` constructor allocates an
+    ``nn.Embedding`` whose row count is the full PLE vocabulary (hundreds of
+    millions of rows).  During model construction we do not need that table:
+    the PLE module is replaced with ``DiskPleNGramEmbedding`` immediately after
+    loading the non-PLE checkpoint.  This context manager patches the
+    constructor so the giant table is never allocated.
+
+    Use it around ``AutoModelForCausalLM.from_config`` / ``from_pretrained``::
+
+        with patch_official_ngram_embedding_for_disk_load():
+            model = AutoModelForCausalLM.from_config(config)
+
+    Args:
+        embedding_class:
+            Optional explicit class.  If omitted, the official Transformers
+            ``Qwen4ExpTextNGramEmbedding`` is located automatically.
+        placeholder_rows:
+            Row count for the temporary placeholder embedding.  The default is
+            one row, which is enough to keep the model object structurally valid
+            while consuming negligible memory.
+    """
+    if torch is None or nn is None:
+        raise ImportError("patch_official_ngram_embedding_for_disk_load requires PyTorch")
+    if embedding_class is None:
+        embedding_class = _find_official_ngram_embedding_class()
+    if embedding_class is None:
+        raise RuntimeError(
+            "could not locate Qwen4ExpTextNGramEmbedding; pass `embedding_class` "
+            "explicitly or use a Transformers build that ships Qwen4-Exp"
+        )
+
+    module = inspect.getmodule(embedding_class)
+    original_init = embedding_class.__init__
+    embedded_nn = getattr(module, "nn", None) if module is not None else None
+    if embedded_nn is None:
+        embedded_nn = getattr(original_init, "__globals__", {}).get("nn")
+    if embedded_nn is None or not hasattr(embedded_nn, "Embedding"):
+        raise RuntimeError(
+            f"cannot patch {embedding_class!r}: its module has no nn.Embedding"
+        )
+
+    original_embedding = embedded_nn.Embedding
+    requested_rows = max(1, int(placeholder_rows))
+
+    class _PlaceholderEmbedding(original_embedding):  # type: ignore[misc, valid-type]
+        def __init__(self, num_embeddings: int, embedding_dim: int, *args: Any, **kwargs: Any) -> None:
+            # Record the requested size for diagnostics, but keep only a tiny
+            # parameter so the model can be constructed and loaded without the
+            # multi-hundred-GB PLE row table.
+            self._requested_num_embeddings = int(num_embeddings)
+            actual_rows = min(int(num_embeddings), requested_rows)
+            super().__init__(actual_rows, embedding_dim, *args, **kwargs)
+
+    def _init_with_placeholder(self, *args: Any, **kwargs: Any) -> None:
+        embedded_nn.Embedding = _PlaceholderEmbedding
+        try:
+            original_init(self, *args, **kwargs)
+        finally:
+            embedded_nn.Embedding = original_embedding
+
+    # Install the wrapper for the duration of the context.
+    embedding_class.__init__ = _init_with_placeholder  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        embedding_class.__init__ = original_init  # type: ignore[method-assign]
+
+
 def install_disk_ple_in_official_model(
     model: Any,
     store: Any,
@@ -75,6 +180,7 @@ def install_disk_ple_in_official_model(
     embedding_dim = int(info["ple_embed_dim"])
     multipliers = info.get("layer_multipliers") or info.get("rowid_multipliers")
     scale = _resolve_scale(info, scale)
+    num_heads = _resolve_num_heads(info)
 
     replaced: list[str] = []
     layer_filter = set(layer_ids) if layer_ids is not None else None
@@ -102,7 +208,7 @@ def install_disk_ple_in_official_model(
         disk = DiskPleNGramEmbedding(
             store=store,
             embedding_dim=embedding_dim,
-            num_heads=16,
+            num_heads=num_heads,
             layer_multipliers=multipliers,
             scale=scale,
             cache_size=cache_size,
@@ -124,3 +230,68 @@ def load_state_dict_without_ngram_shards(
 ) -> Any:
     """Load a checkpoint into the model while skipping PLE ngram rows."""
     return model.load_state_dict(filter_ngram_shard_state_dict(state_dict), strict=strict)
+
+
+@dataclass
+class CheckpointLoadResult:
+    """Result of loading a checkpoint while skipping PLE ngram rows."""
+
+    missing_keys: list[str]
+    unexpected_keys: list[str]
+    skipped_ngram_tensors: int
+    loaded_tensors: int
+
+
+def load_official_checkpoint_without_ngram_shards(
+    model: Any,
+    model_dir: str | Path,
+    strict: bool = False,
+) -> CheckpointLoadResult:
+    """Load all non-PLE sharded safetensors from a HuggingFace model directory.
+
+    This streams through the safetensors shards with ``safe_open`` and only
+    loads tensors whose keys do not contain ``ngram_embedding``.  The PLE shard
+    rows (the multi-hundred-GB part of a Qwen4-Exp checkpoint) are never read
+    into memory.
+    """
+    root = Path(model_dir)
+    index_path = root / "model.safetensors.index.json"
+    if index_path.exists():
+        import json
+
+        index = json.loads(index_path.read_text())
+        shard_files = sorted(set(index["weight_map"].values()))
+    else:
+        shard_files = sorted(
+            p.name
+            for p in root.glob("*.safetensors")
+            if not p.name.endswith(".index.json")
+        )
+    if not shard_files:
+        raise FileNotFoundError(f"no safetensors shards found in {root}")
+
+    try:
+        from safetensors import safe_open
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "load_official_checkpoint_without_ngram_shards requires `safetensors`"
+        ) from exc
+
+    filtered: dict[str, Any] = {}
+    skipped = 0
+    for shard in shard_files:
+        path = root / shard
+        with safe_open(path, framework="pt", device="cpu") as f:
+            for key in f.keys():
+                if "ngram_embedding" in key:
+                    skipped += 1
+                    continue
+                filtered[key] = f.get_tensor(key)
+    result = model.load_state_dict(filtered, strict=strict)
+    return CheckpointLoadResult(
+        missing_keys=list(getattr(result, "missing_keys", [])),
+        unexpected_keys=list(getattr(result, "unexpected_keys", [])),
+        skipped_ngram_tensors=skipped,
+        loaded_tensors=len(filtered),
+    )
+
