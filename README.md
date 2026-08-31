@@ -165,7 +165,7 @@ python3 -m pip install --upgrade engramdb-python
 uv add engramdb-python
 ```
 
-当前发布线（v0.2.8）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+当前发布线（v0.2.9）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
 
 #### 5.1.1 核心存储与视图
 
@@ -346,7 +346,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 
 | 项目 | 状态 |
 |---|---|
-| 最新版本 | v0.2.8 |
+| 最新版本 | v0.2.9 |
 | crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
 | Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
