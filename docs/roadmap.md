@@ -1227,7 +1227,7 @@ LLM-CompileForge  推理 runtime（后续）
 | # | 债务 | 影响 | 处置 |
 |---|---|---|---|
 | V74 | 真实 FP8 e2e 不是“官方 Qwen4Exp 完整模型” | 只证明“真实表 + engram-peft 配置驱动”可行，不能作为完整模型级验收 | 下一优先：官方 Qwen4Exp 模型类实机 |
-| V75 | `qwen4_ple_custom_loader.py --load-model` 仍可能在 `from_config` 阶段分配巨大 ngram embedding | 未真正绕过 200GB+ PLE 内存 | 在官方类构造前 patch `ngram_embedding` 为轻量占位，再加载非 shard 权重 |
+| V75 | `qwen4_ple_custom_loader.py --load-model` 仍可能在 `from_config` 阶段分配巨大 ngram embedding | 未真正绕过 200GB+ PLE 内存 | ✅ 已在官方类构造前 patch `ngram_embedding` 为轻量占位，再加载非 shard 权重；待 Qwen4Exp 大内存实测 |
 | V76 | `run_real_fp8_e2e.py` 依赖临时 PYTHONPATH/缓存库路径 | 不可复现，换机器/CI 不能直接跑 | 写可复现 venv/uv lock/安装脚本，或把必需轻量依赖正式化 |
 | V77 | `DiskPleNGramEmbedding` 内部自管理 history，未接 Transformers `Cache` | 多段、streaming、MTP 等边界可能不一致 | 接入官方 cache/conv_state 语义，或提供严格单段验证 + 明确限制 |
 | V78 | `table_source="engramdb:view"` 仍未实现 | 配置面只剩 store 一条路 | 后续实现 view reader 注入 |
@@ -1266,10 +1266,10 @@ LLM-CompileForge  推理 runtime（后续）
 ## 18.5 开发计划（按“先可信、再性能、再服务”排序）
 
 ### Phase B1：官方模型加载不分配大 PLE 表（最高优先）
-- [ ] 在 `AutoConfig.from_pretrained` / `from_config` 前 patch 官方 `Qwen4ExpTextNGramEmbedding` 构造，使用轻量占位。
-- [ ] 用 safetensors index 过滤 `ngram_embedding.shard_*` / `ngram_embedding.weight`，只加载非 PLE 权重。
-- [ ] 加载完模型后调用 `install_disk_ple_in_official_model` 替换所有 PLE 模块。
-- [ ] 验证：峰值内存不包含 200GB+ PLE 表，且模型可 forward。
+- [x] 在 `AutoConfig.from_pretrained` / `from_config` 前 patch 官方 `Qwen4ExpTextNGramEmbedding` 构造，使用轻量占位。
+- [x] 用 safetensors index 过滤 `ngram_embedding.shard_*` / `ngram_embedding.weight`，只加载非 PLE 权重。
+- [x] 加载完模型后调用 `install_disk_ple_in_official_model` 替换所有 PLE 模块。
+- [ ] 验证：峰值内存不包含 200GB+ PLE 表，且模型可 forward（代码路径已落地，待含 Qwen4Exp 的 Transformers/大内存环境实测）。
 
 **退出标准**：官方 Qwen4Exp 模型在不加载 PLE 大表的情况下完成构造和加载。
 
