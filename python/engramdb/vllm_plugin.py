@@ -58,6 +58,7 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         self._prefetch_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="engramdb-prefetch"
         )
+        self._closed = False
         self._stats: dict[str, float] = {
             "calls": 0.0,
             "hits": 0.0,
@@ -87,6 +88,28 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
     def get_stats(self) -> dict[str, float]:
         """Return a copy of the performance counters."""
         return dict(self._stats)
+
+    def close(self) -> None:
+        """Shut down the background prefetch executor.
+
+        This is idempotent.  Outstanding prefetches that have already started
+        are allowed to finish so no store I/O is abandoned mid-read.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        for fut in self._pending:
+            fut.cancel()
+        self._prefetch_executor.shutdown(wait=True)
+        self._pending.clear()
+        self._pending_rows.clear()
+        self._prefetched.clear()
+
+    def __enter__(self) -> "DiskPleEmbedding":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def _fetch_rows(self, missing: list[int]) -> dict[int, bytes]:
         """Synchronous store fetch helper; increments fetch timing stats."""
@@ -131,6 +154,8 @@ class DiskPleEmbedding(nn.Module if nn is not None else object):  # type: ignore
         already cached/pending.  The next :meth:`forward` will wait for any
         outstanding prefetches and reuse their results.
         """
+        if self._closed:
+            raise RuntimeError("DiskPleEmbedding is closed")
         missing: list[int] = []
         seen: set[int] = set()
         for r in rowids:

@@ -254,11 +254,16 @@ class DiskPleNGramEmbedding(nn.Module):
         )
         self.store = store
         self._context: list[list[int]] = []
+        self._last_prefetch_future: Any = None
 
     def reset_history(self) -> None:
         self._context = []
 
-    def prefetch(self, input_ids: torch.Tensor) -> None:
+    def close(self) -> None:
+        """Close the underlying disk table and stop its prefetch executor."""
+        self.table.close()
+
+    def prefetch(self, input_ids: torch.Tensor) -> Any:
         """Prefetch PLE rows for ``input_ids`` without consuming them.
 
         This computes the same rowids as :meth:`forward` (using the current
@@ -286,7 +291,8 @@ class DiskPleNGramEmbedding(nn.Module):
             )
             for row in rows:
                 flat_rows.extend(row)
-        self.table.prefetch(flat_rows)
+        self._last_prefetch_future = self.table.prefetch(flat_rows)
+        return self._last_prefetch_future
 
     def forward(self, input_ids: torch.Tensor, past_key_values: Any = None) -> torch.Tensor:
         del past_key_values  # history is managed internally by this adapter

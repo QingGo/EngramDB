@@ -186,3 +186,11 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **Session 28 综合整理**：完整计划/发现/尝试/踩坑/完成/未完成/未来计划已写入 `docs/session-summary.md` 的 Session 28 综合整理章节；尝试与踩坑详细版见 `docs/session-log.md`。
 
+   **Session 29（Prefetch 生产化起步 + Mini 官方模型 A/B）**：
+   - `DiskPleEmbedding.close()` / `DiskPleNGramEmbedding.close()`：prefetch executor 生命周期管理。
+   - `DiskPleNGramEmbedding.prefetch()` 返回底层 future，便于观测预取完成。
+   - `install_disk_ple_prefetch_hook()` 兼容 `hook(module, args)` 与 `hook(module, args, kwargs)`。
+   - 新增 `qwen35-ple/scripts/mini_official_prefetch_ab.py`：冻结官方 PLE layer + 真实 Store + dense 前后块的 mini A/B，输出 CSV。
+   - 当前仍是低资源 smoke；完整模型、冷热分离、CSV 阈值、超时/回退/合并去重未完成。
+
+

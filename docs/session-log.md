@@ -1645,3 +1645,26 @@ DiskPle real-Store maxdiff vs checkpoint rows: 0.0
 PREFETCH_AB_SMOKE_OK
 3 passed
 ```
+
+## Session 29 尝试与踩坑记录（Prefetch 生产化起步 + Mini 官方模型 A/B）
+
+### 1. 尝试
+- 给 `DiskPleEmbedding` 增加 `close()` / context manager，关闭后台 prefetch executor 并清理 pending。
+- 给 `DiskPleNGramEmbedding` 增加 `close()`，并让 `prefetch()` 返回底层 future。
+- 修正 `install_disk_ple_prefetch_hook()` 以兼容 PyTorch 两种 pre-hook 调用约定。
+- 新建 qwen35-ple `mini_official_prefetch_ab.py`，用冻结官方 PLE layer + 真实 Store + dense 前后块做 mini A/B。
+- 运行 `python_wheel_smoke.py` 和 `test_phase_b_official_loader.py` 验证。
+
+### 2. 踩坑/发现
+- 当前 PyTorch 版本调用 model forward pre-hook 时可能只传 `(module, args)`，原来的 `kwargs` 必填签名会 TypeError；改为 `kwargs=None` 默认并兼容两种形式。
+- 本机小规模 A/B 受系统调度和 OS 页缓存影响很大，sync/prefetch 数字波动明显，不能作为最终性能结论。
+- Mini A/B 需要至少一次未计时的 warmup 和冷/热分离后才能作为可靠基准。
+- `DiskPleEmbedding.close()` 必须在关闭 Store 之前调用，否则后台 future 可能在 Store 关闭后仍在读取。
+
+### 3. 关键结果
+```text
+python wheel smoke OK
+3 passed
+MINI_OFFICIAL_PREFETCH_AB_OK
+```
+

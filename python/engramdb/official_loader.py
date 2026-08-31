@@ -167,8 +167,13 @@ def install_disk_ple_prefetch_hook(model: Any) -> Any:
             "install_disk_ple_prefetch_hook requires at least one DiskPleNGramEmbedding"
         )
 
-    def _prefetch_hook(module: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    def _prefetch_hook(
+        module: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any] | None = None,
+    ) -> None:
         del module
+        kwargs = kwargs or {}
         input_ids = kwargs.get("input_ids")
         if input_ids is None and args:
             input_ids = args[0]

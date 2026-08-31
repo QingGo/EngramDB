@@ -252,6 +252,8 @@ def test_prefetch_lru() -> None:
             assert stats["prefetch_issued"] == 3.0
             assert stats["misses"] == 0.0
             assert set(emb._cache.keys()).issubset({0, 1, 2})
+            emb.close()
+            assert emb._closed
             print("DiskPleEmbedding prefetch OK")
         finally:
             store.close()

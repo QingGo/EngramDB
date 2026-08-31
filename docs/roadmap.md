@@ -1625,3 +1625,22 @@ LLM-CompileForge  推理 runtime（后续）
 4. **小资源验证优先**：稀疏真实行 + mini 官方模型足够验证正确性，全模型只做最终 gate。
 5. **跨仓正确性只走契约 + golden。**
 6. **版本、文档、代码同点收编。**
+
+## 20.8 Session 29 增量（Prefetch 生产化起步）
+
+本轮继续性能路径，落地了以下小步：
+
+- `DiskPleEmbedding.close()` / `DiskPleNGramEmbedding.close()`：prefetch executor
+  生命周期管理，幂等关闭，长服务/基准脚本不再泄漏后台线程。
+- `DiskPleNGramEmbedding.prefetch()` 现在返回底层 future，并保存
+  `_last_prefetch_future`，便于 A/B 脚本观测预取完成时机。
+- `install_disk_ple_prefetch_hook()` 兼容 PyTorch 两种 pre-hook 调用约定：
+  `hook(module, args)` 与 `hook(module, args, kwargs)`。
+- 新增 `qwen35-ple/scripts/mini_official_prefetch_ab.py`：用冻结官方
+  `Qwen4ExpTextPLELayer` + 真实 Store + 真实 dense 前后块做 mini 官方模型
+  sync vs prefetch A/B，输出 CSV，并记录 PLE 层到达时 prefetch 是否已完成。
+- 该脚本目前是低资源 smoke，不是完整模型 end-to-end tok/s；正式 A/B 仍需
+  真实 Qwen4Exp 或足够大的 mini 官方模型 + 冷/热分离 + 固定阈值。
+
+状态：V102（executor 生命周期）已部分关闭；V99/V100/V101/V104/V105 仍开放。
+

@@ -1132,3 +1132,30 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
 4. 小资源验证优先，全模型只做最终 gate。
 5. 跨仓正确性只走契约 + golden。
 6. 版本、文档、代码同点收编。
+
+# Session 29 增量（Prefetch 生产化起步 + Mini 官方模型 A/B）
+
+## 1. 完成
+- `DiskPleEmbedding.close()`：幂等关闭 prefecth executor，清洗 pending 状态。
+- `DiskPleNGramEmbedding.close()`：转发关闭底层 disk table。
+- `DiskPleNGramEmbedding.prefetch()` 返回底层 future 并保存 `_last_prefetch_future`，供 A/B 观测。
+- `install_disk_ple_prefetch_hook()` 兼容 PyTorch 两种 pre-hook 签名（`(module, args)` 与 `(module, args, kwargs)`）。
+- 新增 `/tmp/qwen35-ple-dev/scripts/mini_official_prefetch_ab.py`：
+  - 冻结官方 `Qwen4ExpTextPLELayer` + 真实 Store + dense 前后块；
+  - mini 官方模型级 prefetch hook；
+  - 记录 wall / earlier / ple / post / prefetch_wait / fetch / ready-at-PLE；
+  - 可输出 CSV。
+- qwen35-ple docs 记录 mini A/B 入口。
+
+## 2. 结果
+- `scripts/python_wheel_smoke.py` 全绿（含 `DiskPleEmbedding.close()` 断言）。
+- `tests/test_phase_b_official_loader.py` 3 passed。
+- Mini A/B 脚本可跑通：`MINI_OFFICIAL_PREFETCH_AB_OK`。
+- 本机小规模运行受系统调度/页缓存影响波动较大，尚未作为正式性能结论。
+
+## 3. 未完成 / 下一步
+- 仍需要完整 Qwen4Exp 或足够大的可运行 mini 官方模型做稳定 A/B。
+- 需要冷/热分离、固定 seed、多重复、CSV 阈值。
+- Prefetch 超时/错误回退/多模块合并去重仍未做。
+- Python 热路径仍未 native 化。
+
