@@ -1159,3 +1159,16 @@ qwen35-ple main  5250582（sparse oracle + prefetch AB + docs）
 - Prefetch 超时/错误回退/多模块合并去重仍未做。
 - Python 热路径仍未 native 化。
 
+## 4. 20k 预计算慢路径修复
+
+- 旧 `PleDiskGather.fetch` 的 Python 去重/字节切片/join 是 20k token 预计算瓶颈。
+- 修复：
+  - `PleDiskGather.fetch` 改为直接返回 `Store.fetch` 的连续缓冲区；
+  - 新增 `engramdb.fetch_e_t_tensor()`：一次 `Store.fetch` + `torch.frombuffer` 返回 `[T,16,160]` tensor；
+  - `PleDiskGather.fetch_tensor()` 提供同类快速路径；
+  - `qwen35_ple.real_ple.fetch_e_t` 与 `precompute_real_ple_features.py` 切换到该路径；
+  - `run_phase0.py --live-store` 支持直接从 Store 读取 PLE 行，不必先写 `e_t.npy`。
+- 同时新增 Rust `rowids_for_seq_with_history`（含 PyO3 导出）并让标准真实 PLE adapter 在可用时走 native rowid。
+- Smoke：`python_wheel_smoke.py` 全绿；`cargo test -p engramdb-keygen` 4 passed；qwen35 小规模 precompute 跑通。
+
+

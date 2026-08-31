@@ -255,6 +255,34 @@ class DiskPleNGramEmbedding(nn.Module):
         self.store = store
         self._context: list[list[int]] = []
         self._last_prefetch_future: Any = None
+        self._native_standard = (
+            self.layer_multipliers
+            == [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
+            and self.ngram_size == 3
+            and self.heads_per_ngram == 8
+            and self.eos == PLE_EOS
+            and self.prime_sizes == head_vocab_sizes()
+        )
+
+    def _rows_for(self, seq: list[int], history: list[int]) -> list[list[int]]:
+        """Return PLE rowids, using the native Rust path when possible."""
+        if self._native_standard:
+            try:
+                from . import rowids_for_seq_with_history
+
+                return rowids_for_seq_with_history(history, seq)
+            except Exception:
+                pass
+        return ple_rowids(
+            seq,
+            self.layer_multipliers,
+            self.eos,
+            sizes=self.prime_sizes,
+            offsets=self.head_offsets,
+            ngram_size=self.ngram_size,
+            heads_per_ngram=self.heads_per_ngram,
+            history=history,
+        )
 
     def reset_history(self) -> None:
         self._context = []
@@ -279,16 +307,7 @@ class DiskPleNGramEmbedding(nn.Module):
         flat_rows: list[int] = []
         for b in range(batch_size):
             seq = input_ids[b].tolist()
-            rows = ple_rowids(
-                seq,
-                self.layer_multipliers,
-                self.eos,
-                sizes=self.prime_sizes,
-                offsets=self.head_offsets,
-                ngram_size=self.ngram_size,
-                heads_per_ngram=self.heads_per_ngram,
-                history=self._context[b],
-            )
+            rows = self._rows_for(seq, self._context[b])
             for row in rows:
                 flat_rows.extend(row)
         self._last_prefetch_future = self.table.prefetch(flat_rows)
@@ -307,16 +326,7 @@ class DiskPleNGramEmbedding(nn.Module):
         for b in range(batch_size):
             seq = input_ids[b].tolist()
             history = self._context[b]
-            rows = ple_rowids(
-                seq,
-                self.layer_multipliers,
-                self.eos,
-                sizes=self.prime_sizes,
-                offsets=self.head_offsets,
-                ngram_size=self.ngram_size,
-                heads_per_ngram=self.heads_per_ngram,
-                history=history,
-            )
+            rows = self._rows_for(seq, history)
             batch_rows.append(rows)
             self._context[b] = (history + seq)[-(self.ngram_size - 1):]
 

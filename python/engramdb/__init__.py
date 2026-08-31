@@ -208,6 +208,7 @@ from .ple_discovery import (
     load_ple_multipliers,
     load_ple_weight_scale,
 )
+from .vllm import fetch_e_t_tensor
 
 PLE_QWEN_V1 = 1
 ENG_DEEPSEEK_V1 = 2
@@ -280,6 +281,31 @@ def rowids_for_seq(
     else:
         effective = [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071]
     return ple_rowids(tok, effective)
+
+
+def rowids_for_seq_with_history(
+    history: list[int],
+    tokens: list[int],
+    ple_spec: int = PLE_QWEN_V1,
+) -> list[list[int]]:
+    """Return PLE rowids for a streamed sequence with explicit n-gram history.
+
+    This is the native fast path for sequential decode: ``history`` is the
+    already-known previous context (usually ``ngram_size - 1`` tokens), and
+    ``tokens`` are the current step's input ids.  Falls back to the pure-Python
+    reference when the native binding is unavailable.
+    """
+    if ple_spec != PLE_QWEN_V1:
+        raise NotImplementedError(
+            f"ple_spec {ple_spec} is not implemented (only PLE_QWEN_V1=1)"
+        )
+    hist = [int(x) for x in history]
+    tok = [int(x) for x in tokens]
+    if _USING_PYO3 and hasattr(_engramdb, "rowids_for_seq_with_history"):
+        return [list(r) for r in _engramdb.rowids_for_seq_with_history(hist, tok, ple_spec)]
+    from .ple_adapter import ple_rowids
+
+    return ple_rowids(tok, [23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071], history=hist)
 
 
 def __getattr__(name: str):

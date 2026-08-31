@@ -84,10 +84,23 @@ impl PleSpec {
 
     /// 逐位置生成 16 个 rowid（含头偏移）。语义同官方 forward（cold start：前文 = EOS×2）。
     pub fn rowids_for_seq(&self, tokens: &[u32]) -> Vec<[u32; PLE_HEADS]> {
+        let context = [self.eos; PLE_NGRAM_SIZE - 1];
+        self.rowids_for_seq_with_history(&context, tokens)
+    }
+
+    /// 带显式 n-gram history 的逐位置 rowid 生成。
+    ///
+    /// `history` 是已知的前文（通常长度 = ngram_size - 1），`tokens` 是当前步输入；
+    /// 返回只对应 `tokens` 的 rowid。语义与
+    /// `engramdb.ple_adapter.ple_rowids(..., history=history)` 一致。
+    pub fn rowids_for_seq_with_history(
+        &self,
+        history: &[u32],
+        tokens: &[u32],
+    ) -> Vec<[u32; PLE_HEADS]> {
         let t = tokens.len();
-        let mut hist = Vec::with_capacity(t + 2);
-        hist.push(self.eos);
-        hist.push(self.eos);
+        let mut hist = Vec::with_capacity(history.len() + t);
+        hist.extend_from_slice(history);
         hist.extend_from_slice(tokens);
 
         // _shift_right_ignore_eos for shift 0..3
@@ -96,7 +109,6 @@ impl PleSpec {
             shifted.push(shift_right_ignore_eos(&hist, shift, self.eos));
         }
 
-        let mut out = Vec::with_capacity(t);
         // ngram_ids 计算覆盖 hist 全部位置，最终取最后 t 个
         let hlen = hist.len();
         let mut ids_all: Vec<[u32; PLE_HEADS]> = Vec::with_capacity(hlen);
@@ -122,10 +134,8 @@ impl PleSpec {
             }
             ids_all.push(row);
         }
-        // 前文 (context_len = ngram_size-1 = 2) 个 EOS 位置是"预测上下文"，输出对应输入 token 的位置
-        let skip = PLE_NGRAM_SIZE - 1;
-        out.extend_from_slice(&ids_all[skip..]);
-        out
+        let skip = hist.len() - t;
+        ids_all[skip..].to_vec()
     }
 }
 
@@ -253,5 +263,16 @@ mod tests {
         for r in ids {
             assert!(r.iter().all(|&x| (x as u64) < s.padded));
         }
+    }
+
+    #[test]
+    fn history_matches_streaming_concatenation() {
+        let s = PleSpec::real();
+        let tokens = [10u32, 11, 12, 13];
+        let full = s.rowids_for_seq(&tokens);
+        let part1 = s.rowids_for_seq_with_history(&[s.eos, s.eos], &[10, 11]);
+        let part2 = s.rowids_for_seq_with_history(&[10, 11], &[12, 13]);
+        assert_eq!(&full[..2], &part1[..]);
+        assert_eq!(&full[2..], &part2[..]);
     }
 }

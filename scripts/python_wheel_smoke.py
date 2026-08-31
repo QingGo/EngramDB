@@ -259,6 +259,59 @@ def test_prefetch_lru() -> None:
             store.close()
 
 
+def test_fetch_e_t_tensor() -> None:
+    try:
+        import torch
+    except Exception:
+        print("fetch_e_t_tensor skipped: torch not available")
+        return
+
+    import struct
+
+    from engramdb.vllm import PleDiskGather, fetch_e_t_tensor
+
+    # 4 rows, each one float32 (a single head dimension of width 1).
+    rows = [struct.pack("<f", float(i)) for i in range(4)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-tensor-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), 4)
+        try:
+            # Flat head rows: token0 = [row2, row0], token1 = [row2, row1].
+            flat = [2, 0, 2, 1]
+            out = fetch_e_t_tensor(
+                store,
+                flat,
+                scale=2.0,
+                num_heads=2,
+                head_dim=1,
+                dtype=torch.float32,
+                out_dtype=torch.float32,
+            )
+            assert tuple(out.shape) == (2, 2, 1)
+            assert out[0, 0, 0].item() == 4.0
+            assert out[0, 1, 0].item() == 0.0
+            assert out[1, 1, 0].item() == 2.0
+
+            # PleDiskGather.fetch must return exact original-order bytes and
+            # should also support the direct tensor path.
+            raw = PleDiskGather(store, 4).fetch(flat)
+            assert raw == rows[2] + rows[0] + rows[2] + rows[1]
+            out2 = PleDiskGather(store, 4).fetch_tensor(
+                flat,
+                scale=2.0,
+                num_heads=2,
+                head_dim=1,
+                dtype=torch.float32,
+                out_dtype=torch.float32,
+            )
+            assert torch.equal(out, out2)
+            print("fetch_e_t_tensor OK")
+        finally:
+            store.close()
+
+
 def test_safetensors_i64_reader() -> None:
     import json
     import struct
@@ -524,6 +577,7 @@ def main() -> None:
     test_database_arrow_server()
     test_disk_ple_lru()
     test_prefetch_lru()
+    test_fetch_e_t_tensor()
     print("python wheel smoke OK")
 
 

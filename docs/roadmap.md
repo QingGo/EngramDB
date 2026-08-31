@@ -1641,6 +1641,13 @@ LLM-CompileForge  推理 runtime（后续）
   sync vs prefetch A/B，输出 CSV，并记录 PLE 层到达时 prefetch 是否已完成。
 - 该脚本目前是低资源 smoke，不是完整模型 end-to-end tok/s；正式 A/B 仍需
   真实 Qwen4Exp 或足够大的 mini 官方模型 + 冷/热分离 + 固定阈值。
+- 修复 20k 预计算慢路径：
+  - `PleDiskGather.fetch` 改为直接返回 `Store.fetch` 连续缓冲区，去掉 Python 去重/切片/join；
+  - 新增 `engramdb.fetch_e_t_tensor()` / `PleDiskGather.fetch_tensor()`，一次 fetch + torch 转 tensor；
+  - qwen35 `real_ple.fetch_e_t`、`precompute_real_ple_features.py` 已切换；`run_phase0.py --live-store` 可直接读 Store。
+- 新增 Rust `rowids_for_seq_with_history` + PyO3 导出，标准真实 PLE adapter 可走 native rowid。
+
+状态：V101（Python 热路径）开始收敛，V102 已部分关闭；V99/V100/V104/V105 仍开放。
 
 状态：V102（executor 生命周期）已部分关闭；V99/V100/V101/V104/V105 仍开放。
 

@@ -327,6 +327,25 @@ fn rowids_for_seq(tokens: Vec<u32>, ple_spec: u32) -> PyResult<Vec<Vec<u32>>> {
         .collect())
 }
 
+#[pyfunction]
+fn rowids_for_seq_with_history(
+    history: Vec<u32>,
+    tokens: Vec<u32>,
+    ple_spec: u32,
+) -> PyResult<Vec<Vec<u32>>> {
+    if ple_spec != 1 {
+        return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "only PLE_QWEN_V1=1 is implemented",
+        ));
+    }
+    let spec = PleSpec::real();
+    Ok(spec
+        .rowids_for_seq_with_history(&history, &tokens)
+        .into_iter()
+        .map(|row| row.to_vec())
+        .collect())
+}
+
 #[pymodule]
 fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Store>()?;
@@ -338,5 +357,6 @@ fn _engramdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_keys, m)?)?;
     m.add_function(wrap_pyfunction!(abi_version, m)?)?;
     m.add_function(wrap_pyfunction!(rowids_for_seq, m)?)?;
+    m.add_function(wrap_pyfunction!(rowids_for_seq_with_history, m)?)?;
     Ok(())
 }

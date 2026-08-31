@@ -1668,3 +1668,10 @@ python wheel smoke OK
 MINI_OFFICIAL_PREFETCH_AB_OK
 ```
 
+### 4. 20k 预计算慢路径修复（追加）
+
+- 尝试：把 `PleDiskGather.fetch` 从 Python 去重+切片+join 改成直接 `Store.fetch`；新增 `fetch_e_t_tensor` / `fetch_tensor`；qwen35 `real_ple.fetch_e_t` 和 precompute 切换到新路径；`run_phase0 --live-store`。
+- 发现：FP8 tensor 不能直接用 `batch[idx]` 做 CPU 索引，需要先 `.to(float32)` 再索引；`fetch_e_t_tensor` 的 flat rowids 长度是 T×16，返回 shape 应为 `[T,16,160]`，不是 `[len(rowids),16,160]`。
+- 结果：`python wheel smoke OK`、`cargo test -p engramdb-keygen` 4 passed、小规模真实 Store precompute 跑通。
+
+
