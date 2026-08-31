@@ -8,7 +8,7 @@ root directory without changing the storage format.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from . import Store
 
@@ -19,6 +19,7 @@ class Database:
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
         self._stores: dict[tuple[str, int, int, int], Store] = {}
+        self._pools: dict[tuple[str, int, int, int], Any] = {}
 
     def list_tables(self) -> list[str]:
         """Return table ids that contain an EngramDB shard file."""
@@ -44,6 +45,29 @@ class Database:
             self._stores[key] = Store(str(path), shards, rows_per_shard, width)
         return self._stores[key]
 
+    def open_pool(
+        self,
+        table: str,
+        shards: int,
+        rows_per_shard: int,
+        width: int,
+        pool_size: int = 4,
+    ) -> Any:
+        """Open (and cache) a thread-safe StorePool for a named table."""
+        from .pool import StorePool
+
+        key = (table, shards, rows_per_shard, width)
+        if key not in self._pools:
+            path = self.root / table
+            self._pools[key] = StorePool(
+                str(path),
+                shards,
+                rows_per_shard,
+                width,
+                pool_size=pool_size,
+            )
+        return self._pools[key]
+
     def fetch(
         self,
         table: str,
@@ -52,15 +76,16 @@ class Database:
         rows_per_shard: int,
         width: int,
     ) -> bytes:
-        # Open a fresh Store in the calling thread.  The native Store is
-        # unsendable, so sharing cached stores across server threads is unsafe.
-        store = Store(str(self.root / table), shards, rows_per_shard, width)
-        try:
+        # Use a pooled thread-safe handle when available; each request borrows
+        # one Store from the pool instead of opening/closing every time.
+        pool = self.open_pool(table, shards, rows_per_shard, width)
+        with pool as store:
             return store.fetch(list(rowids))
-        finally:
-            store.close()
 
     def close(self) -> None:
         for store in self._stores.values():
             store.close()
         self._stores.clear()
+        for pool in self._pools.values():
+            pool.close()
+        self._pools.clear()
