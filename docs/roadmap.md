@@ -2154,7 +2154,7 @@ LLM-CompileForge  推理 runtime（后续）
 - [~] WSL 复现脚本 + golden 对齐 + live-store/StorePool smoke 入 CI（`wsl_repro.sh` 已加）。
 
 ### Phase D：服务化与全表
-- [ ] StorePool 与 LiveET/训练 DataLoader 深度融合 + wait/borrow 统计。
+- [~] StorePool 与 LiveET/训练 DataLoader 深度融合 + wait/borrow 统计（`StorePool.stats()` 已加，LiveET 深度集成待做）。
 - [ ] Arrow IPC 真实验证。
 - [ ] vLLM/SGLang/llama.cpp serving A/B。
 - [~] WSL 全表 Store-P 分批构建、断点续跑、校验（`view build --keys-stream` 已可用，完整批式/校验待做）。
