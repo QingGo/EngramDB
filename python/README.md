@@ -4,12 +4,20 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.2.11 同时包含两条 Python 接入路径：
+> 当前 v0.2.12 同时包含两条 Python 接入路径：
 > 1. **PyO3 原生扩展**（优先）：`crates/engramdb-pyo3`，构建后以
 >    `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` / Linux `IoUringPageReader`。
 > 2. **ctypes C-ABI 回退**：`crates/engramdb-python`，无 PyO3 构建产物时也能用。
 >
 > `python/engramdb/__init__.py` 会自动优先加载 PyO3，失败则回退 ctypes。
+
+v0.2.12 新增：
+
+- Serving 层：`PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`
+- Engine Adapter：`PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名
+- `DiskSlotIndex` v3 单文件 + offset table
+- 真表验证：`real_arrow_smoke.py` / `real_perf_gate.py` / `bench_serving_ab.py`
+- `gen_view_keys.py`：精确复现 `view build` keys 流
 
 ## 安装
 
@@ -62,13 +70,21 @@ index = engramdb.SlotIndex.from_keys_file("path/to/view.keys.txt", heads=16)
 slot = index.lookup((r0, r1, ..., r15))       # 16 元 rowid tuple
 slots = index.to_slots(rowids_matrix)          # [T,16] -> [T] physical slots
 
-# 磁盘分桶版本：适合 320M 全表，Python 可读写 v1(blake2b)/v2(fnv1a-64)
+# 磁盘分桶版本：适合 320M 全表，Python 可读写 v1(blake2b)/v2(fnv1a-64)/v3(single-file)
 disk_index = engramdb.DiskSlotIndex.build_from_keys_file(
     "path/to/view.keys.txt", "path/to/slot-idx", hash_name="fnv1a-64"
 )
 slot = disk_index.lookup((r0, r1, ..., r15))
 slots = disk_index.to_slots(rowids_matrix)
 disk_index.close()
+
+# v3 单文件 + offset table，避免 16k+ 小文件
+v3_index = engramdb.DiskSlotIndex.build_from_keys_file(
+    "path/to/view.keys.txt", "path/to/slot-idx-v3",
+    hash_name="fnv1a-64", single_file=True,
+)
+slot = v3_index.lookup((r0, r1, ..., r15))
+v3_index.close()
 
 # SGLang 兼容：从多个 fd/offset 读页（Unix 有 PageReader，Linux 另有 IoUringPageReader）
 reader = engramdb.PageReader(page_size=4096)

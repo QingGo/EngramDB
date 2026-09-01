@@ -165,7 +165,25 @@ python3 -m pip install --upgrade engramdb-python
 uv add engramdb-python
 ```
 
-当前发布线（v0.2.11）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+当前发布线（v0.2.12）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+
+v0.2.12 新增：
+
+- `DiskSlotIndex` v3 单文件 / offset table：`data.bin` + `offsets.bin`，Rust/Python 双端兼容
+- 原生 CLI `slot-index build --single-file`
+- 可选 Serving 层：
+  - `PleMemory` / `PleSequence` / `PleSequenceStore`
+  - `BundleManifest`
+  - `TargetReaderRegistry` / `ReaderSpec`
+  - `PleMemoryAdapter` / `TargetReaderHook` / `install_target_reader_hook`
+  - `install_vllm_target_reader` / `install_sglang_target_reader`
+- 真表验证与基准脚本：
+  - `gen_view_keys.py`：精确复现 `view build` keys 流
+  - `bench_disk_slot_index.py --single-file`
+  - `bench_serving_ab.py`
+  - `real_arrow_smoke.py`
+  - `real_perf_gate.py`
+- `release_gate.sh` 集成真表 Arrow IPC 与 serving 性能阈值门禁
 
 v0.2.11 新增：
 
@@ -254,6 +272,12 @@ states.feed("req-1", [10, 11])
 # bundle + 通用 reader 注册协议
 bundle = BundleManifest.load("bundle.json")
 registry = TargetReaderRegistry()
+
+# 通用 Engine Adapter / target-reader hook
+from engramdb import PleMemoryAdapter, install_target_reader_hook
+adapter = PleMemoryAdapter(mem)
+e_t = adapter(input_ids, seq_ids=[0, 1])
+hook = install_target_reader_hook(model, reader, mode="post")
 ```
 
 线程安全 Store 连接池：
@@ -438,7 +462,9 @@ cargo run --release -p engramdb -- view build data/real-rows 0 /tmp/full.view /t
 cargo run --release -p engramdb -- view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
 cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
 cargo run --release -p engramdb -- slot-index build /tmp/keys.txt /tmp/slot-idx --buckets 16384
+cargo run --release -p engramdb -- slot-index build /tmp/keys.txt /tmp/slot-idx-single --buckets 16384 --single-file
 cargo run --release -p engramdb -- slot-index verify /tmp/keys.txt /tmp/slot-idx
+cargo run --release -p engramdb -- slot-index verify /tmp/keys.txt /tmp/slot-idx-single --cache 1024
 cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 ```
 
@@ -448,17 +474,20 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 
 | 项目 | 状态 |
 |---|---|
-| 最新版本 | v0.2.11 |
+| 最新版本 | v0.2.12 |
 | crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
 | Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
 | PLE rowid | Python / C ABI / PyO3 / Rust 四路径一致，golden 对拍 |
 | 真实 PLE | `discover_ple` + `load_ple_weight_scale` + `DiskPleNGramEmbedding` + FP8 磁盘适配 |
-| CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁 |
+| CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁；v0.2.12 全绿 |
 | SGLang 适配 | 低层 reader + 模型类 patch hook |
 | vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
 | 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
-| 语义索引 | `SlotIndex`（内存/可选 numpy）与 `DiskSlotIndex`（磁盘分桶、兼容 Rust CLI v2）；`view build --slot-index` / `slot-index build|verify` 原生生成/校验 |
+| 语义索引 | `SlotIndex`（内存/可选 numpy）与 `DiskSlotIndex`（磁盘分桶；v1/v2 多文件，v3 单文件 + offset table）；`view build --slot-index` / `slot-index build|verify` 原生生成/校验 |
+| Serving 层 | `PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`，按需导入 |
+| Engine Adapter | `PleMemoryAdapter` / `TargetReaderHook` / `install_target_reader_hook`，vLLM/SGLang 注入别名 |
+| 真表验证 | `real_arrow_smoke.py` + `real_perf_gate.py` + release gate 集成 |
 | Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
 | 连接池 | `StorePool` / `ThreadLocalStore` 线程安全句柄管理 |
@@ -511,6 +540,11 @@ EngramDB/
 - `scripts/ple_layer_bit_exact.py` —— 真实 PLE 层前向 bit-exact
 - `scripts/sibling_contract_smoke.py` —— qwen35-ple / engram-peft 契约冒烟
 - `scripts/c_abi_smoke.py` —— 纯 stdlib C ABI / golden rowids 对拍（CI）
+- `scripts/bench_disk_slot_index.py` —— DiskSlotIndex 全表构建/校验/查找基准，支持 `--single-file`
+- `scripts/gen_view_keys.py` —— 精确复现 `view build` 的 Store-P keys 流
+- `scripts/bench_serving_ab.py` —— Store / PleMemory / PleMemoryAdapter serving A/B
+- `scripts/real_arrow_smoke.py` —— 真表 Store-I → Arrow IPC 真实验证
+- `scripts/real_perf_gate.py` —— 真表 serving 性能阈值门禁
 
 ---
 
@@ -533,3 +567,4 @@ EngramDB/
 > - 多表 `Database`、Arrow helpers、JSON + 二进制 Arrow IPC 服务（含 `fetch_raw` / `fetch_arrow`）已跑通（Session 14/15）。
 > - 真实 Qwen PLE 数据面闭环（Session 20-22）：128-shard Store bit-exact、真实 PLE 层 forward bit-exact、C ABI rowids、`DiskMultiHeadEmbedding` FP8 反量化。
 > - v0.2.7 CI 失败已修复，Phase A EngramDB 侧补齐（Session 23）：自动读取 `weight_scale`、Python `rowids_for_seq`、PyO3 native rowids、C ABI smoke 进 CI；随后发布 v0.2.8。
+> - v0.2.12 已发布，S3/B2/S4 落地：Serving 层（PleMemory/PleSequence/Store/Bundle/TargetReader/Engine Adapter）、DiskSlotIndex v3 单文件、真表 Arrow IPC + serving 阈值门禁。
