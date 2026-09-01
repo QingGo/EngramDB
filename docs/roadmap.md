@@ -2145,19 +2145,19 @@ LLM-CompileForge  推理 runtime（后续）
 ### Phase B：把语义索引做成产品级
 - [x] 以 EngramDB 为 canonical 整合 `SlotIndex`，qwen 只 re-export（已优先使用 EngramDB canonical，保留本地轻量 fallback）。
 - [ ] `engramdb view build --slot-index` 原生生成 + manifest 更新；`view verify` 校验（已记录 `keys_out`，SlotIndex 可从 manifest 构建）。
-- [ ] 设计磁盘侧/block index，支持全表 320M 而不常驻内存。
+- [x] 设计磁盘侧/block index，支持全表 320M 而不常驻内存（`DiskSlotIndex`：分桶 + 流式构建 + LRU + `build_from_keys_file`）。
 - [x] 跨仓 contract test：同一 keys → 两个 SlotIndex 输出一致。
 
 ### Phase C：把性能变成门禁
-- [~] access-order naive vs sorted 基准 + CSV 阈值（`bench_access_order.py` 已加，阈值/CI 待接）。
-- [ ] 20k/100k/1M 懒加载基准固化。
+- [x] access-order naive vs sorted 基准 + CSV 阈值（`bench_access_order.py --synthetic` 已入 CI；真实表阈值待 WSL）。
+- [x] 20k/100k/1M 懒加载基准固化（`bench_lazy_windows.py --synthetic` 已入 CI；真实表 CSV 待 WSL）。
 - [~] WSL 复现脚本 + golden 对齐 + live-store/StorePool smoke 入 CI（`wsl_repro.sh` 已加）。
 
 ### Phase D：服务化与全表
 - [~] StorePool 与 LiveET/训练 DataLoader 深度融合 + wait/borrow 统计（`StorePool.stats()` 已加，LiveET 深度集成待做）。
 - [ ] Arrow IPC 真实验证。
 - [ ] vLLM/SGLang/llama.cpp serving A/B。
-- [~] WSL 全表 Store-P 分批构建、断点续跑、校验（`view build --keys-stream` 已可用，完整批式/校验待做）。
+- [x] WSL 全表 Store-P 分批构建、断点续跑、校验（`build_full_store_p_batch.py` + `--keys-stream`）。
 
 ### Phase E：治理
 - [ ] 明确 EngramDB Python runtime dependencies；SlotIndex 要么显式依赖 numpy，要么可选子模块。
