@@ -283,6 +283,7 @@ class DiskSlotIndex:
         heads: int = 16,
         num_buckets: int = 16384,
         cache_buckets: int = 64,
+        hash_name: str = "blake2b",
     ) -> DiskSlotIndex:
         """Build from an EngramDB flat keys file without loading it into RAM."""
 
@@ -308,4 +309,5 @@ class DiskSlotIndex:
             heads=heads,
             num_buckets=num_buckets,
             cache_buckets=cache_buckets,
+            hash_name=hash_name,
         )

@@ -62,6 +62,14 @@ index = engramdb.SlotIndex.from_keys_file("path/to/view.keys.txt", heads=16)
 slot = index.lookup((r0, r1, ..., r15))       # 16 元 rowid tuple
 slots = index.to_slots(rowids_matrix)          # [T,16] -> [T] physical slots
 
+# 磁盘分桶版本：适合 320M 全表，Python 可读写 v1(blake2b)/v2(fnv1a-64)
+disk_index = engramdb.DiskSlotIndex.build_from_keys_file(
+    "path/to/view.keys.txt", "path/to/slot-idx", hash_name="fnv1a-64"
+)
+slot = disk_index.lookup((r0, r1, ..., r15))
+slots = disk_index.to_slots(rowids_matrix)
+disk_index.close()
+
 # SGLang 兼容：从多个 fd/offset 读页（Unix 有 PageReader，Linux 另有 IoUringPageReader）
 reader = engramdb.PageReader(page_size=4096)
 pages = reader.read_pages([fd0, fd1], [offset0, offset1])

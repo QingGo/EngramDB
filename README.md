@@ -417,9 +417,11 @@ CLI 常用命令：
 cargo run --release -p engramdb -- tables <root>
 cargo run --release -p engramdb -- check <root>
 cargo run --release -p engramdb -- view build data/real-rows 2000 /tmp/view.bin /tmp/keys.txt --slot 2560
-cargo run --release -p engramdb -- view build data/real-rows 0 /tmp/full.view /tmp/full.keys.txt --keys-stream /tmp/all-keys.txt --slot 2560
+cargo run --release -p engramdb -- view build data/real-rows 0 /tmp/full.view /tmp/full.keys.txt --keys-stream /tmp/all-keys.txt --slot 2560 --slot-index /tmp/slot-idx
 cargo run --release -p engramdb -- view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
 cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
+cargo run --release -p engramdb -- slot-index build /tmp/keys.txt /tmp/slot-idx --buckets 16384
+cargo run --release -p engramdb -- slot-index verify /tmp/keys.txt /tmp/slot-idx
 cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 ```
 
@@ -439,7 +441,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 | SGLang 适配 | 低层 reader + 模型类 patch hook |
 | vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
 | 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
-| 语义索引 | `SlotIndex`：rowid-tuple → Store-P 物理 slot（可选 numpy） |
+| 语义索引 | `SlotIndex`（内存/可选 numpy）与 `DiskSlotIndex`（磁盘分桶、兼容 Rust CLI v2）；`view build --slot-index` / `slot-index build|verify` 原生生成/校验 |
 | Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
 | 连接池 | `StorePool` / `ThreadLocalStore` 线程安全句柄管理 |
