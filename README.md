@@ -417,6 +417,7 @@ CLI 常用命令：
 cargo run --release -p engramdb -- tables <root>
 cargo run --release -p engramdb -- check <root>
 cargo run --release -p engramdb -- view build data/real-rows 2000 /tmp/view.bin /tmp/keys.txt --slot 2560
+cargo run --release -p engramdb -- view build data/real-rows 0 /tmp/full.view /tmp/full.keys.txt --keys-stream /tmp/all-keys.txt --slot 2560
 cargo run --release -p engramdb -- view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
 cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
 cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
