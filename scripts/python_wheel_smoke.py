@@ -64,6 +64,20 @@ def test_page_reader() -> None:
         os.unlink(tmp.name)
 
 
+def test_slot_index() -> None:
+    import numpy as np
+
+    rowids = np.arange(32, dtype=np.int64).reshape(2, 16)
+    index = engramdb.SlotIndex.from_rowids(rowids)
+    assert index.lookup(tuple(range(16, 32))) == 1
+    with tempfile.TemporaryDirectory(prefix="engramdb-slot-") as td:
+        path = Path(td) / "index.npz"
+        index.save(path)
+        restored = engramdb.SlotIndex.load(path)
+        assert restored.lookup(tuple(range(16))) == 0
+    print("SlotIndex OK")
+
+
 def test_store_and_vllm_gather() -> None:
     row_width = 8
     rows = [bytes([i] * row_width) for i in range(4)]
@@ -634,6 +648,7 @@ def main() -> None:
         print(f"integrations skipped ({exc})")
 
     test_page_reader()
+    test_slot_index()
     test_store_and_vllm_gather()
     test_store_concurrent_fetch()
     test_safetensors_i64_reader()

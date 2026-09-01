@@ -210,6 +210,7 @@ from .ple_discovery import (
 )
 from .vllm import fetch_e_t_tensor
 from .pool import StorePool, ThreadLocalStore
+from .slot_index import SlotIndex
 
 PLE_QWEN_V1 = 1
 ENG_DEEPSEEK_V1 = 2
