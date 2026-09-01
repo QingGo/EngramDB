@@ -342,3 +342,55 @@ fn slot_index_single_file_roundtrip() {
         "slot-index single verify stdout"
     );
 }
+
+#[test]
+fn slot_index_duplicate_keys_verify() {
+    let tmp = Temp::new("slot-index-duplicate");
+    let keys = tmp.0.join("keys.txt");
+    let mut content = String::new();
+    // Two identical rowid tuples; verify must accept either representative slot.
+    for _ in 0..2u64 {
+        for head in 0..16u64 {
+            content.push_str(&format!("{}\n", head));
+        }
+    }
+    std::fs::write(&keys, content).unwrap();
+
+    let out = tmp.0.join("idx");
+    let o = run(
+        &[
+            "slot-index",
+            "build",
+            keys.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "--buckets",
+            "4",
+        ],
+        &tmp.0,
+        None,
+    );
+    assert!(
+        o.status.success(),
+        "slot-index duplicate build: {}",
+        stdout(&o)
+    );
+    let o = run(
+        &[
+            "slot-index",
+            "verify",
+            keys.to_str().unwrap(),
+            out.to_str().unwrap(),
+        ],
+        &tmp.0,
+        None,
+    );
+    assert!(
+        o.status.success(),
+        "slot-index duplicate verify: {}",
+        stdout(&o)
+    );
+    assert!(
+        stdout(&o).contains("2 grams OK"),
+        "slot-index duplicate verify stdout"
+    );
+}

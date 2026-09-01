@@ -387,14 +387,22 @@ impl DiskSlotIndexReader {
         Ok(self.cache.get(&bucket).unwrap())
     }
 
-    pub fn lookup(&mut self, parts: &[u64; HEADS]) -> Result<u64, String> {
+    pub fn lookup_all(&mut self, parts: &[u64; HEADS]) -> Result<Vec<u64>, String> {
         let key = key_from_gram(parts);
         let bucket = bucket_of(&key, self.num_buckets);
         let records = self.records(bucket)?;
-        let idx = records
-            .binary_search_by(|probe| probe[..HEADS * 8].cmp(&key[..]))
-            .map_err(|_| format!("rowid tuple not found: {parts:?}"))?;
-        Ok(slot_of_record(&records[idx]))
+        let start = records.partition_point(|probe| probe[..HEADS * 8].cmp(&key[..]).is_lt());
+        let mut out = Vec::new();
+        for rec in &records[start..] {
+            if rec[..HEADS * 8] != key[..] {
+                break;
+            }
+            out.push(slot_of_record(rec));
+        }
+        if out.is_empty() {
+            return Err(format!("rowid tuple not found: {parts:?}"));
+        }
+        Ok(out)
     }
 }
 
@@ -423,10 +431,10 @@ pub fn verify_from_keys_file(
         parts[pos] = v;
         pos += 1;
         if pos == HEADS {
-            let got = reader.lookup(&parts)?;
-            if got != slot {
+            let got = reader.lookup_all(&parts)?;
+            if !got.contains(&slot) {
                 return Err(format!(
-                    "slot mismatch at gram {slot}: expected {slot}, index returned {got}"
+                    "slot mismatch at gram {slot}: expected {slot}, index returned {got:?}"
                 ));
             }
             verified += 1;
