@@ -210,10 +210,12 @@ from .ple_discovery import (
 )
 from .vllm import fetch_e_t_tensor
 from .pool import StorePool, ThreadLocalStore
-try:  # SlotIndex is pure-Python and needs numpy; keep it optional for light installs.
+try:  # SlotIndex/DiskSlotIndex are pure-Python and need numpy; keep optional for light installs.
     from .slot_index import SlotIndex
+    from .disk_slot_index import DiskSlotIndex
 except ImportError:  # pragma: no cover - depends on environment
     SlotIndex = None  # type: ignore[assignment,misc]
+    DiskSlotIndex = None  # type: ignore[assignment,misc]
 
 PLE_QWEN_V1 = 1
 ENG_DEEPSEEK_V1 = 2

@@ -82,6 +82,27 @@ def test_slot_index() -> None:
     print("SlotIndex OK")
 
 
+def test_disk_slot_index() -> None:
+    if engramdb.DiskSlotIndex is None:
+        print("DiskSlotIndex skipped: numpy not available")
+        return
+
+    import numpy as np
+
+    rowids = np.arange(64, dtype=np.int64).reshape(4, 16)
+    with tempfile.TemporaryDirectory(prefix="engramdb-disk-slot-") as td:
+        idx = engramdb.DiskSlotIndex.build(rowids, td, num_buckets=8)
+        try:
+            assert len(idx) == 4
+            assert idx.lookup(tuple(range(16))) == 0
+            assert idx.lookup(tuple(range(16, 32))) == 1
+            slots = idx.to_slots(rowids)
+            np.testing.assert_array_equal(slots, np.arange(4, dtype=np.int64))
+        finally:
+            idx.close()
+    print("DiskSlotIndex OK")
+
+
 def test_store_and_vllm_gather() -> None:
     row_width = 8
     rows = [bytes([i] * row_width) for i in range(4)]
@@ -659,6 +680,7 @@ def main() -> None:
 
     test_page_reader()
     test_slot_index()
+    test_disk_slot_index()
     test_store_and_vllm_gather()
     test_store_concurrent_fetch()
     test_safetensors_i64_reader()
