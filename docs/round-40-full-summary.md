@@ -1,11 +1,143 @@
-# 第二十六轮系统性思考（Session 40：终极目标、新债与后续路线）
+# 第二十六轮完整汇总（Session 40：工程收尾、CI 修复、README 与系统性思考）
 
-> 本轮不做大功能开发，聚焦系统性复盘：明确终极目标、沉淀本轮技术债、
-> 重新排布后续计划、从相似项目借鉴可复用工程思想并划清不借边界。
+> 本轮同时完成了三件事：
+> 1. 把 S3/B2/S4 的可交付部分落地并发布 v0.2.12；
+> 2. 获取并修复 GitHub CI 的真实失败，确保 release 全绿；
+> 3. 整理 README / 集成文档，并做系统性思考、沉淀新债与后续路线。
 
 ---
 
-## 1. 终极目标
+## 1. 本轮计划
+
+1. 完成 `PleMemoryAdapter` / `TargetReaderHook` 等通用 Engine Adapter。
+2. 完成 DiskSlotIndex v3 单文件 + offset table，并跑真实规模验证。
+3. 完成真表 Arrow IPC、serving A/B、真表性能阈值门禁。
+4. 发布 v0.2.12。
+5. 获取 GitHub CI 失败原因并修复，确保 release 成功。
+6. 更新 README 与引擎集成文档。
+7. 系统性思考：终极目标、技术债、后续计划、借鉴矩阵。
+
+---
+
+## 2. 本轮发现
+
+1. **Serving 层已经从“功能原型”走到“性能瓶颈识别”**
+   - `PleMemory` 真表读取可达 52K–63K tok/s。
+   - `PleMemoryAdapter` 真表 torch 热路径只有约 1.6K–2K tok/s。
+   - 瓶颈在 Python 侧 rowid + history + batch fetch + dequant，不是磁盘。
+
+2. **真实 20M keys 流存在重复 rowid tuple**
+   - 旧 `slot-index verify` 用单槽精确匹配会误报。
+   - 必须区分“代表槽”和“全部匹配槽”。
+
+3. **PyO3 已经足够承担 Python 集成**
+   - C ABI ctypes fallback 只提供基础 Store/View，缺少 PageReader、read_records 等。
+   - Python 发布不需要保留双桥，C ABI 更适合 C/C++ 外部集成。
+
+4. **DiskSlotIndex v3 单文件格式可行**
+   - 10M build 约 135s，verify 约 87s，lookup 约 165μs。
+   - 但 cache 敏感性明显，大表验证需要高 cache，下一步要做 block/offset 工程化。
+
+5. **CI 真正失败点不是逻辑，而是新版 Clippy**
+   - Ubuntu CI 启用了 `clippy::chunks_exact_to_as_chunks`，`-D warnings` 直接失败。
+   - 本地 mac 较旧 clippy 没有暴露该问题。
+
+---
+
+## 3. 做的尝试
+
+1. 实现 Rust/Python DiskSlotIndex v3 单文件 + offset table。
+2. 用 LCG keys 生成器重建 20M 真实 view keys 流。
+3. 跑 1M / 10M / 20M DiskSlotIndex 构建。
+4. 修复真实 20M keys 重复 tuple 的 verify。
+5. 增加 Rust e2e：单文件 roundtrip、重复 tuple verify。
+6. 增加 `real_arrow_smoke.py`、`bench_serving_ab.py`、`real_perf_gate.py`。
+7. 获取 GitHub API 的 CI job 信息，定位 clippy 错误。
+8. 更新 README、python README、engine-integration 文档。
+9. 系统性整理终极目标 / 技术债 / 路线 / 借鉴矩阵。
+
+---
+
+## 4. 踩过的坑
+
+1. **GitHub CI 与新 Clippy 版本不一致**
+   - 本地 `cargo clippy` 通过，但 CI 因 `chunks_exact_to_as_chunks` 失败。
+   - 修复：用 `as_chunks::<N>()` 替代常量 `chunks_exact()`。
+
+2. **真实 keys 重复 tuple 导致 slot-index verify 误报**
+   - 普通唯一 keys 测试不能发现。
+   - 修复：`contains_slot()` 检查当前 slot 是否属于所有匹配记录。
+
+3. **DiskSlotIndex v3 低 cache 下 verify 很慢**
+   - 因为 bucket 分布、cache 容量和重读共同造成。
+   - 大表验证应使用更高 `--cache`，后续应做 block index。
+
+4. **本地 PyO3 ABI 不匹配导致 PageReader 缺失**
+   - 本地 Python 3.9 与 built `_engramdb.so` ABI 不匹配，ctypes fallback 又没有 PageReader。
+   - 修复：`sglang.py` 改为可选导入，缺失时 `PageReader=None`，保证 smoke 可运行。
+
+5. **发布流程曾出现“先 tag 后修 CI / 强推 tag”**
+   - 教训：以后必须 CI 全绿再 tag，禁止无验证强推。
+
+6. **真实 20M 全表验证耗时很长**
+   - 20M 构建约 500s；完整 verify 仍需稳定环境长时间运行。
+   - 这不是代码正确性问题，而是规模测试需要在稳定介质/调度下跑。
+
+---
+
+## 5. 完成的内容
+
+- [x] `PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名。
+- [x] DiskSlotIndex v3 单文件 + offset table（Rust/Python）。
+- [x] `slot-index build --single-file` CLI。
+- [x] `scripts/gen_view_keys.py`，精确复现 view build keys 流。
+- [x] 1M / 10M DiskSlotIndex v3 实测。
+- [x] 真实 20M keys 生成与 20M 构建。
+- [x] 修复重复 rowid tuple verify，并增加回归测试。
+- [x] 真表 Arrow IPC 验证。
+- [x] serving A/B 脚本，真表 + 合成。
+- [x] 真表性能阈值门禁 `real_perf_gate.py`。
+- [x] release gate 集成真表验证。
+- [x] 修复 GitHub CI clippy 失败。
+- [x] CI、release、release-assets、publish-pypi 全部成功。
+- [x] v0.2.12 发布。
+- [x] README、python README、engine-integration 文档更新。
+- [x] Roadmap Section 28、round-40 系统思考文档。
+
+---
+
+## 6. 未完成的内容
+
+- [ ] WSL/稳定环境 100M/320M DiskSlotIndex 全表长跑。
+- [ ] DiskSlotIndex block index / 更均匀 hash / 原生 Rust lookup API。
+- [ ] `view build --slot-index` 真实表 e2e。
+- [ ] `PleMemoryAdapter` 热路径下沉 Rust/PyO3。
+- [ ] 真实 vLLM / SGLang 模型级 serving A/B。
+- [ ] 真表门禁进入 self-hosted / WSL nightly。
+- [ ] qwen35-ple 移除本地 fallback，统一使用 EngramDB canonical。
+- [ ] engram-peft 通过 Bundle / PleMemory 接入。
+- [ ] Python 发布路径正式切换为 PyO3-only（当前 ctypes 仍保留为开发回退）。
+
+---
+
+## 7. 本轮技术债
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V157 | `PleMemoryAdapter` 真表 torch 热路径仅约 1.6K–2K tok/s | 服务化还不是生产性能 | rowid/history/fetch/dequant 下沉 Rust/PyO3 |
+| V158 | DiskSlotIndex v3 对 cache 敏感，verify/查询需高 cache | 大表读放大和内存不稳定 | 评估 block index / hash 均匀性 / Rust lookup |
+| V159 | 真实 20M keys 含重复 rowid tuple | 下游若误用单槽 lookup 可能拿错记录 | 固化 `lookup` 代表槽与 `lookup_all` 全部槽契约 |
+| V160 | Python 双桥：PyO3 + ctypes fallback | API 不完整、双维护、误导 | Python 发布只走 PyO3；C ABI 仅 C/C++ |
+| V161 | 发布流程出现“先 tag 后修 CI / 强推 tag” | release 可重复性差 | 先 CI 全绿再 tag，禁止无验证强推 |
+| V162 | 通用 Engine Adapter 已落地，但无真实 vLLM/SGLang 模型级 A/B | 无法证明 serving 目标 | 真实引擎 A/B 出 CSV 阈值 |
+| V163 | 真表门禁只在本地 release gate | 无法防远程回归 | self-hosted / WSL nightly |
+| V164 | `view build --slot-index` 缺真实表 e2e | 生产路径未闭环 | 补真实表 e2e |
+| V165 | 100M/320M DiskSlotIndex 全表长跑未完成 | 规模结论不完整 | WSL 稳定环境跑全表 |
+
+---
+
+## 8. 终极目标
+
 
 **让 EngramDB 成为 DeepSeek Engram / Qwen PLE n-gram 记忆表的事实标准磁盘优先存储底座。**
 
@@ -35,7 +167,7 @@
 
 ---
 
-## 2. 本轮发现的技术债
+## 9. 技术债详细表（系统思考版）
 
 | # | 债 | 影响 | 处置方向 |
 |---|---|---|---|
@@ -51,7 +183,7 @@
 
 ---
 
-## 3. 后续开发计划
+## 10. 后续开发计划
 
 ### Phase R1：生产路径收敛
 - [ ] Python 发布路径明确为 PyO3-only；ctypes fallback 仅保留源码开发或 C/C++ 外部调用。
@@ -81,7 +213,7 @@
 
 ---
 
-## 4. 借鉴矩阵
+## 11. 借鉴矩阵
 
 | 来源 | 借什么 | 明确不借 | 怎样帮我们接近目标 |
 |---|---|---|---|
@@ -101,7 +233,7 @@
 
 ---
 
-## 5. 本轮纪律
+## 12. 本轮纪律
 
 1. **Python 只以 PyO3 为发布路径**：C ABI ctypes 不再作为 Python 分发依赖。
 2. **所有 serving / engine 结论必须有真实引擎 A/B 数字**。
