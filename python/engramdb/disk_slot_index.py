@@ -91,12 +91,13 @@ class DiskSlotIndex:
         rec_bytes = _RECORD_BYTES
         counts = np.zeros(num_buckets, dtype=np.int64)
         count = 0
+        slot_iter = iter(slots) if slots is not None else None
 
         # Pass 1: stream every record to a raw file, count bucket occupancy.
         with open(raw_path, "wb") as raw:
             for i, row in enumerate(rowids):
                 key = _row_key(row)
-                slot = i if slots is None else int(next(slots))  # type: ignore[arg-type]
+                slot = i if slot_iter is None else int(next(slot_iter))
                 bucket = _bucket_id(key, num_buckets)
                 raw.write(key + struct.pack("<Q", slot))
                 counts[bucket] += 1
