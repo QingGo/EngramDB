@@ -1854,6 +1854,36 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
 5. **WSL 全量 pytest 有 1 个官方 golden 漂移**：
    - 不是本轮代码引入，已记录为 V126。
 
+## Session 35（第二十一轮：P0 语义索引 + v0.2.11 发布）
+
+### 1. 做了什么
+
+- 完成通用 rowid→slot 语义索引和 access-order 自动调度的实现、测试、文档。
+- EngramDB Python 新增 `SlotIndex`，qwen35-ple 也新增配套 `SlotIndex` 和 `LiveETViewStore.from_slot_index`。
+- `build_corpus_store_p_view.py` 现在生成 `*.slot_index.npz` 并更新 view manifest。
+- `run_phase0.py` / `bench_lazy_windows.py` / `bench_store_vs_view.py` 接入 `--access-order` 与 `--store-p-slot-index`。
+- 发布 **v0.2.11**：release gate 全绿，tag 已推送。
+
+### 2. 踩坑/发现
+
+1. **SlotIndex 如果作为 EngramDB Python 顶层强制导入，会让无 numpy 环境无法 import engramdb**。
+   - 修复：`engramdb.SlotIndex` 改为可选导入；缺 numpy 时 `SlotIndex=None`，smoke 跳过。
+2. **SlotIndex 全表面临内存扩展性**：当前实现适合 1M 级，不适合 320M 全表。
+   - 记为 V133，下一步磁盘/block index 化。
+3. **EngramDB 与 qwen35-ple 存在两份 SlotIndex 实现**。
+   - 记为 V134，下一步统一 canonical。
+4. **access-order 调度尚无正式 A/B 基准/门禁**。
+   - 记为 V136。
+5. **release gate 使用 engram-peft venv（Python 3.12）可完整通过**；当前环境无 numpy 时 SlotIndex 降级跳过。
+
+### 3. 结果
+
+```text
+RELEASE_GATE_OK
+v0.2.11 tag pushed
+qwen35-ple tests: 25 passed, 11 skipped
+```
+
 
 
 

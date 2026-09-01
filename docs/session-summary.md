@@ -1610,6 +1610,41 @@ serving / Arrow / 全表 Store-P ❌
 5. 先打通端到端最小闭环，再谈 5M/20M 放大。
 6. 发布前 release gate 必绿，版本只走 bump.sh。
 
+---
+
+## Session 35（第二十一轮：P0 语义索引 + v0.2.11 发布）
+
+### 1. 本轮完成
+
+- [x] 通用 rowid→slot 语义索引：`qwen35_ple.slot_index.SlotIndex` + `engramdb.SlotIndex`。
+- [x] access-order 自动调度：`LiveETViewStore(access_order=True)` + `LiveETDataset(access_order=True)`。
+- [x] `build_corpus_store_p_view.py` 自动输出 `*.slot_index.npz` 并写入 view manifest。
+- [x] `run_phase0.py --store-p-slot-index` / `--access-order` 接入。
+- [x] 新增 6 个 SlotIndex/access-order 测试；qwen35-ple 全量 25 passed。
+- [x] 发布 **v0.2.11**，release gate 全绿，tag 已推送。
+
+### 2. 本轮发现的技术债
+
+| # | 债 |
+|---|---|
+| V133 | SlotIndex 全表 320M 无法纯内存承载 |
+| V134 | SlotIndex 在两仓重复实现，需统一 canonical |
+| V135 | `engramdb view build` 未原生生成 slot index |
+| V136 | access-order 调度缺正式 A/B 与门禁 |
+| V137 | numpy 依赖/降级语义未完全理清 |
+| V138 | `access_order` 窗口重排对训练顺序敏感实验的语义未单独建模 |
+| V139 | 两仓缺交叉 contract test |
+
+### 3. 下一阶段
+
+1. Phase A：真实模型 1M 三线实验（最高优先科学门禁）。
+2. Phase B：SlotIndex 产品化/磁盘化 + 统一实现 + CLI manifest。
+3. Phase C：access-order 基准/门禁 + WSL 复现/golden。
+4. Phase D：serving/Arrow/全表 Store-P。
+5. Phase E：依赖/CI/跨仓治理。
+
+详见 `docs/roadmap.md` Section 25。
+
 
 
 

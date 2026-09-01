@@ -165,7 +165,13 @@ python3 -m pip install --upgrade engramdb-python
 uv add engramdb-python
 ```
 
-当前发布线（v0.2.10）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+当前发布线（v0.2.11）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
+
+v0.2.11 新增：
+
+- `SlotIndex`：rowid-tuple → Store-P 物理 slot 的通用语义索引（纯 Python，可选依赖 numpy）
+- qwen35-ple 的 access-order Store-P 语义视图与自动访问序调度
+- 视图构建器自动写 `*.slot_index.npz` 并更新 manifest
 
 v0.2.10 新增：
 
@@ -422,7 +428,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 
 | 项目 | 状态 |
 |---|---|
-| 最新版本 | v0.2.10 |
+| 最新版本 | v0.2.11 |
 | crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
 | Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
@@ -432,6 +438,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 | SGLang 适配 | 低层 reader + 模型类 patch hook |
 | vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
 | 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
+| 语义索引 | `SlotIndex`：rowid-tuple → Store-P 物理 slot（可选 numpy） |
 | Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
 | 连接池 | `StorePool` / `ThreadLocalStore` 线程安全句柄管理 |

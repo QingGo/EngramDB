@@ -4,7 +4,7 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.2.10 同时包含两条 Python 接入路径：
+> 当前 v0.2.11 同时包含两条 Python 接入路径：
 > 1. **PyO3 原生扩展**（优先）：`crates/engramdb-pyo3`，构建后以
 >    `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` / Linux `IoUringPageReader`。
 > 2. **ctypes C-ABI 回退**：`crates/engramdb-python`，无 PyO3 构建产物时也能用。
@@ -56,6 +56,11 @@ store.close()
 # 打开 Store-P 视图
 view = engramdb.View("path/to/view.bin")
 rec = view.read_record(0)            # 一条 e_t 记录
+
+# rowid → Store-P slot 语义索引（纯 Python，需要 numpy）
+index = engramdb.SlotIndex.from_keys_file("path/to/view.keys.txt", heads=16)
+slot = index.lookup((r0, r1, ..., r15))       # 16 元 rowid tuple
+slots = index.to_slots(rowids_matrix)          # [T,16] -> [T] physical slots
 
 # SGLang 兼容：从多个 fd/offset 读页（Unix 有 PageReader，Linux 另有 IoUringPageReader）
 reader = engramdb.PageReader(page_size=4096)

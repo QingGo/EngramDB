@@ -203,6 +203,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **P0 完成（V123/V124）**：通用 rowid→slot 语义索引（`qwen35_ple.slot_index.SlotIndex`、`--slot-index-out`、`run_phase0 --store-p-slot-index`）与自动访问序调度（`LiveETViewStore(access_order=True)`、`LiveETDataset(access_order=True)`、`run_phase0 --access-order`）已落地；真实模型 1M 实验仍由 qwen35-ple/WSL 侧继续。
 
+  **Session 35（第二十一轮：v0.2.11 + 系统性思考）**：发布 v0.2.11；EngramDB Python 新增 `SlotIndex`；完成 P0 语义索引/访问序调度代码。新债 V133–V139（SlotIndex 扩展性/重复实现/CLI 原生索引/调度基准/numpy 依赖/窗口重排语义/跨仓契约），完整思考见 `docs/roadmap.md` Section 25、`docs/session-summary.md` Session 35。
+
 
 
 

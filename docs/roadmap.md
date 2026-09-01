@@ -2084,3 +2084,90 @@ LLM-CompileForge  推理 runtime（后续）
 4. **跨仓正确性靠版本固定 + golden**，不能靠“本地能跑”。
 5. **先打通端到端最小闭环，再谈放大**：先 1M 真实实验，再 5M/20M。
 6. **每次发布前 release gate 必绿；版本只走 bump.sh。**
+
+---
+
+# 25. 第二十一轮系统性思考（v0.2.11：P0 语义索引落地 + 发布）
+
+## 25.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、推理引擎都能廉价使用的**磁盘优先存储基础设施**——像 DuckDB 之于分析数据库。
+
+三条验收轴不变：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 端到端差距 ≤5%；CPU 小模型 ≥50 tok/s（MTP 冲 100）；参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录嵌入式 + 可服务化；manifest 可校验；Arrow 零拷贝；引擎薄 adapter 不改上游 |
+| C. 科学契约 | 真实 PLE + 固定输入 + 冷热标注 + CSV/阈值；bit-exact 有 golden/官方类双保险 |
+
+## 25.2 本轮坐标更新
+
+- ✅ **v0.2.11 已发布**：EngramDB Python 新增 `SlotIndex`（rowid-tuple → Store-P slot 语义索引）。
+- ✅ **P0 代码部分完成**：V123 通用语义索引、V124 access-order 自动调度。
+- ✅ **release gate 全绿**：fmt / clippy / workspace tests / 真表 bench / PyO3 / C ABI / smoke / decode baseline。
+- ⚠️ **仍未完成科学闭环**：V125 真实模型 1M real/control/3-seed 实验仍是唯一阻隔“是否继续放大”的入口。
+
+## 25.3 本轮发现/新增技术债
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V133 | `SlotIndex` 当前是纯内存二进制索引（`[N,16]×8B` + 排序副本），无法直接扩展到 320M 全表 | 真表全量语义索引会吃掉数十 GB 内存 | 改为 mmap/磁盘排序段/block index，或让 view manifest 直接携带 slot 解析所需的最小信息 |
+| V134 | `SlotIndex` 在 EngramDB 与 qwen35-ple 各有一份实现 | 两仓行为可能漂移，维护成本翻倍 | 以 EngramDB 为 canonical，qwen35-ple 仅 re-export 或薄包装 |
+| V135 | `engramdb view build` 原生 CLI 尚未输出/更新 slot index manifest | 用户从存储侧拿不到语义索引，只有 qwen 侧 builder 写了 | 将 slot index 生成/校验并入 `engramdb view build`，写 manifest 并在 `view verify` 验证 |
+| V136 | access-order 自动调度只有机制，没有正式 A/B 基准与门禁 | 无法证明“按槽排序+窗口调度”在真表上的收益，也无法防回归 | 新增 `--access-order` 对照 CSV 阈值：naive vs sorted，固定 seeds/冷热/并发 |
+| V137 | EngramDB Python 的 `SlotIndex` 依赖 numpy，但发布门禁环境未安装，只能以 `SlotIndex=None` 降级 | 功能在轻量环境不可见，且依赖声明与实际不一致 | 要么把 numpy 写入真正 runtime dependency 并在 release 环境预装，要么把 SlotIndex 做成显式可选子模块 |
+| V138 | `LiveETDataset(access_order=True)` 会重排窗口顺序 | 对训练窗口顺序敏感的实验可能产生意外 | 明确文档/参数命名：`access_order` 只承诺 I/O 顺序，窗口重排用独立 `schedule_windows` 或在实验协议中声明 |
+| V139 | 两仓 SlotIndex/access-order 无交叉 contract test | 无法自动发现语义或边界行为漂移 | 增加跨仓 smoke：同一 keys 文件 → EngramDB SlotIndex 与 qwen SlotIndex 输出一致 |
+
+## 25.4 借鉴矩阵（本轮增量）
+
+| 来源 | 借什么 | 明确不借 | 为什么可共存 |
+|---|---|---|---|
+| **DuckDB / SQLite** | 单目录、manifest、嵌入式、零拷贝 | 不借 SQL/查询优化器 | 我们只做“确定性点查 + 物化视图/索引” |
+| **RocksDB / FDB** | 不可变 segment、checksum、manifest 原子切换 | 不借 LSM 写路径/事务/分布式 | 我们的表只读静态，只借“静态文件 + 可校验 index” |
+| **Lucene / Roaring / FAISS IDMap** | 磁盘侧排序 key→offset 索引、block index、mmap 只读 | 不借 ANN/倒排/近邻 | 我们也是“静态 key→slot”查表，可以用类似磁盘索引思想 |
+| **DiskANN / Milvus** | 冷热分层、顺序化访问、批量预取 | 不借向量图/过滤 | 只借 I/O 布局和缓存层次 |
+| **PyTorch DataLoader / HF Datasets** | 流式窗口、worker 分片、可复现 seed | 不借训练循环 | 我们只提供数据源 |
+| **vLLM / SGLang** | continuous batching、prefetch、指标暴露 | 不借引擎调度 | 我们提供存储 reader/adapter |
+| **llama.cpp / GGUF** | mmap、offset table、warm_table | 不借量化图执行 | 只借冷启动/顺序预读 |
+| **engram-peft / PEFT** | adapter、配置桥接 | 不借核心训练内核 | 我们只做薄接入 |
+| **Arrow / IPC** | schema、列式零拷贝、块传输 | 不借查询执行器 | 用于 Store-P 输出和服务边界 |
+| **Linux io_uring / AIO** | 批量异步 I/O、有界提交 | 不借具体引擎 | 底层 IO 优化，与上层语义正交 |
+
+## 25.5 后续开发计划（重新排布）
+
+### Phase A：把科学闭环补上（最高优先）
+- [ ] WSL 真实模型 1M real/control/3-seed，输出 loss/PPL + 每窗口 fetch 时间 CSV。
+- [ ] 根据结果做 Go/No-Go：是否进入 5M–20M。
+- [ ] 若负结果，固化负结果文档并停止放大。
+
+### Phase B：把语义索引做成产品级
+- [ ] 以 EngramDB 为 canonical 整合 `SlotIndex`，qwen 只 re-export。
+- [ ] `engramdb view build --slot-index` 原生生成 + manifest 更新；`view verify` 校验。
+- [ ] 设计磁盘侧/block index，支持全表 320M 而不常驻内存。
+- [ ] 跨仓 contract test：同一 keys → 两个 SlotIndex 输出一致。
+
+### Phase C：把性能变成门禁
+- [ ] access-order naive vs sorted 基准 + CSV 阈值。
+- [ ] 20k/100k/1M 懒加载基准固化。
+- [ ] WSL 复现脚本 + golden 对齐 + live-store/StorePool smoke 入 CI。
+
+### Phase D：服务化与全表
+- [ ] StorePool 与 LiveET/训练 DataLoader 深度融合 + wait/borrow 统计。
+- [ ] Arrow IPC 真实验证。
+- [ ] vLLM/SGLang/llama.cpp serving A/B。
+- [ ] WSL 全表 Store-P 分批构建、断点续跑、校验。
+
+### Phase E：治理
+- [ ] 明确 EngramDB Python runtime dependencies；SlotIndex 要么显式依赖 numpy，要么可选子模块。
+- [ ] 三仓版本/README/CI 完全同步。
+- [ ] 发布流程增加“新功能必须先有 contract/bench 门禁”的规则。
+
+## 25.6 本轮纪律补充
+
+1. **“能跑”不等于“可扩展”**：P0 语义索引在 1M 级可用，但全表必须走磁盘/block index。
+2. **跨仓单一事实源**：同一概念不要在多个仓库各维护一份生产实现。
+3. **性能结论必须有对照**：新增调度机制必须配 naive baseline + CSV/阈值。
+4. **轻量环境可降级**：纯 Python 可选能力不得阻塞核心导入。
+5. **科学实验仍是最终裁判**：在真实模型 loss/tok/s 出来之前，所有 I/O 优化都只是“候选基建”。
