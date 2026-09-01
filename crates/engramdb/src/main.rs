@@ -579,7 +579,7 @@ fn _keep_serde(_p: &Path) {
 
 /// view <build|bench|lat|verify> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
 /// 用法：
-///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS] [--verify]
+///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS] [--keys-stream KEYS] [--verify]
 ///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
 ///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
 ///   engramdb view verify <rows_dir> <view.bin> [--keys K] [--sub N]
@@ -622,6 +622,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let mut slot_bytes: u64 = 2560;
     let mut backend_name: Option<String> = None;
     let mut keys_in: Option<PathBuf> = None;
+    let mut keys_stream: Option<PathBuf> = None;
     let mut verify = false;
     let mut it = rest;
     while let Some(a) = it.next() {
@@ -635,6 +636,9 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
             }
             "--backend" => backend_name = Some(it.next().ok_or("backend")?),
             "--keys" => keys_in = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
+            "--keys-stream" | "--keys-file" => {
+                keys_stream = Some(PathBuf::from(it.next().ok_or("keys 路径")?))
+            }
             "--verify" => verify = true,
             "--seed" => {
                 let _ = it.next();
@@ -645,7 +649,15 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let layout = layout_for_dir(&rows_dir)?;
     let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)
         .map_err(|e| e.to_string())?;
-    if let Some(kf) = keys_in {
+    if let Some(ks) = keys_stream {
+        if keys_in.is_some() {
+            return Err("不能同时指定 --keys 与 --keys-stream".into());
+        }
+        // 流式构建：不把整个 keys 文件读入内存，适合全表/超大访问序视图。
+        let _ =
+            view::build_view_from_keys_file(&batch, &ks, slot_bytes, &view_out, Some(&keys_out))
+                .map_err(|e| e.to_string())?;
+    } else if let Some(kf) = keys_in {
         // 使用调用方提供的访问序/rowid 列表构建视图。keys 文件为 16 头平铺：
         // 每 gram 连续 16 行，物理槽位顺序 = 文件顺序。
         let all = view::read_keys(&kf).map_err(|e| e.to_string())?;
