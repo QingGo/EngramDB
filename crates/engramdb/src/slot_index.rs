@@ -49,6 +49,18 @@ fn slot_of_record(rec: &Record) -> u64 {
     u64::from_le_bytes(rec[HEADS * 8..].try_into().unwrap())
 }
 
+fn parse_records(data: &[u8]) -> Vec<Record> {
+    data.as_chunks::<RECORD_BYTES>()
+        .0
+        .iter()
+        .map(|c| {
+            let mut r = [0u8; RECORD_BYTES];
+            r.copy_from_slice(c);
+            r
+        })
+        .collect()
+}
+
 /// Build a disk slot index from a flat EngramDB keys file.
 ///
 /// The keys file contains one rowid per line, 16 rowids per gram, in physical
@@ -138,10 +150,7 @@ fn build_from_keys_file_opt(
         let len = (end - start) as usize;
         let mut data = vec![0u8; len];
         grouped_file.read_exact(&mut data).map_err(io_err)?;
-        let mut records: Vec<Record> = data
-            .chunks_exact(RECORD_BYTES)
-            .map(|c| c.try_into().expect("record size"))
-            .collect();
+        let mut records: Vec<Record> = parse_records(&data);
         records.sort();
         let mut buf = Vec::with_capacity(len);
         for r in &records {
@@ -316,8 +325,8 @@ impl DiskSlotIndexReader {
             data_file = Some(File::open(dir.join("data.bin")).map_err(io_err)?);
             let off_data = std::fs::read(dir.join("offsets.bin")).map_err(io_err)?;
             let mut off_vec = Vec::with_capacity(num_buckets + 1);
-            for chunk in off_data.chunks_exact(8) {
-                off_vec.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+            for chunk in off_data.as_chunks::<8>().0 {
+                off_vec.push(u64::from_le_bytes(*chunk));
             }
             if off_vec.len() != num_buckets + 1 {
                 return Err(format!(
@@ -361,17 +370,13 @@ impl DiskSlotIndexReader {
                     let file = self.data_file.as_mut().unwrap();
                     file.seek(SeekFrom::Start(start as u64)).map_err(io_err)?;
                     file.read_exact(&mut data).map_err(io_err)?;
-                    data.chunks_exact(RECORD_BYTES)
-                        .map(|c| c.try_into().expect("record size"))
-                        .collect()
+                    parse_records(&data)
                 }
             } else {
                 let path = self.dir.join("buckets").join(format!("{bucket:04}.bin"));
                 if path.exists() {
                     let data = std::fs::read(&path).map_err(io_err)?;
-                    data.chunks_exact(RECORD_BYTES)
-                        .map(|c| c.try_into().expect("record size"))
-                        .collect()
+                    parse_records(&data)
                 } else {
                     Vec::new()
                 }
@@ -387,22 +392,26 @@ impl DiskSlotIndexReader {
         Ok(self.cache.get(&bucket).unwrap())
     }
 
-    pub fn lookup_all(&mut self, parts: &[u64; HEADS]) -> Result<Vec<u64>, String> {
+    /// Return true when one of the matching rowid-tuple records has `slot`.
+    pub fn contains_slot(&mut self, parts: &[u64; HEADS], slot: u64) -> Result<bool, String> {
         let key = key_from_gram(parts);
         let bucket = bucket_of(&key, self.num_buckets);
         let records = self.records(bucket)?;
         let start = records.partition_point(|probe| probe[..HEADS * 8].cmp(&key[..]).is_lt());
-        let mut out = Vec::new();
+        let mut found_any = false;
         for rec in &records[start..] {
             if rec[..HEADS * 8] != key[..] {
                 break;
             }
-            out.push(slot_of_record(rec));
+            found_any = true;
+            if slot_of_record(rec) == slot {
+                return Ok(true);
+            }
         }
-        if out.is_empty() {
+        if !found_any {
             return Err(format!("rowid tuple not found: {parts:?}"));
         }
-        Ok(out)
+        Ok(false)
     }
 }
 
@@ -431,10 +440,9 @@ pub fn verify_from_keys_file(
         parts[pos] = v;
         pos += 1;
         if pos == HEADS {
-            let got = reader.lookup_all(&parts)?;
-            if !got.contains(&slot) {
+            if !reader.contains_slot(&parts, slot)? {
                 return Err(format!(
-                    "slot mismatch at gram {slot}: expected {slot}, index returned {got:?}"
+                    "slot mismatch at gram {slot}: expected {slot}, no matching record had that slot"
                 ));
             }
             verified += 1;
