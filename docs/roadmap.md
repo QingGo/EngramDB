@@ -2195,6 +2195,7 @@ LLM-CompileForge  推理 runtime（后续）
 - ✅ **DiskSlotIndex 落地**：分桶磁盘索引、流式构建、LRU、`build_from_keys_file`。
 - ✅ **全表批式构建工具**：`build_full_store_p_batch.py` + `--keys-stream` + 断点/校验。
 - ✅ **合成性能门禁**：access-order / lazy-window 已入 CI。
+- ✅ **原生 SlotIndex CLI**：`slot-index build|verify` + `view build --slot-index` / `view verify --slot-index`，并支持 Python v2 读取。
 - ⚠️ 仍缺：Watch-level 真表全量验证、Arrow/serving、golden 修复。
 
 ## 26.3 本轮新增/更新技术债
@@ -2205,7 +2206,7 @@ LLM-CompileForge  推理 runtime（后续）
 | V141 | DiskSlotIndex 尚无 320M 级真表构建/查找实测 | 只验证了小规模正确性，未验证规模性能 | WSL 上跑 10M/100M/320M 构建、磁盘放大、单查延迟、LRU 命中 |
 | V142 | DiskSlotIndex 每个 bucket 一个文件 | 320M × 16k+ buckets 会产生大量小文件/目录项 | 评估单文件 + offset table，或原生 Rust 索引 |
 | V143 | qwen35-ple 仍保留本地 SlotIndex fallback | 长期双实现漂移 | 把 fallback 也收敛为“仅测试用”，生产入口统一 EngramDB |
-| V144 | EngramDB CLI 仍未原生生成/校验 slot index | 用户需 Python 侧二次构建 | `engramdb view build --slot-index` + `view verify --slot-index` |
+| V144 | ~~EngramDB CLI 仍未原生生成/校验 slot index~~ | ✅ 已闭环：`slot-index build|verify`、`view build --slot-index`、`view verify --slot-index`，Python 可读 v2 FNV 格式 | |
 | V145 | Phase A 输出未记录 fetch timing | 科学结论与存储性能未同址 | Phase A2 直接记录 loss + fetch/wall 到同一 JSON |
 | V146 | WSL 全量 pytest golden 漂移未修复 | 跨仓正确性防线弱 | 固定 engram-peft 版本或重建 golden，纳入 CI |
 | V147 | CI 只有 synthetic 性能门禁 | 不能防真表性能回归 | 增加 nightly 真表 CSV 阈值 job |
@@ -2234,7 +2235,7 @@ LLM-CompileForge  推理 runtime（后续）
 ### Phase B2：磁盘索引真表验证与产品化
 - [ ] WSL 10M/100M/320M DiskSlotIndex 构建 + 查找基准。
 - [ ] 评估单文件/offset table，或原生 Rust DiskSlotIndex。
-- [ ] `engramdb view build --slot-index` + `view verify --slot-index`。
+- [x] `engramdb view build --slot-index` + `view verify --slot-index`。
 - [ ] 移除 qwen 生产 fallback，统一 EngramDB canonical。
 
 ### Phase C2：真表门禁 + golden
