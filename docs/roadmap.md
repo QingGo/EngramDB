@@ -2171,3 +2171,92 @@ LLM-CompileForge  推理 runtime（后续）
 3. **性能结论必须有对照**：新增调度机制必须配 naive baseline + CSV/阈值。
 4. **轻量环境可降级**：纯 Python 可选能力不得阻塞核心导入。
 5. **科学实验仍是最终裁判**：在真实模型 loss/tok/s 出来之前，所有 I/O 优化都只是“候选基建”。
+
+---
+
+# 26. 第二十二轮系统性思考（Phase A 完成 + 磁盘索引落地 + 下一阶段）
+
+## 26.1 终极目标（不变）
+
+> 让 DeepSeek Engram / Qwen PLE 这类确定性哈希 n-gram 记忆表成为任何小模型、训练器、推理引擎都能廉价使用的**磁盘优先存储基础设施**——像 DuckDB 之于分析数据库。
+
+三条验收轴不变：
+
+| 轴 | 验收 |
+|---|---|
+| A. 性能契约 | 真实 PLE 端到端差距 ≤5%；CPU 小模型 ≥50 tok/s；参与开销 ≤5%；字节放大 ≤2× |
+| B. 形态契约 | 单目录嵌入式 + 可服务化；manifest 可校验；Arrow 零拷贝；引擎薄 adapter 不改上游 |
+| C. 科学契约 | 真实 PLE + 固定输入 + 冷热标注 + CSV/阈值；bit-exact 有 golden/官方类双保险 |
+
+## 26.2 本轮坐标
+
+- ✅ **Phase A 科学闭环完成**：WSL 1M real/control/3-seed → real < control < no-reader，Go。
+- ✅ **v0.2.11 发布**，SlotIndex / access-order / manifest keys_out 已进入产品。
+- ✅ **DiskSlotIndex 落地**：分桶磁盘索引、流式构建、LRU、`build_from_keys_file`。
+- ✅ **全表批式构建工具**：`build_full_store_p_batch.py` + `--keys-stream` + 断点/校验。
+- ✅ **合成性能门禁**：access-order / lazy-window 已入 CI。
+- ⚠️ 仍缺：Watch-level 真表全量验证、Arrow/serving、golden 修复。
+
+## 26.3 本轮新增/更新技术债
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V140 | Phase A 结果使用 Store-I live-store，未用 Store-P/access-order 复跑 | 无法证明磁盘路径不改变科学结论 | 用 Store-P + slot-index + access-order 重跑 1M 三臂，输出 loss + fetch timing |
+| V141 | DiskSlotIndex 尚无 320M 级真表构建/查找实测 | 只验证了小规模正确性，未验证规模性能 | WSL 上跑 10M/100M/320M 构建、磁盘放大、单查延迟、LRU 命中 |
+| V142 | DiskSlotIndex 每个 bucket 一个文件 | 320M × 16k+ buckets 会产生大量小文件/目录项 | 评估单文件 + offset table，或原生 Rust 索引 |
+| V143 | qwen35-ple 仍保留本地 SlotIndex fallback | 长期双实现漂移 | 把 fallback 也收敛为“仅测试用”，生产入口统一 EngramDB |
+| V144 | EngramDB CLI 仍未原生生成/校验 slot index | 用户需 Python 侧二次构建 | `engramdb view build --slot-index` + `view verify --slot-index` |
+| V145 | Phase A 输出未记录 fetch timing | 科学结论与存储性能未同址 | Phase A2 直接记录 loss + fetch/wall 到同一 JSON |
+| V146 | WSL 全量 pytest golden 漂移未修复 | 跨仓正确性防线弱 | 固定 engram-peft 版本或重建 golden，纳入 CI |
+| V147 | CI 只有 synthetic 性能门禁 | 不能防真表性能回归 | 增加 nightly 真表 CSV 阈值 job |
+| V148 | 大量新功能未发布 | 用户拿不到 DiskSlotIndex / batch builder | 发 v0.2.12 并同步三仓文档 |
+
+## 26.4 借鉴矩阵（本轮增量）
+
+| 来源 | 借什么 | 明确不借 | 为什么可共存 |
+|---|---|---|---|
+| **RocksDB / LevelDB SSTable** | 排序 key→offset 文件、block index、不可变段 | 不借 LSM 写放大/compaction/事务 | 我们的表只读，适合借用“静态排序索引文件”思想 |
+| **Cassandra / Bigtable** | hash/range 分桶、局部性 | 不借分布式/副本 | 磁盘索引用分桶控制单查 IO |
+| **SQLite / DuckDB B-tree** | 磁盘页索引、mmap 随机读 | 不借 SQL | 只借用“索引页+目录”的工程路径 |
+| **LMDB / BoltDB** | 只读 mmap、B+tree、事务可选 | 不借 write transaction | 可作为原生磁盘索引实现参考 |
+| **FAISS IDMap / DiskANN** | 静态 ID→offset、盘上顺序块 | 不借 ANN | 用于磁盘 slot 索引的块布局 |
+| **HF Datasets / Parquet row-group** | 分块元数据、可流式构建 | 不借数据格式 | 用于大批量 batch builder 的元数据设计 |
+| **ClickHouse / DuckDB columnar** | 不可变文件集、manifest、原子替换 | 不借列式查询 | 用于静态大表产物组织 |
+| **vLLM / SGLang / llama.cpp** | 预取、指标、mmap/offset 直读 | 不借引擎 | 继续作为服务面接入对象 |
+
+## 26.5 后续开发计划（重新排布）
+
+### Phase A2：把科学结论钉在两层存储上
+- [ ] 用 Store-P + slot-index + access-order 重跑 1M real/control/no-reader 3 seeds。
+- [ ] 在同一 JSON 记录每窗口 fetch time、wall、rows、unique。
+- [ ] 确认 Store-P 结果与 Store-I 一致，形成双路径科学结论。
+
+### Phase B2：磁盘索引真表验证与产品化
+- [ ] WSL 10M/100M/320M DiskSlotIndex 构建 + 查找基准。
+- [ ] 评估单文件/offset table，或原生 Rust DiskSlotIndex。
+- [ ] `engramdb view build --slot-index` + `view verify --slot-index`。
+- [ ] 移除 qwen 生产 fallback，统一 EngramDB canonical。
+
+### Phase C2：真表门禁 + golden
+- [ ] WSL 真表 access-order naive vs sorted CSV 阈值。
+- [ ] WSL 真表 20k/100k/1M lazy CSV 阈值 + nightly CI。
+- [ ] 修复 WSL golden 漂移并纳入 CI。
+
+### Phase D2：服务化与 Arrow
+- [ ] Arrow IPC 在 WSL/本地真实验证。
+- [ ] vLLM / SGLang / llama.cpp serving A/B。
+- [ ] WSL 全表 Store-P 实际构建 + DiskSlotIndex + batch 全链路。
+- [ ] StorePool 与 LiveET/DataLoader 深度集成。
+
+### Phase E2：发布与治理
+- [ ] v0.2.12 发布：DiskSlotIndex、`--keys-stream`、batch builder、StorePool stats。
+- [ ] 三仓版本/README/CI 同步。
+- [ ] 真表性能门禁纳入发布 gate。
+
+## 26.6 本轮纪律补充
+
+1. **科学结论必须双路径复现**：Store-I 和 Store-P 都要跑，不能只信一种存储路径。
+2. **索引规模必须实测**：DiskSlotIndex 只有在 320M 级构建/查找数据出来后才算完成。
+3. **所有新存储功能必须给盘放大/构建耗时/查找延迟**。
+4. **生产入口单一事实源**：不允许两仓各维护一份“正式”实现。
+5. **合成门禁只能防回归，不能替代真表门禁**。

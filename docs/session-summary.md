@@ -1645,6 +1645,44 @@ serving / Arrow / 全表 Store-P ❌
 
 详见 `docs/roadmap.md` Section 25。
 
+---
+
+## Session 36（第二十二轮：Phase A 科学闭环 + DiskSlotIndex + 全表工具）
+
+### 1. 本轮完成
+
+- [x] WSL 1M real/control/no-reader 3-seed 已核验并固化：real < control < no-reader，Go。
+- [x] `DiskSlotIndex`：分桶磁盘索引、流式构建、LRU、`build_from_keys_file`。
+- [x] `engramdb view build --keys-stream` + `build_full_store_p_batch.py` 全表批式构建/断点/校验。
+- [x] `bench_access_order.py` / `bench_lazy_windows.py` 合成门禁入 CI。
+- [x] `StorePool.stats()` 遥测。
+- [x] qwen35-ple 跨仓 contract test：DiskSlotIndex 与内存 SlotIndex 一致。
+- [x] v0.2.11 已发布；Phase A 结果文档已加入 qwen 仓库。
+
+### 2. 本轮新增技术债
+
+| # | 债 |
+|---|---|
+| V140 | Phase A 未用 Store-P/access-order 复跑 |
+| V141 | DiskSlotIndex 尚无 320M 级真表实测 |
+| V142 | DiskSlotIndex 每 bucket 一个文件 |
+| V143 | qwen 保留本地 SlotIndex fallback |
+| V144 | EngramDB CLI 未原生生成/校验 slot index |
+| V145 | Phase A JSON 无 fetch timing |
+| V146 | WSL golden 漂移未修复 |
+| V147 | CI 只有合成性能门禁 |
+| V148 | 新功能尚未发布到下一版本 |
+
+### 3. 下一阶段
+
+- Phase A2：Store-P/access-order 复跑 1M，记录 loss + fetch timing。
+- Phase B2：DiskSlotIndex 全表实测 + 产品化 + CLI 原生索引。
+- Phase C2：真表性能门禁 + golden 修复。
+- Phase D2：Arrow / serving / 全表实际构建。
+- Phase E2：v0.2.12 发布与三仓同步。
+
+详见 `docs/roadmap.md` Section 26。
+
 
 
 

@@ -1884,6 +1884,34 @@ v0.2.11 tag pushed
 qwen35-ple tests: 25 passed, 11 skipped
 ```
 
+## Session 36（第二十二轮：Phase A + DiskSlotIndex + 全表工具）
+
+### 1. 做了什么
+
+- 通过 SSH 连到 WSL，核验 Phase A 1M real/control/no-reader 3-seed 结果。
+- 新增 `DiskSlotIndex`：分桶磁盘索引、两遍流式构建、LRU、`build_from_keys_file`。
+- 新增 `engramdb view build --keys-stream`。
+- 新增 `build_full_store_p_batch.py`：分批构建 + 断点 + 抽样校验。
+- 新增 `bench_access_order.py --synthetic` 和 `bench_lazy_windows.py --synthetic`，并接入 CI。
+- 新增 `StorePool.stats()` wait/borrow 遥测。
+- qwen35-ple 新增 DiskSlotIndex 跨仓 contract test。
+
+### 2. 踩坑/发现
+
+1. **DiskSlotIndex 需要支持 ndarray slots**，不能只接受 iterator。
+2. **每 bucket 一个文件**在超大表上会造成大量小文件，需后续评估单文件 + offset table。
+3. **Phase A 现有 JSON 没有 fetch timing**，需要用 Store-P/access-order 复跑来补齐。
+4. **WSL qwen35-ple 不是干净 git 工作树**，有大量本地实验文件；正式复跑应基于远程最新版同步后的代码。
+
+### 3. 结果
+
+```text
+Phase A: real 2.8167 < control 2.8738 < no-reader 2.9896 -> Go
+qwen35-ple tests: 34 passed, 7 skipped
+EngramDB cargo tests: passed
+Python wheel smoke: OK
+```
+
 
 
 
