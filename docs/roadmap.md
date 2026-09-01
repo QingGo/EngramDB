@@ -2261,3 +2261,69 @@ LLM-CompileForge  推理 runtime（后续）
 3. **所有新存储功能必须给盘放大/构建耗时/查找延迟**。
 4. **生产入口单一事实源**：不允许两仓各维护一份“正式”实现。
 5. **合成门禁只能防回归，不能替代真表门禁**。
+
+---
+
+# 27. 第二十三轮系统性思考（Session 37：原生 SlotIndex CLI + serving 架构规划）
+
+## 27.1 本轮坐标
+
+- ✅ 原生 SlotIndex CLI 闭环：`slot-index build|verify` + `view build --slot-index` / `view verify --slot-index`。
+- ✅ Python DiskSlotIndex 支持 v1 / v2，并可直接生成 v2（FNV-1a 64）。
+- ✅ 新增 `scripts/bench_disk_slot_index.py` 全表基准工具。
+- ✅ 完成 vLLM / SGLang / PleMemory / TargetReader / Bundle 架构可行性分析。
+- ⚠️ DiskSlotIndex 仍未跑 320M 全表实测。
+- ⚠️ serving 层（PleMemory / PleSequence / registry / bundle）尚未实现。
+
+## 27.2 本轮新增/更新技术债
+
+| # | 债 | 处置 |
+|---|---|---|
+| V149 | 无 `PleMemory` / `PleSequence` 统一抽象 | EngramDB 新增通用 serving 层 |
+| V150 | 现有 vLLM/SGLang 插件只替换 embedding，不注入 target reader | 新增通用 reader 注入 adapter |
+| V151 | 无 per-sequence 状态管理协议 | `PleSequence` + state store 协议 |
+| V152 | 无通用 reader checkpoint / bundle 协议 | `TargetReaderRegistry` / `Bundle Manifest` |
+| V153 | Arrow IPC / serving A/B 未验证 | 真表 Arrow + 引擎 A/B |
+| V154 | v0.2.12 未发布 | 真表门禁后发布 |
+| V155 | CI 只有 synthetic 门禁 | 真表 nightly CSV 阈值 |
+| V156 | 高级 serving 模块与核心依赖未隔离 | serving 层可选子模块 |
+
+## 27.3 后续开发计划
+
+### Phase B2：磁盘索引真表验证与产品化
+- [ ] WSL 10M/100M/320M DiskSlotIndex 构建 + 查找基准。
+- [ ] 评估单文件/offset table，或原生 Rust DiskSlotIndex。
+- [x] `engramdb view build --slot-index` + `view verify --slot-index`。
+- [ ] 补 `view build --slot-index` 真实表 e2e。
+
+### Phase S1：PleMemory / PleSequence
+- [ ] `PleMemory`：统一 Store / View / SlotIndex 读取。
+- [ ] `PleSequence`：per-sequence history + `current_e_t()`。
+- [ ] 纯 Python/torch 单元测试，不依赖 qwen。
+
+### Phase S2：TargetReader Registry + Bundle
+- [ ] `engramdb.target_reader`：注册 + 加载协议。
+- [ ] `engramdb.bundle`：manifest + 路径解析 + schema version。
+- [ ] 不实现任何 qwen reader。
+
+### Phase S3：通用 Engine Adapter
+- [ ] 通用 layer wrapper / forward hook。
+- [ ] per-sequence state store。
+- [ ] 先纯 PyTorch，再 vLLM / SGLang。
+
+### Phase S4：Arrow / 服务 / 真表门禁 / 发布
+- [ ] Arrow IPC 真表验证。
+- [ ] serving A/B。
+- [ ] 真表 CSV 阈值入 nightly。
+- [ ] v0.2.12 发布。
+
+## 27.4 本轮纪律
+
+1. EngramDB 核心保持“确定性记忆表存储”，不做 SQL / ANN / 推理引擎。
+2. Serving 层是可选高层模块，不得阻塞核心导入。
+3. 所有磁盘索引/scale 结论必须有真表实测。
+4. 新协议必须版本化。
+5. qwen35-ple 由另一 agent 负责，EngramDB 只提供通用协议和存储能力。
+
+> 完整计划/发现/尝试/踩坑/完成/未完成见 `docs/round-37-full-summary.md`。
+

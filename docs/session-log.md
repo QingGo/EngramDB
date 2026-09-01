@@ -1919,3 +1919,46 @@ Python wheel smoke: OK
 
 
 
+
+## Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构思考）
+
+### 1. 做了什么
+
+- 新增 Rust 原生 `slot-index build|verify`。
+- 新增 `view build --slot-index` / `view verify --slot-index`。
+- Python `DiskSlotIndex` 支持 v1 / v2，并支持生成 v2（FNV-1a 64）。
+- 新增 `scripts/bench_disk_slot_index.py` 全表基准工具。
+- 完成 vLLM / SGLang / PleMemory / TargetReader / Bundle 架构调研。
+- 更新 README / roadmap / 本文件。
+
+### 2. 踩坑/发现
+
+1. `serde_json::Error` 不能直接复用 `io_err`，需要单独 `map_err(|e| e.to_string())`。
+2. Rust LRU 缓存先 `get()` 再 `insert()` 触发借用冲突，改为 `contains_key` 判断。
+3. Clippy 要求 `while let Some(line) = lines.next()` 改为 `for line in lines`。
+4. 现有 vLLM/SGLang 插件只替换 embedding，不注入 target reader，需要新 serving 层。
+5. WSL 长任务被会话退出终止，后续真表验证需改用持久任务机制。
+
+### 3. 结果
+
+```text
+cargo check / clippy / test 通过
+CLI slot_index_build_verify_roundtrip 通过
+Python DiskSlotIndex v1/v2 本地验证通过
+V144 闭环
+```
+
+### 4. 完成/未完成
+
+- [x] 原生 SlotIndex CLI
+- [x] Python v2 DiskSlotIndex
+- [x] 全表磁盘索基准脚本
+- [x] serving 架构可行性分析
+- [ ] DiskSlotIndex 320M 真表实测
+- [ ] PleMemory / PleSequence
+- [ ] TargetReader Registry / Bundle
+- [ ] 通用 vLLM / SGLang target reader adapter
+- [ ] v0.2.12 发布
+
+> 完整版见 `docs/round-37-full-summary.md`。
+

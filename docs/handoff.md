@@ -207,6 +207,9 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **Session 36（第二十二轮：Phase A + DiskSlotIndex + 全表工具）**：WSL 1M real/control/no-reader 3-seed 已核验并固化（real < control < no-reader，Go）；新增 `DiskSlotIndex`、`--keys-stream`、`build_full_store_p_batch.py`、合成 CI 门禁和 StorePool 遥测。新债 V140–V148（双路径复跑、全表索引实测、bucket 文件数、原生 CLI slot-index、fetch timing、golden、真表门禁、发布），完整思考见 `docs/roadmap.md` Section 26。
 
+  **Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构）**：EngramDB 新增原生 `slot-index build|verify`、`view build --slot-index` / `view verify --slot-index`；Python `DiskSlotIndex` 支持 v1/v2 并可直接生成 v2；新增 `scripts/bench_disk_slot_index.py`。完成 vLLM/SGLang/PleMemory/TargetReader/Bundle 架构可行性分析。新债 V149–V156（serving 层、engine adapter、per-sequence、bundle、Arrow、v0.2.12、真表门禁、依赖隔离）。完整版见 `docs/round-37-full-summary.md`。
+
+
 
 
 

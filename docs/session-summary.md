@@ -1688,3 +1688,40 @@ serving / Arrow / 全表 Store-P ❌
 
 
 
+
+---
+
+## Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构思考）
+
+### 1. 本轮完成
+
+- [x] 原生 `engramdb slot-index build|verify`。
+- [x] `view build --slot-index` / `view verify --slot-index`。
+- [x] Python `DiskSlotIndex` v1 / v2 双格式支持，并支持生成 v2。
+- [x] `scripts/bench_disk_slot_index.py` 全表基准工具。
+- [x] vLLM / SGLang / PleMemory / TargetReader / Bundle 可行性分析。
+- [x] V144 闭环。
+
+### 2. 本轮新增技术债
+
+| # | 债 |
+|---|---|
+| V149 | 无 `PleMemory` / `PleSequence` |
+| V150 | 现有 vLLM/SGLang 插件不注入 target reader |
+| V151 | 无 per-sequence 状态管理协议 |
+| V152 | 无通用 reader checkpoint / bundle 协议 |
+| V153 | Arrow IPC / serving A/B 未验证 |
+| V154 | v0.2.12 未发布 |
+| V155 | CI 只有 synthetic 门禁 |
+| V156 | 高级 serving 模块与核心依赖未隔离 |
+
+### 3. 下一阶段
+
+- Phase B2：DiskSlotIndex 全表实测 + 单文件/offset table。
+- Phase S1：PleMemory / PleSequence。
+- Phase S2：TargetReader Registry / Bundle。
+- Phase S3：通用 Engine Adapter。
+- Phase S4：Arrow / serving / 真表门禁 / v0.2.12 发布。
+
+详见 `docs/roadmap.md` Section 27。完整版见 `docs/round-37-full-summary.md`。
+
