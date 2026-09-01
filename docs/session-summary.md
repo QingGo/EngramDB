@@ -1789,3 +1789,38 @@ serving / Arrow / 全表 Store-P ❌
 
 - 320M 全表 DiskSlotIndex 长跑仍建议 WSL/稳定真表环境执行。
 - 真正 vLLM/SGLang 模型级 A/B 需外部引擎环境，EngramDB 侧接口已完成。
+
+
+---
+
+## Session 40（第二十六轮：系统性思考）
+
+### 1. 本轮完成
+
+- [x] 明确终极目标：EngramDB = 真实 PLE n-gram 记忆表的事实标准磁盘优先存储底座。
+- [x] 新增技术债登记 V157–V165。
+- [x] 重排后续计划为 Phase R1–R5。
+- [x] 更新借鉴矩阵。
+- [x] Roadmap Section 28 + `docs/round-40-full-summary.md`。
+
+### 2. 本轮新增技术债
+
+| # | 债 |
+|---|---|
+| V157 | PleMemoryAdapter Python 热路径性能不足 |
+| V158 | DiskSlotIndex v3 cache 敏感、block/index 未完成 |
+| V159 | 重复 rowid tuple lookup 语义需契约化 |
+| V160 | PyO3 与 ctypes 双 Python 桥需收敛 |
+| V161 | 发布流程需要 CI 全绿再 tag |
+| V162 | 真实 vLLM/SGLang 模型级 A/B 未做 |
+| V163 | 真表门禁未进 nightly/self-hosted |
+| V164 | view build --slot-index 真实表 e2e 未补 |
+| V165 | 100M/320M DiskSlotIndex 全表长跑未完成 |
+
+### 3. 下一阶段
+
+- Phase R1：Python 发布 PyO3-only + serving 热路径下沉。
+- Phase R2：DiskSlotIndex 全表 + block/offset 工程化。
+- Phase R3：真实 vLLM/SGLang serving A/B。
+- Phase R4：真表 nightly + 发布纪律。
+- Phase R5：生态 canonical 化。

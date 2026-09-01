@@ -2056,3 +2056,36 @@ DiskSlotIndex v3 Rust e2e 通过
 真表 Arrow IPC OK
 真表 serving perf gate OK
 ```
+
+
+## Session 40（第二十六轮：系统性思考）
+
+### 1. 做了什么
+
+- 明确 EngramDB 终极目标为“真实 PLE n-gram 记忆表的事实标准磁盘优先存储底座”。
+- 沉淀本轮技术债 V157–V165：
+  - Serving 热路径 Python 性能不足。
+  - DiskSlotIndex v3 cache 敏感与规模验证未完成。
+  - 重复 rowid tuple 语义需契约化。
+  - Python 双桥 PyO3 + ctypes 需要收敛。
+  - 发布流程需要“CI 全绿再 tag”。
+  - 真实 vLLM/SGLang A/B、真表 nightly、真实表 e2e 仍未闭环。
+- 重排后续为 Phase R1–R5：生产路径收敛、磁盘索引产品化、真实引擎 serving、真表门禁与发布纪律、生态 canonical 化。
+- 更新借鉴矩阵：DuckDB/SQLite、RocksDB/LMDB、Arrow/Parquet、vLLM/SGLang/llama.cpp、Transformers/engram-peft/qwen35-ple 等。
+- 新增 `docs/round-40-full-summary.md` 与 Roadmap Section 28。
+
+### 2. 核心结论
+
+1. **PyO3 是 Python 唯一主路径**；C ABI ctypes 只保留给 C/C++ 和源码开发回退。
+2. **Serving 层的下一步不是继续堆 Python 功能，而是把热路径下沉 Rust/PyO3。**
+3. **DiskSlotIndex 的下一关是 100M/320M 全表 + block/offset 工程化**，不是继续加 Python 封装。
+4. **真实引擎 A/B 和真表 nightly 是产品化前提**，不能只靠本地 synthetic smoke。
+
+### 3. 结果
+
+```text
+Roadmap Section 28 已新增
+round-40-full-summary.md 已新增
+V157–V165 已登记
+Phase R1–R5 已排布
+```

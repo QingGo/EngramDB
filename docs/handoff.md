@@ -223,3 +223,10 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
    - S4：真表 Arrow IPC、serving A/B、真表性能阈值门禁、release gate 集成完成。
    - 本地 release gate `SKIP_BENCH=1` 通过；版本提升 v0.2.12。
    - 关闭 V142/V150/V153/V154/V155。
+
+   **Session 40（第二十六轮：系统性思考）**：
+   - 明确终极目标：EngramDB = 真实 PLE n-gram 记忆表的事实标准磁盘优先存储底座。
+   - 新增技术债 V157–V165：serving Python 热路径、DiskSlotIndex v3 cache/规模、重复 tuple 语义、PyO3/ctypes 收敛、发布纪律、真实引擎 A/B、真表 nightly、真实表 e2e。
+   - 后续计划重排为 Phase R1–R5：生产收敛、索引产品化、真实 serving、真表门禁/发布纪律、生态 canonical。
+   - 借鉴矩阵更新：DuckDB/SQLite、RocksDB/LMDB、Arrow/Parquet、vLLM/SGLang/llama.cpp、Transformers/engram-peft/qwen35-ple。
+   - 完整版见 `docs/round-40-full-summary.md` 与 Roadmap Section 28。

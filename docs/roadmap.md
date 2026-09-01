@@ -2330,3 +2330,87 @@ LLM-CompileForge  推理 runtime（后续）
 5. qwen35-ple 由另一 agent 负责，EngramDB 只提供通用协议和存储能力。
 
 > 完整计划/发现/尝试/踩坑/完成/未完成见 `docs/round-37-full-summary.md`。
+
+# 28. 第二十六轮系统性思考（Session 40：终极目标、新债与后续路线）
+
+## 28.1 终极目标
+
+让 EngramDB 成为 DeepSeek Engram / Qwen PLE n-gram 记忆表的**事实标准磁盘优先存储底座**：
+
+- 存储正确：真实 320M 级表 Store-I / Store-P byte-identical。
+- 性能达标：Store-P ≥4M 等效行/s；真实引擎 serving 差距 ≤5%；DiskSlotIndex 1M/10M/100M/320M 全表实测。
+- 产品化：单目录、manifest、版本化、PyO3 为 Python 唯一下发路径。
+- 生态一致：EngramDB 是 rowid→slot、PleMemory、Bundle、TargetReader 的唯一 canonical；qwen35-ple / engram-peft / vLLM / SGLang / llama.cpp 只做薄 adapter。
+- 可演进：格式、索引、bundle 全部版本化，任何新能力必须有真表数据。
+
+## 28.2 本轮新增技术债
+
+| # | 债 | 影响 | 处置 |
+|---|---|---|---|
+| V157 | `PleMemoryAdapter` 真表 torch 热路径仅约 1.6K–2K tok/s | 服务化还不是生产性能 | rowid/history/fetch/dequant 下沉 Rust/PyO3 |
+| V158 | DiskSlotIndex v3 对 cache 敏感，verify/查询需高 cache | 大表内存和读放大不稳定 | 评估 block index / hash 均匀性 / Rust lookup API |
+| V159 | 真实 20M keys 含重复 rowid tuple | 下游误用单槽 lookup 可能拿错记录 | 固化 `lookup` 代表槽与 `lookup_all` 全部槽契约 |
+| V160 | Python 双桥：PyO3 + ctypes fallback | API 不完整、双维护、误导 | Python 发布只走 PyO3；C ABI 仅 C/C++ 外部用 |
+| V161 | 发布流程出现“先 tag 后修 CI / 强推 tag” | release 可重复性差 | 先 CI 全绿再 tag，禁止无验证强推 |
+| V162 | 通用 Engine Adapter 已落地，但无真实 vLLM/SGLang 模型级 A/B | 无法证明 serving 目标 | 真实引擎 A/B 出 CSV 阈值 |
+| V163 | 真表门禁只在本地 release gate | 无法防远程回归 | self-hosted / WSL nightly 真表门禁 |
+| V164 | `view build --slot-index` 缺真实表 e2e | 生产路径未闭环 | 补真实表 e2e |
+| V165 | 100M/320M DiskSlotIndex 全表长跑未完成 | 规模结论不完整 | WSL 稳定环境跑全表 |
+
+## 28.3 后续计划
+
+### Phase R1：生产路径收敛
+- [ ] Python 发布路径 PyO3-only；ctypes fallback 降级为源码/C/C++ 用途。
+- [ ] `PleMemoryAdapter` / `PleMemory` 热路径下沉 Rust/PyO3。
+- [ ] PleSequence/PleSequenceStore 与真实 PyTorch module 集成验证。
+
+### Phase R2：磁盘索引产品化
+- [ ] WSL 稳定环境 100M/320M DiskSlotIndex build/verify/lookup。
+- [ ] 评估 block index、offset table、hash 均匀性、原生 Rust lookup。
+- [ ] 补真实表 `view build --slot-index` e2e。
+- [ ] 固化重复 rowid tuple 的 lookup 语义契约。
+
+### Phase R3：真实引擎 serving
+- [ ] 真实 vLLM 注入 PleMemoryAdapter/TargetReaderHook 并 A/B。
+- [ ] 真实 SGLang 替换 reader/target-reader 并 A/B。
+- [ ] 输出 tok/s、延迟、与原生路径差距 ≤5% 的 CSV。
+
+### Phase R4：真表门禁与发布纪律
+- [ ] 真表 nightly/self-hosted runner：Arrow + serving + DiskSlotIndex。
+- [ ] release 流程：CI 全绿 → tag → release，禁止无验证强推。
+- [ ] 三仓 README/版本/协议同步。
+
+### Phase R5：生态 canonical 化
+- [ ] qwen35-ple 移除本地 fallback，统一使用 EngramDB canonical。
+- [ ] engram-peft 通过 Bundle / PleMemory 接入。
+- [ ] vLLM / SGLang / llama.cpp 薄 adapter 统一协议。
+
+## 28.4 借鉴矩阵（本轮）
+
+| 来源 | 借什么 | 不借什么 | 怎么帮我们接近目标 |
+|---|---|---|---|
+| DuckDB | 嵌入式、目录即库、manifest、Arrow IPC 零拷贝 | SQL/查询引擎 | 确立单目录可嵌入产品形态 |
+| SQLite | 文件格式版本化、schema 迁移、稳定性 | SQL/通用事务 | 用于 manifest/bundle 版本纪律 |
+| RocksDB/LevelDB | 不可变排序段、block/offset index、bloom | LSM/compaction/写放大 | 用于静态 DiskSlotIndex block index |
+| LMDB/MDBX | 只读 mmap、单文件、零拷贝 | 写事务/通用 KV | 用于 Store-P/索引单文件 mmap |
+| Arrow/Parquet | Arrow IPC、chunk metadata、流式写 | 查询引擎 | 与训练器/引擎的数据契约 |
+| Cassandra/Bigtable | hash/range 分桶、局部性 | 分布式/副本 | 用于 DiskSlotIndex 分桶 |
+| vLLM | 自定义 op、CUDA graph splitting、pinned staging、async H2D | 不复制推理 | 指导 engine adapter 与真实验收 |
+| SGLang | Rust reader、io_uring、页缓存、异步 H2D | 不复制引擎 | 指导低层 reader 替换与 Rust 集成 |
+| llama.cpp | lazy mmap、tensor read、backend 接口 | 不复制 GGUF/推理 | 指导 Store-P 文件格式与 C ABI |
+| Transformers/HF | module hooks、cache state、lazy loading | 训练内核/模型 | 用于 PleSequence/PleMemoryAdapter |
+| engram-peft | adapter、patch、互操作契约 | 不重复训练逻辑 | 作为消费方与 contract test |
+| qwen35-ple | reader、checkpoint、真实实验载体 | 不接管 reader 实现 | 作为消费方，EngramDB 只提供存储/协议 |
+| Redis/Memcached | LRU、预取、统计遥测 | 不做通用 KV | 用于 cache 与 serving 指标 |
+
+## 28.5 本轮纪律
+
+1. Python 只以 PyO3 为发布路径；C ABI 只服务 C/C++。
+2. 所有 serving/engine 结论必须有真实引擎 A/B 数字。
+3. 所有 DiskSlotIndex 规模结论必须有大表实测。
+4. 先 CI 全绿再 tag，禁止无验证强推 release tag。
+5. 重复 rowid tuple 语义必须版本化、显示化。
+6. 存储核心保持轻量，serving 层可选。
+7. 跨仓单一事实源：EngramDB 是 canonical，其他仓只做消费方 adapter。
+
+> 完整版见 `docs/round-40-full-summary.md`。
