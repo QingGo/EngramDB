@@ -239,6 +239,23 @@ raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
 
 服务端与客户端见 `python/README.md` 或 `docs/`。
 
+可选 Serving 层（按需加载，不阻塞核心导入）：
+
+```python
+from engramdb import PleMemory, PleSequence, PleSequenceStore, BundleManifest, TargetReaderRegistry
+
+# 单请求 / continuous batching
+mem = PleMemory(store=store, head_dim=160, num_heads=16)
+seq = mem.new_sequence()
+seq.feed([10, 11])
+states = PleSequenceStore(mem, max_sequences=4096)
+states.feed("req-1", [10, 11])
+
+# bundle + 通用 reader 注册协议
+bundle = BundleManifest.load("bundle.json")
+registry = TargetReaderRegistry()
+```
+
 线程安全 Store 连接池：
 
 ```python

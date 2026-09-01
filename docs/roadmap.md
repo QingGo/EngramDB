@@ -2273,7 +2273,9 @@ LLM-CompileForge  推理 runtime（后续）
 - ✅ 新增 `scripts/bench_disk_slot_index.py` 全表基准工具。
 - ✅ 完成 vLLM / SGLang / PleMemory / TargetReader / Bundle 架构可行性分析。
 - ⚠️ DiskSlotIndex 仍未跑 320M 全表实测。
-- ⚠️ serving 层（PleMemory / PleSequence / registry / bundle）尚未实现。
+- ✅ Serving 基础落地：`PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`。
+- ✅ Serving 模块可选、不 torch 导入：`ple_math` 纯 Python，`ple_memory` / `bundle` / `target_reader` 可按需加载。
+- ⚠️ 通用 Engine Adapter（vLLM / SGLang target reader 注入）尚未实现。
 
 ## 27.2 本轮新增/更新技术债
 
@@ -2297,18 +2299,19 @@ LLM-CompileForge  推理 runtime（后续）
 - [ ] 补 `view build --slot-index` 真实表 e2e。
 
 ### Phase S1：PleMemory / PleSequence
-- [ ] `PleMemory`：统一 Store / View / SlotIndex 读取。
-- [ ] `PleSequence`：per-sequence history + `current_e_t()`。
-- [ ] 纯 Python/torch 单元测试，不依赖 qwen。
+- [x] `PleMemory`：统一 Store / View / SlotIndex 读取。
+- [x] `PleSequence`：per-sequence history + `current_e_t()`。
+- [x] `PleSequenceStore`：continuous batching 的 per-sequence 状态容器。
+- [x] 纯 Python/torch 单元测试，不依赖 qwen。
 
 ### Phase S2：TargetReader Registry + Bundle
-- [ ] `engramdb.target_reader`：注册 + 加载协议。
-- [ ] `engramdb.bundle`：manifest + 路径解析 + schema version。
-- [ ] 不实现任何 qwen reader。
+- [x] `engramdb.target_reader`：注册 + 加载协议。
+- [x] `engramdb.bundle`：manifest + 路径解析 + schema version。
+- [x] 不实现任何 qwen reader。
 
 ### Phase S3：通用 Engine Adapter
 - [ ] 通用 layer wrapper / forward hook。
-- [ ] per-sequence state store。
+- [x] per-sequence state store（`PleSequenceStore`）。
 - [ ] 先纯 PyTorch，再 vLLM / SGLang。
 
 ### Phase S4：Arrow / 服务 / 真表门禁 / 发布

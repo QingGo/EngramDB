@@ -1725,3 +1725,35 @@ serving / Arrow / 全表 Store-P ❌
 
 详见 `docs/roadmap.md` Section 27。完整版见 `docs/round-37-full-summary.md`。
 
+
+---
+
+## Session 38（第二十四轮：Serving 层基础落地）
+
+### 1. 本轮完成
+
+- [x] `ple_math.py`：纯 Python PLE rowid，零第三方依赖。
+- [x] `PleMemory`：统一 Store-I / Store-P + SlotIndex 读取。
+- [x] `PleSequence`：per-sequence history + `current_e_t()`。
+- [x] `PleSequenceStore`：continuous batching per-sequence 状态容器。
+- [x] `BundleManifest`：schema v1、路径解析、校验、`open_memory()`。
+- [x] `TargetReaderRegistry` / `ReaderSpec`：通用 reader 注册/加载协议。
+- [x] Serving 层按需加载，不阻塞核心导入、不触发 torch。
+- [x] Python smoke 新增 `test_ple_memory` 与 `test_bundle_and_target_reader`。
+
+### 2. 本轮关闭/推进技术债
+
+| # | 债 | 状态 |
+|---|---|---|
+| V149 | 无 `PleMemory` / `PleSequence` | ✅ 基础落地 |
+| V151 | 无 per-sequence 状态管理协议 | ✅ `PleSequenceStore` |
+| V152 | 无通用 reader checkpoint / bundle 协议 | ✅ `BundleManifest` + `TargetReaderRegistry` |
+| V156 | 高级 serving 模块与核心依赖未隔离 | ✅ 纯 Python `ple_math` + 懒加载 |
+
+### 3. 下一阶段
+
+- Phase S3：通用 Engine Adapter（layer wrapper / forward hook / vLLM / SGLang 注入）。
+- Phase B2：DiskSlotIndex 320M 真表实测 + 单文件/offset table。
+- Phase S4：Arrow / serving A/B / 真表门禁 / v0.2.12。
+
+详见 `docs/roadmap.md` Section 27 更新。

@@ -664,6 +664,163 @@ def test_store_pool() -> None:
 
 
 
+def test_ple_memory() -> None:
+    """Exercise the optional serving-layer PleMemory/PleSequence API."""
+    # This test intentionally needs only Store, not torch.  Use a tiny custom
+    # prime table so generated rowids stay inside the synthetic shard.
+    import struct
+
+    from engramdb.ple_memory import PleMemory, PleSequenceStore
+
+    head_dim = 4
+    num_heads = 2
+    # 4 rows total; each row is one head of width 4 bytes.
+    rows = [struct.pack("<HH", i, i + 1) for i in range(4)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-ple-memory-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), head_dim)
+        try:
+            mem = PleMemory(
+                store=store,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                ngram_size=2,
+                heads_per_ngram=2,
+                prime_sizes=[2, 2],
+                offsets=[0, 2],
+                eos=0,
+            )
+            assert mem.source == "store"
+            assert mem.record_bytes == head_dim * num_heads
+
+            rows_for_tokens = mem.rowids_for_tokens([1, 2])
+            assert len(rows_for_tokens) == 2
+            assert all(len(row) == num_heads for row in rows_for_tokens)
+
+            raw = mem.fetch_raw(rows_for_tokens)
+            assert len(raw) == 2 * mem.record_bytes
+
+            seq = mem.new_sequence()
+            step = seq.feed([1, 2])
+            assert step.tokens == [1, 2]
+            assert len(step.raw) == 2 * mem.record_bytes
+            assert seq.history == [2]
+            assert seq.current_rowids() == rows_for_tokens
+            assert seq.current_raw() == raw
+
+            step2 = seq.feed([3])
+            assert step2.tokens == [3]
+            assert seq.history == [3]
+            assert seq.length == 3
+            seq.reset()
+            assert seq.length == 0
+            assert seq.history == [0]
+
+            store = PleSequenceStore(mem, max_sequences=2)
+            store.feed("a", [1, 2])
+            store.feed("b", [3])
+            assert len(store) == 2
+            assert store.get("a").history == [2]
+            assert store.current_raw("b") == mem.fetch_raw(mem.rowids_for_tokens([3], [0]))
+            store.remove("b")
+            assert len(store) == 1
+            store.clear()
+            assert len(store) == 0
+
+            # Optional torch tensor path (skip silently when unavailable).
+            try:
+                import torch
+            except Exception:
+                torch = None
+            if torch is not None:
+                t = mem.fetch_tensor(rows_for_tokens)
+                assert tuple(t.shape) == (2, num_heads, head_dim)
+                assert t.dtype == torch.float32
+                print("PleMemory tensor OK")
+            print("PleMemory OK")
+        finally:
+            store.close()
+
+
+def test_bundle_and_target_reader() -> None:
+    """Exercise bundle manifest resolution and generic reader registry."""
+    import struct
+
+    import engramdb.bundle as bundle_mod
+    import engramdb.target_reader as reader_mod
+
+    with tempfile.TemporaryDirectory(prefix="engramdb-bundle-") as td:
+        root = Path(td)
+        rows_dir = root / "rows"
+        rows_dir.mkdir()
+        # 4 rows, each 4 bytes; enough for a tiny Store-I bundle.
+        with open(rows_dir / "shard_000.bin", "wb") as f:
+            for i in range(4):
+                f.write(struct.pack("<HH", i, i + 1))
+
+        manifest_data = {
+            "schema": "engramdb-bundle-v1",
+            "id": "test-bundle",
+            "memory": {
+                "type": "store",
+                "store": {
+                    "path": "rows",
+                    "shards": 1,
+                    "rows_per_shard": 4,
+                    "width": 4,
+                },
+            },
+            "ple": {
+                "ple_embed_dim": 8,
+                "num_heads": 2,
+                "head_dim": 4,
+                "ngram_size": 2,
+                "heads_per_ngram": 2,
+                "prime_sizes": [2, 2],
+                "offsets": [0, 2],
+                "eos": 0,
+            },
+            "readers": [
+                {
+                    "name": "dummy",
+                    "version": "1",
+                    "path": "reader.bin",
+                    "options": {"flag": True},
+                }
+            ],
+        }
+        manifest_path = root / "bundle.json"
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+        bm = bundle_mod.BundleManifest.load(manifest_path)
+        assert bm.validate() == [], bm.validate()
+        resolved = bm.resolved()
+        assert resolved["memory"]["store"]["path"] == str(rows_dir)
+        assert resolved["readers"][0]["path"] == str(root / "reader.bin")
+
+        mem = bm.open_memory()
+        try:
+            assert mem.source == "store"
+            assert mem.num_heads == 2
+            assert mem.record_bytes == 8
+        finally:
+            mem.store.close()
+
+        reg = reader_mod.TargetReaderRegistry()
+
+        @reg.register("dummy", version="1")
+        def build_dummy(**kwargs: object) -> object:
+            return kwargs
+
+        reader = reg.create_from_manifest(bm)
+        assert reader["flag"] is True
+        assert reader["path"] == str(root / "reader.bin")
+        assert reg.available() == [{"name": "dummy", "version": "1"}]
+        print("Bundle + TargetReader OK")
+
+
 def main() -> None:
     from importlib.metadata import version as _dist_version
 
@@ -700,6 +857,8 @@ def main() -> None:
     test_official_loader_sharded_load()
     test_rowids_for_seq()
     test_store_pool()
+    test_ple_memory()
+    test_bundle_and_target_reader()
     test_database_arrow_server()
     test_disk_ple_lru()
     test_prefetch_lru()

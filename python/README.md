@@ -191,6 +191,51 @@ emb.close()
 
 
 
+### Serving 层：PleMemory / PleSequence / Bundle（可选）
+
+这些高层模块不会拖慢核心导入；访问 `engramdb.PleMemory` 时才按需加载。
+它们不依赖 vLLM / SGLang，也不要求 PyTorch（除 `fetch_tensor` / `current_e_t` 外）。
+
+```python
+from engramdb import PleMemory, PleSequenceStore, BundleManifest, TargetReaderRegistry
+
+# Store-I 或 Store-P 二选一
+mem = PleMemory(
+    store=store,
+    head_dim=160,          # Store-I 单头行字节数
+    num_heads=16,
+    ngram_size=3,
+    heads_per_ngram=8,
+    scale=0.00019931793212890625,
+)
+# 或
+# mem = PleMemory(view=view, slot_index=disk_index, num_heads=16)
+
+# 单条请求：保存历史、流式取 e_t
+seq = mem.new_sequence()
+step = seq.feed([10, 11, 12])      # 返回 raw + rowids
+current = seq.current_e_t()        # torch [T,16,160]（可选）
+
+# continuous batching：按 seq id 管理 per-request 状态
+states = PleSequenceStore(mem, max_sequences=4096)
+states.feed("req-1", [10, 11])
+states.feed("req-2", [999])
+e_t_1 = states.current_e_t("req-1")
+
+# Bundle Manifest：描述存储 + PLE 参数 + reader 入口
+bundle = BundleManifest.load("bundle.json")
+print(bundle.validate())
+resolved = bundle.resolved()
+memory = bundle.open_memory()
+
+# TargetReader Registry：只定义加载协议，不实现具体 qwen reader
+registry = TargetReaderRegistry()
+@registry.register("my-reader", version="1")
+def build_reader(path, **kwargs):
+    return {"path": path, **kwargs}
+reader = registry.create_from_manifest(bundle)
+```
+
 ## 引擎适配层
 
 目标是 **不改 vLLM / SGLang 源码**，启动前执行一小段 hook 即可把 PLE 表切到 EngramDB。

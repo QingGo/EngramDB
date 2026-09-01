@@ -319,6 +319,41 @@ def __getattr__(name: str):
     if name == "DiskPleNGramEmbedding":
         from .ple_adapter import DiskPleNGramEmbedding
         return DiskPleNGramEmbedding
+    if name in (
+        "PleMemory",
+        "PleSequence",
+        "PleSequenceStore",
+        "PleStep",
+        "ple_memory_from_discovery",
+    ):
+        from .ple_memory import (
+            PleMemory,
+            PleSequence,
+            PleSequenceStore,
+            PleStep,
+            ple_memory_from_discovery,
+        )
+        return {
+            "PleMemory": PleMemory,
+            "PleSequence": PleSequence,
+            "PleSequenceStore": PleSequenceStore,
+            "PleStep": PleStep,
+            "ple_memory_from_discovery": ple_memory_from_discovery,
+        }[name]
+    if name in ("BundleManifest", "bundle_manifest_from_path"):
+        from .bundle import BundleManifest, bundle_manifest_from_path
+
+        return {
+            "BundleManifest": BundleManifest,
+            "bundle_manifest_from_path": bundle_manifest_from_path,
+        }[name]
+    if name in ("TargetReaderRegistry", "ReaderSpec"):
+        from .target_reader import ReaderSpec, TargetReaderRegistry
+
+        return {
+            "TargetReaderRegistry": TargetReaderRegistry,
+            "ReaderSpec": ReaderSpec,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

@@ -209,9 +209,9 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构）**：EngramDB 新增原生 `slot-index build|verify`、`view build --slot-index` / `view verify --slot-index`；Python `DiskSlotIndex` 支持 v1/v2 并可直接生成 v2；新增 `scripts/bench_disk_slot_index.py`。完成 vLLM/SGLang/PleMemory/TargetReader/Bundle 架构可行性分析。新债 V149–V156（serving 层、engine adapter、per-sequence、bundle、Arrow、v0.2.12、真表门禁、依赖隔离）。完整版见 `docs/round-37-full-summary.md`。
 
-
-
-
-
-
-
+  **Session 38（第二十四轮：Serving 层基础落地）**：
+  - 新增纯 Python `ple_math.py`：Qwen PLE rowid 零第三方依赖。
+  - 新增 `PleMemory` / `PleSequence` / `PleSequenceStore`：统一 Store-I/Store-P 读取、per-sequence history、continuous batching 状态容器。
+  - 新增 `BundleManifest` / `TargetReaderRegistry` / `ReaderSpec`：bundle schema v1、路径解析、通用 reader 注册/加载协议。
+  - Serving 层全部按需懒加载，不触发 torch/ple_adapter；`python_wheel_smoke.py` 增加对应测试。
+  - 关闭 V149/V151/V152 基础部分，推进 V156；V150（通用 Engine Adapter）仍待做。

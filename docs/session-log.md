@@ -1962,3 +1962,50 @@ V144 闭环
 
 > 完整版见 `docs/round-37-full-summary.md`。
 
+
+## Session 38（第二十四轮：Serving 层基础落地）
+
+### 1. 做了什么
+
+- 新增纯 Python `ple_math.py`：Qwen PLE rowid 数学实现，零第三方依赖。
+- 新增 `ple_memory.py`：
+  - `PleMemory`：统一 Store-I / Store-P + slot index 读取、rowid 生成、raw/tensor fetch。
+  - `PleSequence`：per-request n-gram history、`feed()`、`current_e_t()`。
+  - `PleSequenceStore`：continuous batching 的 per-sequence 状态容器。
+  - `ple_memory_from_discovery()`：从 `discover_ple()` 元数据直接构建。
+- 新增 `bundle.py`：
+  - `BundleManifest`：schema v1、路径解析、校验、`open_memory()`。
+- 新增 `target_reader.py`：
+  - `TargetReaderRegistry` / `ReaderSpec`：通用 target reader 注册/加载协议，不实现任何 qwen reader。
+- 顶层 `engramdb` 增加按需懒加载导出，不阻塞核心导入、不触发 torch。
+- `scripts/python_wheel_smoke.py` 增加 `test_ple_memory` 与 `test_bundle_and_target_reader`。
+
+### 2. 踩坑/发现
+
+1. `ple_memory` 如果直接 import `ple_adapter` 会在模块导入时触发 PyTorch。
+   - 拆分纯数学到 `ple_math.py`，`ple_memory` 只按需引用纯 Python 实现。
+2. `__getattr__` 中把 bundle 与 target_reader 放同一 return dict 会导致未导入变量引用错误。
+   - 拆成两个独立分支。
+3. `python_wheel_smoke.py` 通过 str_replace 插入函数时曾覆盖 `def main()`；
+   - 已恢复，并通过 py_compile。
+
+### 3. 结果
+
+```text
+python -m py_compile 全部通过
+test_ple_memory 通过（含 raw / tensor / PleSequenceStore）
+test_bundle_and_target_reader 通过
+顶层懒加载：访问 PleMemory/Bundle/TargetReader 不加载 torch/ple_adapter
+```
+
+### 4. 完成/未完成
+
+- [x] `PleMemory`
+- [x] `PleSequence`
+- [x] `PleSequenceStore`
+- [x] `BundleManifest`
+- [x] `TargetReaderRegistry` / `ReaderSpec`
+- [x] serving 模块不阻塞核心导入、不 torch 导入
+- [ ] 通用 Engine Adapter（vLLM / SGLang target reader 注入）
+- [ ] Arrow / serving A/B 真表验证
+- [ ] v0.2.12 发布
