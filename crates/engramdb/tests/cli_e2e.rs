@@ -235,3 +235,50 @@ fn tables_and_check_multi_table() {
         "check should include table"
     );
 }
+
+#[test]
+fn slot_index_build_verify_roundtrip() {
+    let tmp = Temp::new("slot-index");
+    let keys = tmp.0.join("keys.txt");
+    let mut content = String::new();
+    for gram in 0..8u64 {
+        for head in 0..16u64 {
+            content.push_str(&format!("{}\n", gram * 16 + head));
+        }
+    }
+    std::fs::write(&keys, content).unwrap();
+
+    let out = tmp.0.join("idx");
+    let o = run(
+        &[
+            "slot-index",
+            "build",
+            keys.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "--buckets",
+            "8",
+        ],
+        &tmp.0,
+        None,
+    );
+    assert!(o.status.success(), "slot-index build: {}", stdout(&o));
+    assert!(stdout(&o).contains("count=8"), "slot-index build stdout");
+    assert!(out.join("index.json").exists(), "index.json missing");
+    assert!(out.join("buckets").exists(), "buckets dir missing");
+
+    let o = run(
+        &[
+            "slot-index",
+            "verify",
+            keys.to_str().unwrap(),
+            out.to_str().unwrap(),
+        ],
+        &tmp.0,
+        None,
+    );
+    assert!(o.status.success(), "slot-index verify: {}", stdout(&o));
+    assert!(
+        stdout(&o).contains("8 grams OK"),
+        "slot-index verify stdout"
+    );
+}

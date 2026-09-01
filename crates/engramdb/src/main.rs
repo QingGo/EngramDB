@@ -24,6 +24,7 @@ use engramdb_io::batch::BadgeGather;
 use engramdb_io::view;
 
 mod serve;
+mod slot_index;
 mod workload;
 
 use workload::{gen_tokens, AgentStats, Mode};
@@ -59,7 +60,7 @@ fn layout_for_dir(dir: &Path) -> Result<Layout, String> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
-        println!("usage: engramdb <build|index|gather|verify|bench-real|warm|view|prep|tables|serve> [args...]");
+        println!("usage: engramdb <build|index|gather|verify|bench-real|warm|view|slot-index|prep|tables|serve> [args...]");
         return;
     };
     let rest = args;
@@ -71,6 +72,7 @@ fn main() {
         "bench-real" => cmd_bench_real(rest),
         "warm" => cmd_warm(rest),
         "view" => cmd_view(rest),
+        "slot-index" => cmd_slot_index(rest),
         "prep" => cmd_prep(rest),
         "tables" => cmd_tables(rest),
         "serve" => cmd_serve(rest),
@@ -260,6 +262,70 @@ fn cmd_verify(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let mut out = vec![0u8; keys.len() * w];
     batch.gather_planned(&keys, &mut out).map_err(io_err)?;
     println!("fnv={} keys={}", fnv(&out), keys.len());
+    Ok(())
+}
+
+/// slot-index build <keys.txt> <out_dir> [--buckets N] [--cache N]
+/// slot-index verify <keys.txt> <out_dir> [--cache N]
+/// 原生磁盘 SlotIndex：行/产品侧无需 Python，直接生成 Python v2 兼容索引。
+fn cmd_slot_index(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let Some(sub) = rest.next() else {
+        return Err("slot-index 需要子命令 build|verify".into());
+    };
+    let it = rest;
+    match sub.as_str() {
+        "build" => cmd_slot_index_build(it),
+        "verify" => cmd_slot_index_verify(it),
+        _ => Err(format!("unknown slot-index subcommand: {sub}")),
+    }
+}
+
+fn cmd_slot_index_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let keys = PathBuf::from(rest.next().ok_or("需要 <keys.txt>")?);
+    let out_dir = PathBuf::from(rest.next().ok_or("需要 <out_dir>")?);
+    let mut buckets = slot_index::DEFAULT_BUCKETS;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--buckets" => {
+                buckets = rest
+                    .next()
+                    .ok_or("buckets 值")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let stats = slot_index::build_from_keys_file(&keys, &out_dir, buckets)?;
+    println!(
+        "slot-index built: count={} buckets={} bytes={} took={:.2}s -> {}",
+        stats.count,
+        buckets,
+        stats.bytes,
+        stats.seconds,
+        out_dir.display()
+    );
+    Ok(())
+}
+
+fn cmd_slot_index_verify(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
+    let keys = PathBuf::from(rest.next().ok_or("需要 <keys.txt>")?);
+    let out_dir = PathBuf::from(rest.next().ok_or("需要 <out_dir>")?);
+    let mut cache = slot_index::DEFAULT_CACHE_BUCKETS;
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--cache" => {
+                cache = rest
+                    .next()
+                    .ok_or("cache 值")?
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?
+            }
+            _ => return Err(format!("未知参数 {a}")),
+        }
+    }
+    let verified = slot_index::verify_from_keys_file(&keys, &out_dir, cache)?;
+    println!("slot-index verified: {verified} grams OK");
     Ok(())
 }
 
@@ -567,6 +633,32 @@ fn io_err(e: std::io::Error) -> String {
     e.to_string()
 }
 
+/// 在视图 manifest 中记录原生生成的 slot-index 路径。
+fn update_view_manifest_slot_index(view_path: &Path, idx_dir: &Path) -> Result<(), String> {
+    let mp = view_path.with_extension("manifest.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&mp).map_err(io_err)?).map_err(|e| e.to_string())?;
+    value["slot_index"] = serde_json::json!(idx_dir.display().to_string());
+    std::fs::write(
+        &mp,
+        serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?,
+    )
+    .map_err(io_err)?;
+    Ok(())
+}
+
+/// 从视图 manifest 读取 keys_out 路径（供 verify --slot-index 使用）。
+fn manifest_keys_path(view_path: &Path) -> Result<PathBuf, String> {
+    let mp = view_path.with_extension("manifest.json");
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&mp).map_err(io_err)?).map_err(|e| e.to_string())?;
+    let keys = value
+        .get("keys_out")
+        .and_then(|v| v.as_str())
+        .ok_or("view manifest missing keys_out")?;
+    Ok(PathBuf::from(keys))
+}
+
 /// 让外部可直接调用 fnv（供 python 对拍脚本）——纯函数保持公开。
 pub fn exported_fnv(bytes: &[u8]) -> u64 {
     fnv(bytes)
@@ -579,10 +671,10 @@ fn _keep_serde(_p: &Path) {
 
 /// view <build|bench|lat|verify> ...：Store-P 物化视图（P4 产品面；与探针 p4view 同构）。
 /// 用法：
-///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS] [--keys-stream KEYS] [--verify]
+///   engramdb view build <rows_dir> <n_grams> <view.bin> <keys.txt> [--slot 2560|4096] [--keys IN_KEYS] [--keys-stream KEYS] [--slot-index DIR] [--verify]
 ///   engramdb view bench <rows_dir> <view.bin> [--keys K] [--sub N] [--threads 8] [--slot B] [--backend preadv|uring]
 ///   engramdb view lat <view.bin> [--threads 1|8] [--warm] [--cold] [--sub N] [--slot B]
-///   engramdb view verify <rows_dir> <view.bin> [--keys K] [--sub N]
+///   engramdb view verify <rows_dir> <view.bin> [--keys K] [--slot-index DIR] [--sub N]
 fn cmd_view(mut rest: impl Iterator<Item = String>) -> Result<(), String> {
     let Some(sub) = rest.next() else {
         return Err("view 需要子命令 build|bench|lat|verify".into());
@@ -623,6 +715,7 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     let mut backend_name: Option<String> = None;
     let mut keys_in: Option<PathBuf> = None;
     let mut keys_stream: Option<PathBuf> = None;
+    let mut slot_index_out: Option<PathBuf> = None;
     let mut verify = false;
     let mut it = rest;
     while let Some(a) = it.next() {
@@ -638,6 +731,9 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
             "--keys" => keys_in = Some(PathBuf::from(it.next().ok_or("keys 路径")?)),
             "--keys-stream" | "--keys-file" => {
                 keys_stream = Some(PathBuf::from(it.next().ok_or("keys 路径")?))
+            }
+            "--slot-index" => {
+                slot_index_out = Some(PathBuf::from(it.next().ok_or("slot-index 路径")?))
             }
             "--verify" => verify = true,
             "--seed" => {
@@ -680,6 +776,18 @@ fn cmd_view_build(mut rest: impl Iterator<Item = String>) -> Result<(), String> 
     } else {
         let _ = view::build_view(&batch, n, slot_bytes, &view_out, Some(&keys_out))
             .map_err(|e| e.to_string())?;
+    }
+    if let Some(idx_dir) = slot_index_out {
+        let stats =
+            slot_index::build_from_keys_file(&keys_out, &idx_dir, slot_index::DEFAULT_BUCKETS)?;
+        update_view_manifest_slot_index(&view_out, &idx_dir)?;
+        println!(
+            "view slot-index built: count={} bytes={} took={:.2}s -> {}",
+            stats.count,
+            stats.bytes,
+            stats.seconds,
+            idx_dir.display()
+        );
     }
     if verify {
         let keys = view::read_keys(&keys_out).map_err(|e| e.to_string())?;
@@ -790,11 +898,15 @@ fn cmd_view_verify(mut rest: impl Iterator<Item = String>) -> Result<(), String>
     let rows_dir = PathBuf::from(rest.next().ok_or("rows_dir")?);
     let view_file = PathBuf::from(rest.next().ok_or("view.bin")?);
     let mut keys_path: Option<PathBuf> = None;
+    let mut slot_index_dir: Option<PathBuf> = None;
     let mut sub_grams = 0usize;
     let mut backend_name: Option<String> = None;
     while let Some(a) = rest.next() {
         match a.as_str() {
             "--keys" => keys_path = Some(PathBuf::from(rest.next().ok_or("keys 路径")?)),
+            "--slot-index" => {
+                slot_index_dir = Some(PathBuf::from(rest.next().ok_or("slot-index 路径")?))
+            }
             "--sub" => {
                 sub_grams = rest
                     .next()
@@ -805,6 +917,18 @@ fn cmd_view_verify(mut rest: impl Iterator<Item = String>) -> Result<(), String>
             "--backend" => backend_name = Some(rest.next().ok_or("backend")?),
             _ => return Err(format!("未知参数 {a}")),
         }
+    }
+    if let Some(idx_dir) = slot_index_dir {
+        let keys_file = match &keys_path {
+            Some(kf) => kf.clone(),
+            None => manifest_keys_path(&view_file)?,
+        };
+        let verified = slot_index::verify_from_keys_file(
+            &keys_file,
+            &idx_dir,
+            slot_index::DEFAULT_CACHE_BUCKETS,
+        )?;
+        println!("view slot-index verified: {verified} grams OK");
     }
     let layout = layout_for_dir(&rows_dir)?;
     let batch = BadgeGather::open_with_backend(&rows_dir, &layout, backend_for(backend_name)?)

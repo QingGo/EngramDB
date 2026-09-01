@@ -30,14 +30,28 @@ from typing import Iterable, Iterator
 import numpy as np
 
 _FORMAT = "engramdb-disk-slot-index-v1"
+_FORMAT_V2 = "engramdb-disk-slot-index-v2"
 _RECORD_BYTES = 16 * 8 + 8
+
+_FNV_OFFSET = 0xCBF29CE484222325
+_FNV_PRIME = 0x100000001B3
 
 
 def _row_key(row: np.ndarray | tuple[int, ...] | list[int]) -> bytes:
     return struct.pack("<16Q", *(int(x) for x in row))
 
 
-def _bucket_id(key: bytes, num_buckets: int) -> int:
+def _fnv1a_bucket(key: bytes, num_buckets: int) -> int:
+    h = _FNV_OFFSET
+    for b in key:
+        h ^= b
+        h = (h * _FNV_PRIME) & 0xFFFFFFFFFFFFFFFF
+    return h % num_buckets
+
+
+def _bucket_id(key: bytes, num_buckets: int, hash_name: str = "blake2b") -> int:
+    if hash_name == "fnv1a-64":
+        return _fnv1a_bucket(key, num_buckets)
     digest = hashlib.blake2b(key, digest_size=8).digest()
     return int.from_bytes(digest, "little") % num_buckets
 
@@ -51,8 +65,10 @@ class DiskSlotIndex:
         if not meta_path.exists():
             raise FileNotFoundError(f"disk slot index not found: {meta_path}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if meta.get("format") != _FORMAT:
-            raise ValueError(f"unsupported disk slot index format: {meta.get('format')}")
+        fmt = meta.get("format")
+        if fmt not in (_FORMAT, _FORMAT_V2):
+            raise ValueError(f"unsupported disk slot index format: {fmt}")
+        self.hash_name = meta.get("hash", "blake2b")
         self.heads = int(meta["heads"])
         self.num_buckets = int(meta["num_buckets"])
         self.count = int(meta["count"])
@@ -71,14 +87,20 @@ class DiskSlotIndex:
         num_buckets: int = 16384,
         cache_buckets: int = 64,
         slots: Iterable[int] | None = None,
+        hash_name: str = "blake2b",
     ) -> DiskSlotIndex:
         """Build a disk index from an iterable of rowid tuples.
 
         ``rowids`` may be a ``[N, heads]`` numpy array or any iterable yielding
         length-``heads`` tuples.  ``slots`` defaults to ``arange(N)``.
+        ``hash_name`` selects bucket hashing: ``blake2b`` (v1) or ``fnv1a-64``
+        (v2, compatible with the native EngramDB CLI).
         """
         if heads != 16:
             raise NotImplementedError("DiskSlotIndex currently supports heads=16")
+        if hash_name not in ("blake2b", "fnv1a-64"):
+            raise ValueError(f"unsupported hash_name: {hash_name}")
+        fmt = _FORMAT_V2 if hash_name == "fnv1a-64" else _FORMAT
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         buckets_dir = output_dir / "buckets"
@@ -98,7 +120,7 @@ class DiskSlotIndex:
             for i, row in enumerate(rowids):
                 key = _row_key(row)
                 slot = i if slot_iter is None else int(next(slot_iter))
-                bucket = _bucket_id(key, num_buckets)
+                bucket = _bucket_id(key, num_buckets, hash_name)
                 raw.write(key + struct.pack("<Q", slot))
                 counts[bucket] += 1
                 count += 1
@@ -119,7 +141,7 @@ class DiskSlotIndex:
                     if not record:
                         break
                     key = record[:128]
-                    bucket = _bucket_id(key, num_buckets)
+                    bucket = _bucket_id(key, num_buckets, hash_name)
                     pos = int(offsets[bucket] + cursor[bucket] * rec_bytes)
                     os.pwrite(fd, record, pos)
                     cursor[bucket] += 1
@@ -142,7 +164,8 @@ class DiskSlotIndex:
             os.close(fd)
 
         meta = {
-            "format": _FORMAT,
+            "format": fmt,
+            "hash": hash_name,
             "heads": heads,
             "num_buckets": num_buckets,
             "count": count,
@@ -195,7 +218,7 @@ class DiskSlotIndex:
         if self._closed:
             raise ValueError("DiskSlotIndex is closed")
         key = _row_key(row)
-        bucket = _bucket_id(key, self.num_buckets)
+        bucket = _bucket_id(key, self.num_buckets, self.hash_name)
         records = self._load_bucket(bucket)
         import bisect
 
@@ -208,7 +231,7 @@ class DiskSlotIndex:
         if self._closed:
             raise ValueError("DiskSlotIndex is closed")
         key = _row_key(row)
-        bucket = _bucket_id(key, self.num_buckets)
+        bucket = _bucket_id(key, self.num_buckets, self.hash_name)
         records = self._load_bucket(bucket)
         import bisect
 

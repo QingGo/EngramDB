@@ -100,6 +100,16 @@ def test_disk_slot_index() -> None:
             np.testing.assert_array_equal(slots, np.arange(4, dtype=np.int64))
         finally:
             idx.close()
+    with tempfile.TemporaryDirectory(prefix="engramdb-disk-slot-v2-") as td:
+        idx = engramdb.DiskSlotIndex.build(
+            rowids, td, num_buckets=8, hash_name="fnv1a-64"
+        )
+        try:
+            assert idx.hash_name == "fnv1a-64"
+            assert idx.lookup(tuple(range(16))) == 0
+            assert idx.lookup(tuple(range(32, 48))) == 2
+        finally:
+            idx.close()
     print("DiskSlotIndex OK")
 
 
