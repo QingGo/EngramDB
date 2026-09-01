@@ -1831,6 +1831,12 @@ Mac 外盘 20k token Store-I store=1.920s / fetch_tensor=0.272s / Store-P view=0
   - 本机验证：access-order Store-P 与 Store-I e_t `maxdiff=0.0`
 - `LiveETViewStore` 增加 `view()` 切片，修复实例属性遮蔽方法的问题。
 - `run_phase0.py` 新增 `--store-p-view` / `--store-p-slot-indices`，可直接进入 Store-P 训练路径。
+- **P0 代码完成**：
+  - `qwen35_ple/slot_index.py`：通用 rowid-tuple → Store-P slot 语义索引（二进制排序查找、保存/加载、重复行取代表槽）。
+  - `LiveETViewStore.from_slot_index` / `LiveETViewStore(access_order=True)`：任意 token 流映射到视图物理槽，并在窗口内按槽位排序读取后散射回 token 顺序。
+  - `LiveETDataset(access_order=True)`：按窗口最小物理槽调度窗口顺序，自动访问序调度。
+  - `build_corpus_store_p_view.py` 默认输出 `.slot_index.npz`；`run_phase0.py --store-p-slot-index` / `--access-order`、`bench_lazy_windows.py --access-order` 均已接入。
+  - 新增 `tests/test_slot_index.py`（5 个测试）。
 
 ### 4. 本轮踩坑（补充）
 

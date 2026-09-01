@@ -201,6 +201,8 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **Session 34（第二十轮系统性思考）**：终极目标不变；已确认“读取快”不等于“实验能跑”；新增技术债 V123–V132（语义 slot 映射、访问序、真实模型 1M、WSL golden、serving、门禁、Arrow、WSL 复现、全表 Store-P）；完整思考见 `docs/roadmap.md` Section 24、`docs/session-summary.md` Session 34。
 
+  **P0 完成（V123/V124）**：通用 rowid→slot 语义索引（`qwen35_ple.slot_index.SlotIndex`、`--slot-index-out`、`run_phase0 --store-p-slot-index`）与自动访问序调度（`LiveETViewStore(access_order=True)`、`LiveETDataset(access_order=True)`、`run_phase0 --access-order`）已落地；真实模型 1M 实验仍由 qwen35-ple/WSL 侧继续。
+
 
 
 

@@ -1543,13 +1543,13 @@ WSL serving A/B / 完整模型训练 ❌
 - [x] access-order Store-P 构建脚本 `build_corpus_store_p_view.py`。
 - [x] 本机验证 access-order Store-P 与 Store-I e_t `maxdiff=0.0`。
 - [x] `run_phase0.py --store-p-view / --store-p-slot-indices` 接入训练入口。
+- [x] V123：通用 rowid-tuple → full Store-P slot 语义索引（`SlotIndex` / `--slot-index-out` / `--store-p-slot-index`）。
+- [x] V124：access-order 视图 + LiveETDataset 自动访问序调度（`access_order=True` / `--access-order`）。
 - [x] README / roadmap / session-log / handoff 更新。
 - [x] release gate 全绿。
 
 ### 6. 未完成的内容
 
-- [ ] V123：通用 rowid-tuple → full Store-P slot 语义索引（当前只完成“语料 access-order”）。
-- [ ] V124：access-order 视图 + LiveETDataset 自动访问序调度的端到端版本。
 - [ ] V125：真实模型 1M real/control/3-seed loss 实验。
 - [ ] V126：WSL golden 漂移修复。
 - [ ] V127：vLLM / SGLang / llama.cpp serving A/B。
@@ -1563,9 +1563,9 @@ WSL serving A/B / 完整模型训练 ❌
 
 #### Phase 0：把“读取快”变成“实验能跑”
 
-- 通用 rowid-tuple → Store-P slot 索引/manifest。
-- access-order Store-P 视图 + 访问序调度。
-- WSL 真实模型 1M real/control/3-seed，同时记录 loss + fetch 时间。
+- [x] 通用 rowid-tuple → Store-P slot 索引/manifest。
+- [x] access-order Store-P 视图 + 访问序调度。
+- [ ] WSL 真实模型 1M real/control/3-seed，同时记录 loss + fetch 时间。
 
 #### Phase 1：把基准变成门禁
 
@@ -1590,12 +1590,14 @@ WSL serving A/B / 完整模型训练 ❌
 
 ```text
 EngramDB v0.2.10 (tag pushed)
-qwen35-ple main c244188 (access-order Store-P 已本地完成并待推)
+qwen35-ple P0 代码已完成（语义索引 + 自动访问序调度）
 StorePool / ThreadLocalStore ✅
 WSL Store-P A/B ✅
 WSL 1M Store-P lazy 23.9s ✅
-access-order Store-P 语义视图 ✅（有限语料）
-完整模型 1M 三线实验 ❌
+access-order Store-P 语义视图 ✅
+通用 rowid→slot 语义索引 ✅
+自动访问序调度 ✅
+完整模型 1M 三线实验 ⏳（由 qwen35-ple/WSL 侧继续）
 serving / Arrow / 全表 Store-P ❌
 ```
 

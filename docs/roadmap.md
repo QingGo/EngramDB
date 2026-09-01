@@ -2022,8 +2022,8 @@ LLM-CompileForge  推理 runtime（后续）
 
 | # | 债 | 影响 | 处置 |
 |---|---|---|---|
-| V123 | 没有 token/rowid → Store-P slot 的语义映射 | 训练无法直接使用 Store-P，只能用 raw slot 基准 | 实现行元组→slot 索引/哈希映射，随 view 一起构建 manifest |
-| V124 | 访问序 Store-P 视图与调度未端到端 | 控制/随机访问惩罚约 2.4× | 构建 access-order view + LiveETDataset 访问序重排 |
+| V123 | 没有 token/rowid → Store-P slot 的语义映射 | 训练无法直接使用 Store-P，只能用 raw slot 基准 | ✅ 已实现 `qwen35_ple.slot_index.SlotIndex` + `--slot-index-out` + `run_phase0 --store-p-slot-index` |
+| V124 | 访问序 Store-P 视图与调度未端到端 | 控制/随机访问惩罚约 2.4× | ✅ 已实现 access-order view 构建 + `LiveETViewStore(access_order=True)` / `LiveETDataset(access_order=True)` / `run_phase0 --access-order` |
 | V125 | 没有完整模型 1M real/control/3-seed 实验 | 无法判断 PLE 嫁接是否真正有增益 | 用 LiveETDataset 驱动真实模型，输出 loss + fetch 时间 CSV |
 | V126 | WSL 全量 pytest 存在 golden 漂移（1 个失败） | 跨仓正确性防线被削弱 | 固定 engram-peft 版本/重建 golden，或记录已知失败 |
 | V127 | vLLM/SGLang/llama.cpp serving A/B 未做 | 产品形态未验收 | 实现薄 adapter + 真实小模型 A/B |
@@ -2052,8 +2052,8 @@ LLM-CompileForge  推理 runtime（后续）
 ## 24.6 后续开发计划（按“先实证、再放大”）
 
 ### Phase 0：把“读取快”变成“实验能跑”
-- [ ] 实现 rowid-tuple → Store-P slot 语义映射与 manifest。
-- [ ] 实现 access-order Store-P 视图构建 + LiveETDataset 访问序调度。
+- [x] 实现 rowid-tuple → Store-P slot 语义映射与 manifest。
+- [x] 实现 access-order Store-P 视图构建 + LiveETDataset 访问序调度。
 - [ ] 用真实模型在 WSL 跑 1M token real/control/3-seed，同时记录：
   - 每窗口 fetch 时间、总读取量、cache/unique；
   - val loss / PPL / QA log-likelihood。
