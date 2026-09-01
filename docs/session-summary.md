@@ -1681,7 +1681,7 @@ serving / Arrow / 全表 Store-P ❌
 - Phase D2：Arrow / serving / 全表实际构建。
 - Phase E2：v0.2.12 发布与三仓同步。
 
-详见 `docs/roadmap.md` Section 26。
+详见 `docs/roadmap.md` Section 26。完整版计划/发现/尝试/踩坑/完成/未完成见 qwen35-ple `docs/round-21-full-summary.md`。
 
 
 
