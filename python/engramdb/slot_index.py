@@ -129,6 +129,29 @@ class SlotIndex:
         return cls.from_keys_file(path, heads=heads, slots=slots)
 
     @classmethod
+    def from_view_manifest(
+        cls,
+        view_path: str | Path,
+        *,
+        heads: int = 16,
+        slots: np.ndarray | None = None,
+    ) -> SlotIndex:
+        """Build from the keys file referenced by a Store-P view manifest."""
+        import json
+
+        view_path = Path(view_path)
+        manifest_path = view_path.with_suffix(".manifest.json")
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"view manifest not found: {manifest_path}")
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        keys = data.get("keys_out") or data.get("keys")
+        if not keys:
+            raise ValueError(
+                f"manifest {manifest_path} does not reference a keys file"
+            )
+        return cls.from_keys_file(keys, heads=heads, slots=slots)
+
+    @classmethod
     def load(cls, path: str | Path) -> SlotIndex:
         """Load from an ``.npz`` produced by :meth:`save`."""
         path = Path(path)
@@ -162,6 +185,16 @@ class SlotIndex:
 
     def __len__(self) -> int:
         return len(self.rowids)
+
+    @property
+    def memory_bytes(self) -> int:
+        """Approximate resident bytes for the in-memory index arrays."""
+        return (
+            int(self.rowids.nbytes)
+            + int(self.slots.nbytes)
+            + int(self._sorted_keys.nbytes)
+            + int(self._sorted_slots.nbytes)
+        )
 
     def _rebuild_sorted(self) -> None:
         if len(self.rowids) == 0:

@@ -107,6 +107,7 @@ pub fn build_view(
         "build_mb_s": (n as f64 * slot_bytes as f64 / 1e6) / build_s,
         "rows": n as u64 * HEAD_W,
         "source": format!("shards={}", batch.layout.shards),
+        "keys_out": keys_out.map(|p| p.display().to_string()),
     });
     std::fs::write(
         view_out.with_extension("manifest.json"),
@@ -315,6 +316,7 @@ pub fn build_view_from_keys(
         "rows": n as u64 * HEAD_W,
         "source": format!("provided-keys:{} shards={}", keys.len(), batch.layout.shards),
         "layout": "access-order",
+        "keys_out": keys_out.map(|p| p.display().to_string()),
     });
     std::fs::write(
         view_out.with_extension("manifest.json"),
@@ -433,6 +435,7 @@ pub fn build_view_from_keys_file(
         "rows": n as u64 * HEAD_W,
         "source": format!("provided-keys-file:{} shards={}", total, batch.layout.shards),
         "layout": "access-order",
+        "keys_out": keys_out.map(|p| p.display().to_string()),
     });
     std::fs::write(
         view_out.with_extension("manifest.json"),
@@ -788,6 +791,12 @@ mod tests {
         assert_eq!(two[0], 16);
 
         verify_view(&bg, &view_path, Some(&keys), 0).unwrap();
+
+        let manifest = std::fs::read_to_string(view_path.with_extension("manifest.json")).unwrap();
+        assert!(
+            manifest.contains("ordered.keys.txt"),
+            "manifest should record keys_out"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
