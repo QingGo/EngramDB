@@ -2137,10 +2137,10 @@ LLM-CompileForge  推理 runtime（后续）
 
 ## 25.5 后续开发计划（重新排布）
 
-### Phase A：把科学闭环补上（最高优先）
-- [ ] WSL 真实模型 1M real/control/3-seed，输出 loss/PPL + 每窗口 fetch 时间 CSV。
-- [ ] 根据结果做 Go/No-Go：是否进入 5M–20M。
-- [ ] 若负结果，固化负结果文档并停止放大。
+### Phase A：把科学闭环补上（✅ 已完成）
+- [x] WSL 真实模型 1M real/control/3-seed，输出 loss/PPL（fetch 时间另见 WSL lazy 基准，不在本次 JSON 中）。
+- [x] 根据结果做 Go/No-Go：real 2.8167 < control 2.8738 < no-reader 2.9896，建议 Go 进入 5M–20M。
+- [x] 结果已固化：`qwen35-ple/docs/phase-a-1m-result.md`。
 
 ### Phase B：把语义索引做成产品级
 - [x] 以 EngramDB 为 canonical 整合 `SlotIndex`，qwen 只 re-export（已优先使用 EngramDB canonical，保留本地轻量 fallback）。
