@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__version__ = "0.2.10"
+__version__ = "0.2.11"
 
 _USING_PYO3 = False
 _USING_CTYPES = False
@@ -210,7 +210,10 @@ from .ple_discovery import (
 )
 from .vllm import fetch_e_t_tensor
 from .pool import StorePool, ThreadLocalStore
-from .slot_index import SlotIndex
+try:  # SlotIndex is pure-Python and needs numpy; keep it optional for light installs.
+    from .slot_index import SlotIndex
+except ImportError:  # pragma: no cover - depends on environment
+    SlotIndex = None  # type: ignore[assignment,misc]
 
 PLE_QWEN_V1 = 1
 ENG_DEEPSEEK_V1 = 2

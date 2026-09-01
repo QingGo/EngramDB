@@ -65,6 +65,10 @@ def test_page_reader() -> None:
 
 
 def test_slot_index() -> None:
+    if engramdb.SlotIndex is None:
+        print("SlotIndex skipped: numpy not available")
+        return
+
     import numpy as np
 
     rowids = np.arange(32, dtype=np.int64).reshape(2, 16)
