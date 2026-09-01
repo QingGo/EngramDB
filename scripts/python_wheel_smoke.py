@@ -621,6 +621,12 @@ def test_store_pool() -> None:
             handle = tls.get()
             assert handle.fetch([0]) == bytes([0] * 4)
             tls.release_current()
+
+            stats = pool.stats()
+            assert stats["acquires"] == 2
+            assert stats["releases"] == 2
+            assert stats["borrowed"] == 0
+            assert stats["waits"] >= 0
         finally:
             pool.close()
     print("StorePool OK")

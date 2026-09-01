@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Any, Iterator
 
 from . import Store
@@ -48,6 +49,14 @@ class StorePool:
         )
         self._all: list[Store] = []
         self._lock = threading.Lock()
+        self._stats_lock = threading.Lock()
+        self._stats: dict[str, float | int] = {
+            "acquires": 0,
+            "releases": 0,
+            "waits": 0,
+            "wait_seconds": 0.0,
+            "borrowed": 0,
+        }
         self._closed = False
         for _ in range(self.pool_size):
             self._queue.put_nowait(self._open())
@@ -66,7 +75,22 @@ class StorePool:
         """Return an idle handle, blocking until one is available."""
         if self._closed:
             raise RuntimeError("StorePool is closed")
-        return self._queue.get()
+        try:
+            store = self._queue.get_nowait()
+            waited = False
+            wait_s = 0.0
+        except queue.Empty:
+            waited = True
+            t0 = time.perf_counter()
+            store = self._queue.get()
+            wait_s = time.perf_counter() - t0
+        with self._stats_lock:
+            self._stats["acquires"] = int(self._stats["acquires"]) + 1
+            self._stats["borrowed"] = int(self._stats["borrowed"]) + 1
+            if waited:
+                self._stats["waits"] = int(self._stats["waits"]) + 1
+                self._stats["wait_seconds"] = float(self._stats["wait_seconds"]) + wait_s
+        return store
 
     def release(self, store: Store) -> None:
         """Return a handle to the pool, or close it if the pool is closed."""
@@ -74,6 +98,14 @@ class StorePool:
             store.close()
             return
         self._queue.put(store)
+        with self._stats_lock:
+            self._stats["releases"] = int(self._stats["releases"]) + 1
+            self._stats["borrowed"] = max(0, int(self._stats["borrowed"]) - 1)
+
+    def stats(self) -> dict[str, float | int]:
+        """Return a snapshot of pool acquisition/wait telemetry."""
+        with self._stats_lock:
+            return dict(self._stats)
 
     def __enter__(self) -> Store:
         self._current = self.acquire()
