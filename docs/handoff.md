@@ -215,3 +215,11 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
   - 新增 `BundleManifest` / `TargetReaderRegistry` / `ReaderSpec`：bundle schema v1、路径解析、通用 reader 注册/加载协议。
   - Serving 层全部按需懒加载，不触发 torch/ple_adapter；`python_wheel_smoke.py` 增加对应测试。
   - 关闭 V149/V151/V152 基础部分，推进 V156；V150（通用 Engine Adapter）仍待做。
+
+   **Session 39（第二十五轮：S3/B2/S4 + v0.2.12）**：
+   - S3：`PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名完成。
+   - B2：DiskSlotIndex v3 单文件 + offset table（Rust/Python），`slot-index build --single-file`，Rust e2e 通过。
+   - B2：`gen_view_keys.py` 精确复现 view keys 流；`bench_disk_slot_index.py` 支持 `--single-file` / `--cache`。
+   - S4：真表 Arrow IPC、serving A/B、真表性能阈值门禁、release gate 集成完成。
+   - 本地 release gate `SKIP_BENCH=1` 通过；版本提升 v0.2.12。
+   - 关闭 V142/V150/V153/V154/V155。

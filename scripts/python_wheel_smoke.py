@@ -110,6 +110,18 @@ def test_disk_slot_index() -> None:
             assert idx.lookup(tuple(range(32, 48))) == 2
         finally:
             idx.close()
+    with tempfile.TemporaryDirectory(prefix="engramdb-disk-slot-v3-") as td:
+        idx = engramdb.DiskSlotIndex.build(
+            rowids, td, num_buckets=8, hash_name="fnv1a-64", single_file=True
+        )
+        try:
+            assert idx.format == "engramdb-disk-slot-index-v3"
+            assert idx.lookup(tuple(range(16))) == 0
+            assert idx.lookup(tuple(range(16, 32))) == 1
+            slots = idx.to_slots(rowids)
+            np.testing.assert_array_equal(slots, np.arange(4, dtype=np.int64))
+        finally:
+            idx.close()
     print("DiskSlotIndex OK")
 
 
@@ -821,6 +833,69 @@ def test_bundle_and_target_reader() -> None:
         print("Bundle + TargetReader OK")
 
 
+def test_engine_adapter() -> None:
+    """Exercise the generic PyTorch adapter and target-reader hook."""
+    try:
+        import torch
+        from torch import nn
+    except Exception:
+        print("Engine adapter skipped: torch not available")
+        return
+
+    import struct
+
+    from engramdb.adapter import (
+        PleMemoryAdapter,
+        install_target_reader_hook,
+    )
+    from engramdb.ple_memory import PleMemory
+
+    head_dim = 4
+    num_heads = 2
+    rows = [struct.pack("<HH", i, i + 1) for i in range(4)]
+    with tempfile.TemporaryDirectory(prefix="engramdb-adapter-") as directory:
+        with open(os.path.join(directory, "shard_000.bin"), "wb") as f:
+            for row in rows:
+                f.write(row)
+        store = engramdb.Store(directory, 1, len(rows), head_dim)
+        try:
+            mem = PleMemory(
+                store=store,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                ngram_size=2,
+                heads_per_ngram=2,
+                prime_sizes=[2, 2],
+                offsets=[0, 2],
+                eos=0,
+            )
+            adapter = PleMemoryAdapter(mem, keep_steps=4)
+            out = adapter(torch.tensor([[1, 2], [3, 1]]), seq_ids=[10, 20])
+            assert tuple(out.shape) == (2, 2, num_heads, head_dim)
+            assert len(adapter.sequences) == 2
+            adapter.reset()
+            assert len(adapter.sequences) == 0
+
+            model = nn.Identity()
+            reader_calls = {"n": 0}
+
+            class DummyReader:
+                def on_forward(self, module: object, args: object, output: object) -> object:
+                    reader_calls["n"] += 1
+                    return output
+
+            hook = install_target_reader_hook(model, DummyReader(), mode="post")
+            out = model(torch.tensor([1.0, 2.0]))
+            assert reader_calls["n"] == 1
+            assert tuple(out.shape) == (2,)
+            hook.remove()
+            model(torch.tensor([1.0]))
+            assert reader_calls["n"] == 1
+            print("Engine adapter OK")
+        finally:
+            store.close()
+
+
 def main() -> None:
     from importlib.metadata import version as _dist_version
 
@@ -844,6 +919,11 @@ def main() -> None:
         print("integrations import OK")
     except Exception as exc:  # optional torch/engram-peft dependency
         print(f"integrations skipped ({exc})")
+    try:
+        from engramdb import adapter  # noqa: F401
+        print("adapter import OK")
+    except Exception as exc:
+        print(f"adapter skipped ({exc})")
 
     test_page_reader()
     test_slot_index()
@@ -859,6 +939,7 @@ def main() -> None:
     test_store_pool()
     test_ple_memory()
     test_bundle_and_target_reader()
+    test_engine_adapter()
     test_database_arrow_server()
     test_disk_ple_lru()
     test_prefetch_lru()

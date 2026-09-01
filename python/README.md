@@ -236,6 +236,31 @@ def build_reader(path, **kwargs):
 reader = registry.create_from_manifest(bundle)
 ```
 
+通用 Engine Adapter（S3）与真表验证（S4）还提供：
+
+```python
+from engramdb import PleMemoryAdapter, install_target_reader_hook
+
+adapter = PleMemoryAdapter(memory)
+e_t = adapter(input_ids, seq_ids=[0, 1])
+
+hook = install_target_reader_hook(model, reader, mode="post")
+```
+
+支持真表验证的脚本：
+
+```bash
+# Store-P 单文件/offset 索引构建与基准
+python scripts/bench_disk_slot_index.py --single-file --grams 10000000 --out /tmp/slot-idx-v3
+
+# 重新生成与 view build 完全一致的 Store-P keys（不依赖 git 大文件）
+python scripts/gen_view_keys.py --out /tmp/full.keys --grams 20000096
+
+# 真表 Arrow IPC 校验 + serving A/B 阈值
+ENGRAMDB_REAL_ROWS=/path/to/real-rows python scripts/real_arrow_smoke.py
+ENGRAMDB_REAL_ROWS=/path/to/real-rows python scripts/real_perf_gate.py
+```
+
 ## 引擎适配层
 
 目标是 **不改 vLLM / SGLang 源码**，启动前执行一小段 hook 即可把 PLE 表切到 EngramDB。

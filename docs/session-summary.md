@@ -1757,3 +1757,35 @@ serving / Arrow / 全表 Store-P ❌
 - Phase S4：Arrow / serving A/B / 真表门禁 / v0.2.12。
 
 详见 `docs/roadmap.md` Section 27 更新。
+
+
+---
+
+## Session 39（第二十五轮：S3/B2/S4 + v0.2.12）
+
+### 1. 本轮完成
+
+- [x] S3：`PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名。
+- [x] B2：DiskSlotIndex v3 `data.bin` + `offsets.bin` 单文件格式。
+- [x] B2：`slot-index build --single-file` + Python v3 读写 + Rust e2e。
+- [x] B2：`scripts/gen_view_keys.py` 精确复现 view keys 流。
+- [x] S4：真表 Arrow IPC 校验。
+- [x] S4：serving A/B（合成 + 真表）。
+- [x] S4：真表 serving 阈值门禁。
+- [x] release gate 集成并在本地通过。
+- [x] 版本 v0.2.12 发布。
+
+### 2. 本轮关闭技术债
+
+| # | 状态 |
+|---|---|
+| V150 | ✅ 通用 Engine Adapter / target-reader hook |
+| V142 | ✅ 单文件 + offset table v3 |
+| V153 | ✅ 真表 Arrow IPC 验证 |
+| V155 | ✅ 真表 serving 阈值门禁 |
+| V154 | ✅ v0.2.12 |
+
+### 3. 下一阶段
+
+- 320M 全表 DiskSlotIndex 长跑仍建议 WSL/稳定真表环境执行。
+- 真正 vLLM/SGLang 模型级 A/B 需外部引擎环境，EngramDB 侧接口已完成。

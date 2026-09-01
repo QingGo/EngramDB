@@ -58,6 +58,15 @@ else
   fi
 fi
 
+if [[ -d data/real-rows ]]; then
+  echo
+  echo "== [release-gate] real Arrow IPC smoke =="
+  PYTHONPATH=python "$PYTHON" scripts/real_arrow_smoke.py
+  echo
+  echo "== [release-gate] real serving perf thresholds =="
+  PYTHONPATH=python "$PYTHON" scripts/real_perf_gate.py
+fi
+
 echo
 echo "== [release-gate] build PyO3 native extension =="
 bash scripts/build_pyo3.sh

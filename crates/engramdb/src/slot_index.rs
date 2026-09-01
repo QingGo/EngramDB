@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use engramdb_core::fnv64;
 
 pub const FORMAT_V2: &str = "engramdb-disk-slot-index-v2";
+pub const FORMAT_V3: &str = "engramdb-disk-slot-index-v3";
 pub const HEADS: usize = 16;
 pub const RECORD_BYTES: usize = HEADS * 8 + 8;
 pub const DEFAULT_BUCKETS: usize = 16384;
@@ -58,6 +59,24 @@ pub fn build_from_keys_file(
     out_dir: &Path,
     num_buckets: usize,
 ) -> Result<BuildStats, String> {
+    build_from_keys_file_opt(keys_path, out_dir, num_buckets, false)
+}
+
+/// Build a single-file/offset-table disk slot index (v3).
+pub fn build_from_keys_file_single(
+    keys_path: &Path,
+    out_dir: &Path,
+    num_buckets: usize,
+) -> Result<BuildStats, String> {
+    build_from_keys_file_opt(keys_path, out_dir, num_buckets, true)
+}
+
+fn build_from_keys_file_opt(
+    keys_path: &Path,
+    out_dir: &Path,
+    num_buckets: usize,
+    single_file: bool,
+) -> Result<BuildStats, String> {
     let t0 = std::time::Instant::now();
     if num_buckets == 0 {
         return Err("num_buckets must be > 0".into());
@@ -93,12 +112,26 @@ pub fn build_from_keys_file(
     pass2(&raw_path, &mut grouped, &offsets, &mut cursors)?;
     drop(grouped);
 
-    // Pass 3: sort each bucket region and write one small file per bucket.
+    // Pass 3: sort each bucket region and emit either one file per bucket (v2)
+    // or a single data.bin plus offsets.bin (v3).
     let mut grouped_file = File::open(&grouped_path).map_err(io_err)?;
+    let mut data_out: Option<BufWriter<File>> = if single_file {
+        Some(BufWriter::new(
+            File::create(out_dir.join("data.bin")).map_err(io_err)?,
+        ))
+    } else {
+        None
+    };
+    let mut data_offsets: Vec<u64> = if single_file { vec![0u64] } else { Vec::new() };
+
     for bucket in 0..num_buckets {
         let start = offsets[bucket];
         let end = offsets[bucket + 1];
         if start == end {
+            if single_file {
+                let cur = *data_offsets.last().unwrap();
+                data_offsets.push(cur);
+            }
             continue;
         }
         grouped_file.seek(SeekFrom::Start(start)).map_err(io_err)?;
@@ -114,18 +147,36 @@ pub fn build_from_keys_file(
         for r in &records {
             buf.extend_from_slice(r);
         }
-        let path = buckets_dir.join(format!("{bucket:04}.bin"));
-        std::fs::write(&path, &buf).map_err(io_err)?;
+        if single_file {
+            let out = data_out.as_mut().unwrap();
+            out.write_all(&buf).map_err(io_err)?;
+            let cur = *data_offsets.last().unwrap();
+            data_offsets.push(cur + buf.len() as u64);
+        } else {
+            let path = buckets_dir.join(format!("{bucket:04}.bin"));
+            std::fs::write(&path, &buf).map_err(io_err)?;
+        }
     }
 
+    if let Some(mut out) = data_out {
+        out.flush().map_err(io_err)?;
+        let mut off = Vec::with_capacity((num_buckets + 1) * 8);
+        for o in &data_offsets {
+            off.extend_from_slice(&o.to_le_bytes());
+        }
+        std::fs::write(out_dir.join("offsets.bin"), &off).map_err(io_err)?;
+    }
+
+    let format = if single_file { FORMAT_V3 } else { FORMAT_V2 };
     let meta = serde_json::json!({
-        "format": FORMAT_V2,
+        "format": format,
         "hash": "fnv1a-64",
         "heads": HEADS,
         "num_buckets": num_buckets,
         "count": count,
         "record_bytes": RECORD_BYTES,
         "cache_buckets": DEFAULT_CACHE_BUCKETS,
+        "single_file": single_file,
     });
     std::fs::write(
         out_dir.join("index.json"),
@@ -231,6 +282,8 @@ pub struct DiskSlotIndexReader {
     cache: HashMap<usize, Vec<Record>>,
     order: VecDeque<usize>,
     cache_capacity: usize,
+    data_file: Option<File>,
+    offsets: Option<Vec<u64>>,
 }
 
 impl DiskSlotIndexReader {
@@ -246,11 +299,6 @@ impl DiskSlotIndexReader {
             .get("format")
             .and_then(|v| v.as_str())
             .ok_or("index.json missing format")?;
-        if format != FORMAT_V2 {
-            return Err(format!(
-                "unsupported slot index format: {format} (expected {FORMAT_V2})"
-            ));
-        }
         let num_buckets = meta
             .get("num_buckets")
             .and_then(|v| v.as_u64())
@@ -259,6 +307,32 @@ impl DiskSlotIndexReader {
             .get("count")
             .and_then(|v| v.as_u64())
             .ok_or("index.json missing count")?;
+
+        let mut data_file = None;
+        let mut offsets = None;
+        if format == FORMAT_V2 {
+            // multi-file bucket layout
+        } else if format == FORMAT_V3 {
+            data_file = Some(File::open(dir.join("data.bin")).map_err(io_err)?);
+            let off_data = std::fs::read(dir.join("offsets.bin")).map_err(io_err)?;
+            let mut off_vec = Vec::with_capacity(num_buckets + 1);
+            for chunk in off_data.chunks_exact(8) {
+                off_vec.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+            }
+            if off_vec.len() != num_buckets + 1 {
+                return Err(format!(
+                    "offsets.bin has {} entries, expected {}",
+                    off_vec.len(),
+                    num_buckets + 1
+                ));
+            }
+            offsets = Some(off_vec);
+        } else {
+            return Err(format!(
+                "unsupported slot index format: {format} (expected {FORMAT_V2} or {FORMAT_V3})"
+            ));
+        }
+
         Ok(Self {
             dir: dir.to_path_buf(),
             num_buckets,
@@ -266,6 +340,8 @@ impl DiskSlotIndexReader {
             cache: HashMap::new(),
             order: VecDeque::new(),
             cache_capacity: cache_capacity.max(1),
+            data_file,
+            offsets,
         })
     }
 
@@ -275,14 +351,30 @@ impl DiskSlotIndexReader {
 
     fn records(&mut self, bucket: usize) -> Result<&[Record], String> {
         if !self.cache.contains_key(&bucket) {
-            let path = self.dir.join("buckets").join(format!("{bucket:04}.bin"));
-            let records: Vec<Record> = if path.exists() {
-                let data = std::fs::read(&path).map_err(io_err)?;
-                data.chunks_exact(RECORD_BYTES)
-                    .map(|c| c.try_into().expect("record size"))
-                    .collect()
+            let records: Vec<Record> = if let Some(offsets) = &self.offsets {
+                let start = offsets[bucket] as usize;
+                let end = offsets[bucket + 1] as usize;
+                if start == end {
+                    Vec::new()
+                } else {
+                    let mut data = vec![0u8; end - start];
+                    let file = self.data_file.as_mut().unwrap();
+                    file.seek(SeekFrom::Start(start as u64)).map_err(io_err)?;
+                    file.read_exact(&mut data).map_err(io_err)?;
+                    data.chunks_exact(RECORD_BYTES)
+                        .map(|c| c.try_into().expect("record size"))
+                        .collect()
+                }
             } else {
-                Vec::new()
+                let path = self.dir.join("buckets").join(format!("{bucket:04}.bin"));
+                if path.exists() {
+                    let data = std::fs::read(&path).map_err(io_err)?;
+                    data.chunks_exact(RECORD_BYTES)
+                        .map(|c| c.try_into().expect("record size"))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
             };
             if self.order.len() >= self.cache_capacity {
                 if let Some(old) = self.order.pop_front() {

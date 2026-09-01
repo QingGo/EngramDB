@@ -51,6 +51,7 @@ def main() -> int:
     parser.add_argument("--cache", type=int, default=64)
     parser.add_argument("--samples", type=int, default=10_000)
     parser.add_argument("--engramdb-bin", default="engramdb")
+    parser.add_argument("--single-file", action="store_true", default=False)
     parser.add_argument("--json-out", default=None)
     args = parser.parse_args()
 
@@ -66,18 +67,19 @@ def main() -> int:
     print(f"[disk-slot-bench] keys={keys_path} out={out} buckets={args.buckets}")
 
     # Native build
+    build_cmd = [
+        args.engramdb_bin,
+        "slot-index",
+        "build",
+        str(keys_path),
+        str(out),
+        "--buckets",
+        str(args.buckets),
+    ]
+    if args.single_file:
+        build_cmd.append("--single-file")
     t0 = time.perf_counter()
-    rc, stdout, stderr = run(
-        [
-            args.engramdb_bin,
-            "slot-index",
-            "build",
-            str(keys_path),
-            str(out),
-            "--buckets",
-            str(args.buckets),
-        ]
-    )
+    rc, stdout, stderr = run(build_cmd)
     build_s = time.perf_counter() - t0
     if rc != 0:
         print(stdout)
@@ -88,7 +90,15 @@ def main() -> int:
     # Native verify
     t0 = time.perf_counter()
     rc, stdout, stderr = run(
-        [args.engramdb_bin, "slot-index", "verify", str(keys_path), str(out)]
+        [
+            args.engramdb_bin,
+            "slot-index",
+            "verify",
+            str(keys_path),
+            str(out),
+            "--cache",
+            str(args.cache),
+        ]
     )
     verify_s = time.perf_counter() - t0
     if rc != 0:
@@ -127,6 +137,7 @@ def main() -> int:
         "keys": str(keys_path),
         "grams": sum(1 for _ in open(keys_path)) // 16,
         "buckets": args.buckets,
+        "single_file": args.single_file,
         "build_seconds": build_s,
         "verify_seconds": verify_s,
         "python_lookup": lookup_result,

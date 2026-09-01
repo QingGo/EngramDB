@@ -2275,7 +2275,7 @@ LLM-CompileForge  推理 runtime（后续）
 - ⚠️ DiskSlotIndex 仍未跑 320M 全表实测。
 - ✅ Serving 基础落地：`PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`。
 - ✅ Serving 模块可选、不 torch 导入：`ple_math` 纯 Python，`ple_memory` / `bundle` / `target_reader` 可按需加载。
-- ⚠️ 通用 Engine Adapter（vLLM / SGLang target reader 注入）尚未实现。
+- ✅ 通用 Engine Adapter：`PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名已落地。
 
 ## 27.2 本轮新增/更新技术债
 
@@ -2293,8 +2293,9 @@ LLM-CompileForge  推理 runtime（后续）
 ## 27.3 后续开发计划
 
 ### Phase B2：磁盘索引真表验证与产品化
-- [ ] WSL 10M/100M/320M DiskSlotIndex 构建 + 查找基准。
-- [ ] 评估单文件/offset table，或原生 Rust DiskSlotIndex。
+- [x] 本机 1M/10M DiskSlotIndex v3 构建/校验/lookup 基准（10M: build 135s, verify 87s）。
+- [ ] WSL 100M/320M DiskSlotIndex 全表长跑。
+- [x] 实现单文件/offset table：`data.bin` + `offsets.bin`（v3），Rust/Python 双向兼容。
 - [x] `engramdb view build --slot-index` + `view verify --slot-index`。
 - [ ] 补 `view build --slot-index` 真实表 e2e。
 
@@ -2310,15 +2311,15 @@ LLM-CompileForge  推理 runtime（后续）
 - [x] 不实现任何 qwen reader。
 
 ### Phase S3：通用 Engine Adapter
-- [ ] 通用 layer wrapper / forward hook。
+- [x] 通用 layer wrapper / forward hook（`PleMemoryAdapter` / `TargetReaderHook`）。
 - [x] per-sequence state store（`PleSequenceStore`）。
-- [ ] 先纯 PyTorch，再 vLLM / SGLang。
+- [x] 先纯 PyTorch，再 vLLM / SGLang（通用 adapter + `install_vllm_target_reader` / `install_sglang_target_reader`）。
 
 ### Phase S4：Arrow / 服务 / 真表门禁 / 发布
-- [ ] Arrow IPC 真表验证。
-- [ ] serving A/B。
-- [ ] 真表 CSV 阈值入 nightly。
-- [ ] v0.2.12 发布。
+- [x] Arrow IPC 真表验证（`scripts/real_arrow_smoke.py`）。
+- [x] serving A/B（`scripts/bench_serving_ab.py`，合成 + 真表）。
+- [x] 真表 CSV/阈值门禁（`scripts/real_perf_gate.py` + release gate 集成）。
+- [x] v0.2.12 发布。
 
 ## 27.4 本轮纪律
 
@@ -2329,4 +2330,3 @@ LLM-CompileForge  推理 runtime（后续）
 5. qwen35-ple 由另一 agent 负责，EngramDB 只提供通用协议和存储能力。
 
 > 完整计划/发现/尝试/踩坑/完成/未完成见 `docs/round-37-full-summary.md`。
-

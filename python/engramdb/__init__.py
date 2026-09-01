@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 
 _USING_PYO3 = False
 _USING_CTYPES = False
@@ -353,6 +353,30 @@ def __getattr__(name: str):
         return {
             "TargetReaderRegistry": TargetReaderRegistry,
             "ReaderSpec": ReaderSpec,
+        }[name]
+    if name in (
+        "PleMemoryAdapter",
+        "TargetReaderHook",
+        "install_target_reader_hook",
+        "install_bundle_adapter",
+        "install_vllm_target_reader",
+        "install_sglang_target_reader",
+    ):
+        from .adapter import (
+            PleMemoryAdapter,
+            TargetReaderHook,
+            install_bundle_adapter,
+            install_sglang_target_reader,
+            install_target_reader_hook,
+            install_vllm_target_reader,
+        )
+        return {
+            "PleMemoryAdapter": PleMemoryAdapter,
+            "TargetReaderHook": TargetReaderHook,
+            "install_target_reader_hook": install_target_reader_hook,
+            "install_bundle_adapter": install_bundle_adapter,
+            "install_vllm_target_reader": install_vllm_target_reader,
+            "install_sglang_target_reader": install_sglang_target_reader,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

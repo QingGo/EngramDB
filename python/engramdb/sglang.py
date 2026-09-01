@@ -9,7 +9,16 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 
-from . import PageReader, IoUringPageReader, Store
+from . import Store
+
+try:
+    from . import PageReader, IoUringPageReader
+except ImportError:
+    # A source checkout without a built native extension may not provide these.
+    import engramdb as _engramdb_root
+
+    PageReader = getattr(_engramdb_root, "PageReader", None)
+    IoUringPageReader = getattr(_engramdb_root, "IoUringPageReader", None)
 
 
 class SGLangPageReader:

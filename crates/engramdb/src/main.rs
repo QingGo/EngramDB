@@ -284,6 +284,7 @@ fn cmd_slot_index_build(mut rest: impl Iterator<Item = String>) -> Result<(), St
     let keys = PathBuf::from(rest.next().ok_or("需要 <keys.txt>")?);
     let out_dir = PathBuf::from(rest.next().ok_or("需要 <out_dir>")?);
     let mut buckets = slot_index::DEFAULT_BUCKETS;
+    let mut single_file = false;
     while let Some(a) = rest.next() {
         match a.as_str() {
             "--buckets" => {
@@ -293,14 +294,20 @@ fn cmd_slot_index_build(mut rest: impl Iterator<Item = String>) -> Result<(), St
                     .parse()
                     .map_err(|e: std::num::ParseIntError| e.to_string())?
             }
+            "--single-file" => single_file = true,
             _ => return Err(format!("未知参数 {a}")),
         }
     }
-    let stats = slot_index::build_from_keys_file(&keys, &out_dir, buckets)?;
+    let stats = if single_file {
+        slot_index::build_from_keys_file_single(&keys, &out_dir, buckets)?
+    } else {
+        slot_index::build_from_keys_file(&keys, &out_dir, buckets)?
+    };
     println!(
-        "slot-index built: count={} buckets={} bytes={} took={:.2}s -> {}",
+        "slot-index built: count={} buckets={} single_file={} bytes={} took={:.2}s -> {}",
         stats.count,
         buckets,
+        single_file,
         stats.bytes,
         stats.seconds,
         out_dir.display()

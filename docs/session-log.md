@@ -2009,3 +2009,50 @@ test_bundle_and_target_reader 通过
 - [ ] 通用 Engine Adapter（vLLM / SGLang target reader 注入）
 - [ ] Arrow / serving A/B 真表验证
 - [ ] v0.2.12 发布
+
+
+## Session 39（第二十五轮：S3/B2/S4 落地与 v0.2.12）
+
+### 1. 做了什么
+
+- **S3 Engine Adapter**
+  - 新增 `python/engramdb/adapter.py`：
+    - `PleMemoryAdapter`：状态化 PyTorch serving adapter。
+    - `TargetReaderHook`：通用 pre/post forward hook。
+    - `install_bundle_adapter`、`install_vllm_target_reader`、`install_sglang_target_reader`。
+  - `scripts/python_wheel_smoke.py` 增加 `test_engine_adapter`。
+- **B2 DiskSlotIndex**
+  - Rust v3 单文件/offset table：`data.bin` + `offsets.bin`。
+  - CLI 增加 `slot-index build --single-file`。
+  - Python `DiskSlotIndex` 支持 v3 读写。
+  - 新增 `scripts/gen_view_keys.py`：精确复现 view build keys 流。
+  - Rust e2e `slot_index_single_file_roundtrip` 通过。
+  - `bench_disk_slot_index.py` 支持 `--single-file` / `--cache`。
+- **S4 Arrow / serving / 门禁 / 发布**
+  - 新增 `scripts/real_arrow_smoke.py`，真表 Arrow IPC 校验通过。
+  - 新增 `scripts/bench_serving_ab.py`，合成/真表 A/B。
+  - 新增 `scripts/real_perf_gate.py`，真表 serving 吞吐阈值。
+  - `release_gate.sh` 集成真表 Arrow + 阈值门禁。
+  - 本地 release gate（SKIP_BENCH=1）通过。
+  - 版本提升至 v0.2.12。
+
+### 2. 踩坑/发现
+
+1. 本地 PyO3 `_engramdb.so` 因 Python ABI 不匹配导致 `PageReader` 缺失，
+   `sglang.py` 直接 `from . import PageReader` 会让 smoke 在无原生扩展时失败。
+   - 修复：`sglang.py` 改为可选导入，缺失时 `PageReader=None`。
+2. DiskSlotIndex v3 的 verify 在低 cache bucket 数下会反复重读大 bucket；
+   大表验证需要使用更高 `--cache`（如 1024）。
+
+### 3. 结果
+
+```text
+cargo fmt / clippy / test --workspace 通过
+python_wheel_smoke 通过
+service_smoke 通过
+c_abi_smoke 通过
+RELEASE_GATE_OK
+DiskSlotIndex v3 Rust e2e 通过
+真表 Arrow IPC OK
+真表 serving perf gate OK
+```

@@ -1,0 +1,20 @@
+{
+  "keys": "/var/folders/cs/wnbllwcs2zx__5vcqrjk90dr0000gn/T/disk-slot-bench-keys-lamvvtzo/keys.txt",
+  "grams": 10000000,
+  "buckets": 4096,
+  "single_file": true,
+  "build_seconds": 135.159607463,
+  "verify_seconds": 86.95332522499996,
+  "python_lookup": {
+    "samples": 100000,
+    "lookup_seconds": 16.470885720000012,
+    "lookups_per_s": 6071.318913868338,
+    "us_per_lookup": 164.70885720000012,
+    "stats": {
+      "count": 10000000,
+      "num_buckets": 4096,
+      "cached_buckets": 256,
+      "cached_bytes": 1360000000
+    }
+  }
+}

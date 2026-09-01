@@ -31,6 +31,7 @@ import numpy as np
 
 _FORMAT = "engramdb-disk-slot-index-v1"
 _FORMAT_V2 = "engramdb-disk-slot-index-v2"
+_FORMAT_V3 = "engramdb-disk-slot-index-v3"
 _RECORD_BYTES = 16 * 8 + 8
 
 _FNV_OFFSET = 0xCBF29CE484222325
@@ -66,8 +67,9 @@ class DiskSlotIndex:
             raise FileNotFoundError(f"disk slot index not found: {meta_path}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         fmt = meta.get("format")
-        if fmt not in (_FORMAT, _FORMAT_V2):
+        if fmt not in (_FORMAT, _FORMAT_V2, _FORMAT_V3):
             raise ValueError(f"unsupported disk slot index format: {fmt}")
+        self.format = fmt
         self.hash_name = meta.get("hash", "blake2b")
         self.heads = int(meta["heads"])
         self.num_buckets = int(meta["num_buckets"])
@@ -76,6 +78,22 @@ class DiskSlotIndex:
         self._record_bytes = _RECORD_BYTES
         self._cache: OrderedDict[int, list[bytes]] = OrderedDict()
         self._closed = False
+        self._data_file = None
+        self._offsets: list[int] | None = None
+        if fmt == _FORMAT_V3:
+            self._data_file = open(self.directory / "data.bin", "rb")
+            off_data = (self.directory / "offsets.bin").read_bytes()
+            if len(off_data) % 8 != 0:
+                raise ValueError("offsets.bin size is not a multiple of 8")
+            self._offsets = [
+                int.from_bytes(off_data[i:i + 8], "little")
+                for i in range(0, len(off_data), 8)
+            ]
+            if len(self._offsets) != self.num_buckets + 1:
+                raise ValueError(
+                    f"offsets.bin has {len(self._offsets)} entries, "
+                    f"expected {self.num_buckets + 1}"
+                )
 
     @classmethod
     def build(
@@ -88,6 +106,7 @@ class DiskSlotIndex:
         cache_buckets: int = 64,
         slots: Iterable[int] | None = None,
         hash_name: str = "blake2b",
+        single_file: bool = False,
     ) -> DiskSlotIndex:
         """Build a disk index from an iterable of rowid tuples.
 
@@ -100,7 +119,7 @@ class DiskSlotIndex:
             raise NotImplementedError("DiskSlotIndex currently supports heads=16")
         if hash_name not in ("blake2b", "fnv1a-64"):
             raise ValueError(f"unsupported hash_name: {hash_name}")
-        fmt = _FORMAT_V2 if hash_name == "fnv1a-64" else _FORMAT
+        fmt = _FORMAT_V3 if single_file else (_FORMAT_V2 if hash_name == "fnv1a-64" else _FORMAT)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         buckets_dir = output_dir / "buckets"
@@ -146,20 +165,42 @@ class DiskSlotIndex:
                     os.pwrite(fd, record, pos)
                     cursor[bucket] += 1
 
-            # Sort each bucket and write its small file.
+            # Sort each bucket and write output (multi-file or single-file).
             with open(grouped_path, "rb") as grouped:
-                for bucket in range(num_buckets):
-                    start = int(offsets[bucket])
-                    end = int(offsets[bucket + 1])
-                    if start == end:
-                        continue
-                    grouped.seek(start)
-                    data = grouped.read(end - start)
-                    records = [
-                        data[i : i + rec_bytes] for i in range(0, len(data), rec_bytes)
-                    ]
-                    records.sort()
-                    (buckets_dir / f"{bucket:04d}.bin").write_bytes(b"".join(records))
+                data_out = None
+                data_offsets: list[int] = []
+                if single_file:
+                    data_out = open(output_dir / "data.bin", "wb")
+                    data_offsets = [0]
+                try:
+                    for bucket in range(num_buckets):
+                        start = int(offsets[bucket])
+                        end = int(offsets[bucket + 1])
+                        if start == end:
+                            if single_file:
+                                data_offsets.append(data_offsets[-1])
+                            continue
+                        grouped.seek(start)
+                        data = grouped.read(end - start)
+                        records = [
+                            data[i : i + rec_bytes] for i in range(0, len(data), rec_bytes)
+                        ]
+                        records.sort()
+                        if single_file:
+                            assert data_out is not None
+                            buf = b"".join(records)
+                            data_out.write(buf)
+                            data_offsets.append(data_offsets[-1] + len(buf))
+                        else:
+                            (buckets_dir / f"{bucket:04d}.bin").write_bytes(
+                                b"".join(records)
+                            )
+                finally:
+                    if data_out is not None:
+                        data_out.close()
+                if single_file:
+                    off = b"".join(struct.pack("<Q", o) for o in data_offsets)
+                    (output_dir / "offsets.bin").write_bytes(off)
         finally:
             os.close(fd)
 
@@ -171,6 +212,7 @@ class DiskSlotIndex:
             "count": count,
             "record_bytes": rec_bytes,
             "cache_buckets": cache_buckets,
+            "single_file": single_file,
         }
         (output_dir / "index.json").write_text(
             json.dumps(meta, indent=2, ensure_ascii=False) + "\n",
@@ -201,14 +243,26 @@ class DiskSlotIndex:
         if bucket in self._cache:
             self._cache.move_to_end(bucket)
             return self._cache[bucket]
-        path = self.directory / "buckets" / f"{bucket:04d}.bin"
-        if not path.exists():
-            return []
-        data = path.read_bytes()
         rec_bytes = self._record_bytes
-        records = [
-            data[i : i + rec_bytes] for i in range(0, len(data), rec_bytes)
-        ]
+        if self._offsets is not None and self._data_file is not None:
+            start = self._offsets[bucket]
+            end = self._offsets[bucket + 1]
+            if start == end:
+                records: list[bytes] = []
+            else:
+                self._data_file.seek(start)
+                data = self._data_file.read(end - start)
+                records = [
+                    data[i : i + rec_bytes] for i in range(0, len(data), rec_bytes)
+                ]
+        else:
+            path = self.directory / "buckets" / f"{bucket:04d}.bin"
+            if not path.exists():
+                return []
+            data = path.read_bytes()
+            records = [
+                data[i : i + rec_bytes] for i in range(0, len(data), rec_bytes)
+            ]
         self._cache[bucket] = records
         if len(self._cache) > self.cache_buckets:
             self._cache.popitem(last=False)
@@ -265,6 +319,12 @@ class DiskSlotIndex:
         }
 
     def close(self) -> None:
+        if self._data_file is not None:
+            try:
+                self._data_file.close()
+            except Exception:
+                pass
+            self._data_file = None
         self._cache.clear()
         self._closed = True
 
@@ -284,6 +344,7 @@ class DiskSlotIndex:
         num_buckets: int = 16384,
         cache_buckets: int = 64,
         hash_name: str = "blake2b",
+        single_file: bool = False,
     ) -> DiskSlotIndex:
         """Build from an EngramDB flat keys file without loading it into RAM."""
 
@@ -310,4 +371,5 @@ class DiskSlotIndex:
             num_buckets=num_buckets,
             cache_buckets=cache_buckets,
             hash_name=hash_name,
+            single_file=single_file,
         )
