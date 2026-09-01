@@ -4,12 +4,13 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.2.12 同时包含两条 Python 接入路径：
-> 1. **PyO3 原生扩展**（优先）：`crates/engramdb-pyo3`，构建后以
+> 当前 v0.2.12 的 **Python 发布路径以 PyO3 原生扩展为主**：
+> 1. **PyO3 原生扩展**（发行 wheel 的实际承载）：`crates/engramdb-pyo3`，构建后以
 >    `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` / Linux `IoUringPageReader`。
-> 2. **ctypes C-ABI 回退**：`crates/engramdb-python`，无 PyO3 构建产物时也能用。
+> 2. **ctypes C-ABI 仅作源码/开发回退**：`crates/engramdb-python`，用于未构建 PyO3 的本地源码树，
+>    不作为 PyPI wheel 的发布依赖。
 >
-> `python/engramdb/__init__.py` 会自动优先加载 PyO3，失败则回退 ctypes。
+> `python/engramdb/__init__.py` 会自动优先加载 PyO3；找不到时才尝试 ctypes。
 
 v0.2.12 新增：
 
@@ -326,6 +327,17 @@ install_sglang_ple(
 from engramdb.sglang import install_sglang_io_uring_reader
 install_sglang_io_uring_reader()
 ```
+
+> v0.2.12 起推荐面向 serving 的通用集成：
+>
+> ```python
+> from engramdb import PleMemoryAdapter, install_sglang_target_reader
+>
+> adapter = PleMemoryAdapter(memory)
+> hook = install_sglang_target_reader(model, reader, mode="post")
+> ```
+>
+> `install_sglang_ple` / `install_vllm_ple` 保留为“直接替换 PLE embedding 表”的兼容路径。
 
 ## engram-peft 集成
 

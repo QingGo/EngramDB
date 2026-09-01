@@ -111,6 +111,21 @@ T3 NVMe       → preadv 默认；io_uring 作为可插拔语义实现
 | GPU 端 vLLM/SGLang A/B 差距 | ≤5% | ⏳ 未做 |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
+### 3.3 v0.2.12 新增实测（DiskSlotIndex v3 / Serving A/B）
+
+| 路径 | 环境/规模 | 性能 | 备注 |
+|---|---|---|---|
+| DiskSlotIndex v3 build | 本机，10M grams | 135.2s | `data.bin` 1.36GB，16384 buckets |
+| DiskSlotIndex v3 verify | 本机，10M grams | 87.0s | `--cache 1024` |
+| DiskSlotIndex Python lookup | 本机，10M index，100k samples | 164.7 μs/lookup | LRU 全桶热态 |
+| 真表 Store.fetch | 真实 128-shard，1024 tokens | 23.1K–45.8K tok/s | 原始路径 |
+| 真表 PleMemory | 真实 128-shard，1024–4096 tokens | 51.9K–62.5K tok/s | 语义封装路径 |
+| 真表 PleMemoryAdapter | 真实 Store，torch 路径 | 约 1.6K–2.0K tok/s | 当前 Python 热路径仍待优化 |
+| 合成 PleMemoryAdapter | 合成 Store，torch 路径 | 约 20.6K tok/s | 无真实 rowid 生成开销 |
+
+这些数据已由 `probes/disk_slot_index_10m_v3.json` 与 `scripts/real_perf_gate.py` 固化；
+真表 serving 门槛当前为 `ple_memory >= 5,000 tok/s`、`store_fetch >= 5,000 tok/s`。
+
 ---
 
 ## 4. 优化策略：哪些有用，哪些没用
@@ -391,6 +406,18 @@ from engramdb.sglang import install_sglang_io_uring_reader
 install_sglang_io_uring_reader()
 ```
 
+> v0.2.12 起，面向 serving 的更通用集成方式是：
+> `PleMemoryAdapter` + `TargetReaderHook`，或用 `install_vllm_target_reader` /
+> `install_sglang_target_reader` 薄别名。旧的 `install_vllm_ple` /
+> `install_sglang_ple` 仍用于“只替换 PLE embedding 表”的兼容路径。
+>
+> ```python
+> from engramdb import PleMemoryAdapter, install_vllm_target_reader
+>
+> adapter = PleMemoryAdapter(memory)
+> hook = install_vllm_target_reader(model, reader, mode="post")
+> ```
+
 ### 5.4 真实 PLE 磁盘 Adapter
 
 不加载完整的大 PLE 表，直接用 EngramDB 磁盘 Store 替换真实 PLE n-gram embedding：
@@ -477,7 +504,7 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 | 最新版本 | v0.2.12 |
 | crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
 | PyPI | `engramdb-python` 多平台 wheel 已发布 |
-| Python 桥 | PyO3 原生扩展优先，ctypes C ABI 回退 |
+| Python 桥 | **PyO3 为主路径**（wheel 必含）；C ABI ctypes 仅作 C/C++ 外部调用与源码开发回退，不承担 Python 分发 |
 | PLE rowid | Python / C ABI / PyO3 / Rust 四路径一致，golden 对拍 |
 | 真实 PLE | `discover_ple` + `load_ple_weight_scale` + `DiskPleNGramEmbedding` + FP8 磁盘适配 |
 | CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁；v0.2.12 全绿 |

@@ -8,9 +8,9 @@
 
 | 层 | 接口 | 适合的引擎 |
 |---|---|---|
-| Python wheel | `engramdb-python` + `engramdb.integrations` | engram-peft、vLLM Python 插件 |
+| Python wheel | `engramdb-python`（PyO3 为发布主路径）+ `engramdb.integrations` / `engramdb.adapter` | engram-peft、vLLM Python 插件 |
 | Rust crate | `engramdb-io` / `engramdb-core` | SGLang Rust reader、自研后端 |
-| C ABI | `crates/engramdb-python` | llama.cpp / C/C++ 插件、跨语言绑定 |
+| C ABI | `crates/engramdb-python` | llama.cpp / C/C++ 插件、跨语言绑定（Python 分发不依赖它） |
 | 磁盘格式 | Store-I 分片、Store-P 视图、manifest | 任何能按文件格式读取的引擎 |
 
 ## 2. vLLM
@@ -31,6 +31,8 @@
 - 在 vLLM 环境中可通过配置启用。
 - ✅ 已落地原型：`engramdb.vllm_plugin.DiskPleEmbedding` + `patch_named_embedding`，
   内部使用 `PleDiskGather`；真正 upstream 接入仍需按 vLLM 模型类/自定义 op 再接。
+- ✅ v0.2.12 通用 serving 面：`PleMemoryAdapter` / `TargetReaderHook` /
+  `install_vllm_target_reader`，可在不修改 vLLM 源码的前提下做更通用的 target-reader 注入。
 
 ## 3. SGLang
 
@@ -49,6 +51,8 @@
 - 后续在 SGLang 上游 PR 中替换其 NVMe reader。
 - ✅ 已落地 Python 侧同形适配：`engramdb.sglang.SGLangPageReader`（Linux 自动用
   `IoUringPageReader`）；`install_sglang_io_uring_reader()` 可做进程内替换。
+- ✅ v0.2.12 通用 serving 面：`PleMemoryAdapter` / `TargetReaderHook` /
+  `install_sglang_target_reader`。
 
 ## 4. llama.cpp
 
