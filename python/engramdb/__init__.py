@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .addressable_memory import AddressableNgramMemory, MemoryMatch
+
 __version__ = "0.2.12"
 
 _USING_PYO3 = False
