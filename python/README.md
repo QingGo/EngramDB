@@ -20,14 +20,6 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 > **C ABI 仍然保留，但它是另一件事**：`crates/engramdb-cabi`（cdylib 名 `libengramdb_c`）
 > 是给 **C/C++ 消费者**的嵌入面，Python 包**不再加载它**。
 
-v0.2.12 新增：
-
-- Serving 层：`PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`
-- Engine Adapter：`PleMemoryAdapter` / `TargetReaderHook` / vLLM-SGLang 注入别名
-- `DiskSlotIndex` v3 单文件 + offset table
-- 真表验证：`real_arrow_smoke.py` / `real_perf_gate.py` / `bench_serving_ab.py`
-- `gen_view_keys.py`：精确复现 `view build` keys 流
-
 ## 安装
 
 已发布到 PyPI，包名 `engramdb-python`，import 名 `engramdb`：
@@ -146,7 +138,7 @@ store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, wi
 ple = disk_ple_from_discovery(store, info)  # 自动使用 weight_scale
 ```
 
-### 快速 e_t tensor 读取（v0.2.9+）
+### 快速 e_t tensor 读取
 
 训练/预计算不要再走 Python 逐行 `bytes` 拼接，使用一次 `Store.fetch` + `torch.frombuffer`：
 
@@ -336,7 +328,7 @@ from engramdb.sglang import install_sglang_io_uring_reader
 install_sglang_io_uring_reader()
 ```
 
-> v0.2.12 起推荐面向 serving 的通用集成：
+> 面向 serving 的推荐集成方式：
 >
 > ```python
 > from engramdb import PleMemoryAdapter, install_sglang_target_reader

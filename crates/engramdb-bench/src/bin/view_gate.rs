@@ -30,7 +30,6 @@ fn main() {
 
 #[cfg(unix)]
 mod imp {
-    use std::fs::File;
     use std::path::{Path, PathBuf};
     use std::time::Instant;
 
@@ -80,12 +79,29 @@ mod imp {
         }
     }
 
+    /// 冷读轮之前把视图文件的干净页从 page cache 里丢掉。
+    ///
+    /// 与 `nvme_gate::drop_page_cache` 同源，**必须同样按 `target_os = "linux"` 守卫**：
+    /// `libc::posix_fadvise` / `POSIX_FADV_DONTNEED` 在 macOS/BSD 的 libc 里**不存在**
+    /// （那边只有 `posix_madvise` / `POSIX_MADV_DONTNEED`，语义也不同）。
+    /// 曾经这里只写了 `#[cfg(unix)]`，于是 Linux 上编得过、macOS 上编不过 ——
+    /// 而 CI 的 `--all-targets` 是**两个平台都跑**的。
+    ///
+    /// 非 Linux 上是 no-op，此时读数会偏热，**由冷热自校验兜住**（判 VOID 并退出码 3）。
     fn drop_page_cache(view: &Path) {
-        use std::os::unix::io::AsRawFd;
-        if let Ok(f) = File::open(view) {
-            unsafe {
-                libc::posix_fadvise(f.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::io::AsRawFd;
+            if let Ok(f) = std::fs::File::open(view) {
+                // 返回值忽略：advisory，失败不致命（自校验会兜住）
+                unsafe {
+                    libc::posix_fadvise(f.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED);
+                }
             }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = view;
         }
     }
 

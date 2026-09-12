@@ -474,7 +474,7 @@ engramdb serve <root> --port 8765 [--binary]
 
 | 项目 | 状态 |
 |---|---|
-| 版本 | **v0.2.12**（crates.io + PyPI 均已发布） |
+| 版本 | **v0.3.0**（crates.io + PyPI + GitHub Release 均已发布） |
 | Python 桥 | **PyO3 是唯一后端** —— 扩展随 wheel 分发，**无纯 Python 回退**，导入失败即抛出带修复指引的 `ImportError`（roadmap §34） |
 | C ABI | `crates/engramdb-cabi`（`libengramdb_c`）—— 面向 **C/C++ 的嵌入面**，Python 包不再加载它。⚠️ 只实现 `PLE_QWEN_V1`，V4.1/DeepSeek 规格未实现（技术债 V55） |
 | PLE rowid | Python / C ABI / PyO3 / Rust 四路径一致，golden 对拍 |

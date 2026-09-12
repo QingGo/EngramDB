@@ -59,6 +59,21 @@ for p in paths:
         Path(p).write_text(s2)
         touched += 1
         print(f"  {p}: {old} -> {new}")
+
+# README 的版本标记是 `**vX.Y.Z**` 格式（不是 `version = "X.Y.Z"`），所以上面那圈
+# 替换覆盖不到它。曾经本脚本完全不管 README，于是 v0.3.0 发布后 README 仍写着 v0.2.12。
+# 这里**硬失败**而不是静默略过：README 停在旧版本号正是"用户看到的第一句话是错的"。
+readme = Path("README.md")
+rs = readme.read_text()
+marker_old = f"**v{old}**"
+if marker_old not in rs:
+    sys.exit(
+        f"bump.sh: README.md 里找不到版本标记 {marker_old} —— 拒绝打 tag。\n"
+        "  README 顶部/状态表里的版本号必须随发布更新；找不到标记说明格式变了，请同步本脚本。"
+    )
+readme.write_text(rs.replace(marker_old, f"**v{new}**"))
+print(f"  README.md: {marker_old} -> **v{new}**")
+touched += 1
 if touched == 0:
     sys.exit(f"bump.sh: 没有任何文件包含版本 {old} —— 拒绝打 tag")
 PY

@@ -30,7 +30,13 @@ echo "EngramDB release gate"
 echo "  python = $PYTHON"
 echo "  root   = $ROOT"
 echo "  cargo  = ${CARGO_HOME:-$HOME/.cargo}"
+echo "  os     = $(uname -s)"
 echo "=============================================="
+# ⚠️ 本门禁是**平台范围**的：它只验证当前这台机器。
+# CI（ci.yml 的 test job）在 ubuntu 与 macos 上**都**跑 fmt/clippy/test，
+# 所以只在 Linux 跑本门禁会漏掉 macOS 专属的编译错误 —— v0.3.0 就是这样漏掉
+# 一个 `libc::posix_fadvise`（macOS 的 libc 里不存在），发布后 CI 才报出来。
+# 改动涉及平台相关代码时，**两个平台都要跑**。
 
 echo
 echo "== [release-gate] cargo fmt =="
