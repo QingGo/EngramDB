@@ -1,0 +1,16 @@
+{
+  "model": "/root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B",
+  "weight_key": "model.language_model.embed_tokens.weight",
+  "shape": [
+    248320,
+    1024
+  ],
+  "dtype": "torch.bfloat16",
+  "row_bytes": 2048,
+  "shards": 2,
+  "rows_per_shard": 124160,
+  "sha256_of_table": "608f0ef5537344b91bf1c734bfb9b54d8c51b844dcc2b9e84595cd94f8b1e1b7",
+  "byte_roundtrip_identical": true,
+  "module_swap_identical": true,
+  "verdict": "FAITHFUL"
+}
