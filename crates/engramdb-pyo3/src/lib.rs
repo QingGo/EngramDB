@@ -9,7 +9,6 @@ use std::path::Path;
 use engramdb_core::layout::Layout;
 use engramdb_io::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_io::view::{self, ViewReader};
-use engramdb_keygen::PleSpec;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -422,7 +421,9 @@ fn rowids_for_seq(tokens: Vec<u32>, ple_spec: u32) -> PyResult<Vec<Vec<u32>>> {
             "only PLE_QWEN_V1=1 is implemented",
         ));
     }
-    let spec = PleSpec::real();
+    // cached: PleSpec::real() costs ~900us (16 prime searches) and must
+    // not run per call -- see engramdb_keygen::real_spec
+    let spec = engramdb_keygen::real_spec();
     Ok(spec
         .rowids_for_seq(&tokens)
         .into_iter()
@@ -441,7 +442,9 @@ fn rowids_for_seq_with_history(
             "only PLE_QWEN_V1=1 is implemented",
         ));
     }
-    let spec = PleSpec::real();
+    // cached: PleSpec::real() costs ~900us (16 prime searches) and must
+    // not run per call -- see engramdb_keygen::real_spec
+    let spec = engramdb_keygen::real_spec();
     Ok(spec
         .rowids_for_seq_with_history(&history, &tokens)
         .into_iter()

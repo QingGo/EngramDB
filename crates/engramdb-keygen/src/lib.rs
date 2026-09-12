@@ -42,6 +42,22 @@ impl Default for PleSpec {
     }
 }
 
+/// Process-wide shared [`PleSpec`].
+///
+/// `PleSpec::real()` is **not** cheap: it runs `nth_prime_after(PLE_BASE - 1, i)`
+/// for all 16 heads, i.e. sixteen prime searches starting at 20,000,000.  That
+/// costs roughly 900 us on the machine this was measured on, and it is paid on
+/// *every* call -- measured with an empty token list, which produced the same
+/// 941 us as a 64-token list, proving the cost is entirely spec construction.
+///
+/// Hot paths (the PyO3 and C-ABI rowid entry points) must therefore not call
+/// `real()` per invocation.  The spec is immutable once built, so handing out a
+/// `&'static` reference is safe and removes the cost completely.
+pub fn real_spec() -> &'static PleSpec {
+    static SPEC: std::sync::OnceLock<PleSpec> = std::sync::OnceLock::new();
+    SPEC.get_or_init(PleSpec::real)
+}
+
 impl PleSpec {
     pub fn real() -> Self {
         let mut prime_sizes = Vec::with_capacity(PLE_HEADS);
@@ -202,6 +218,32 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
+
+    /// Regression: `real_spec()` must hand out one shared instance.
+    ///
+    /// The PyO3 and C-ABI entry points used to call `PleSpec::real()` per
+    /// request, which re-runs sixteen prime searches from 20,000,000 every
+    /// time (~900 us measured, and constant in the token count -- an empty
+    /// token list cost the same 941 us as a 64-token list).  If someone
+    /// "simplifies" `real_spec()` back into `PleSpec::real()`, this test still
+    /// passes, so the guard that actually matters is the pointer identity check
+    /// below plus the benchmark in `probes/serve_ple_ab_session42.md` §2.2.
+    #[test]
+    fn real_spec_is_shared_and_matches_real() {
+        let a = real_spec();
+        let b = real_spec();
+        assert!(
+            std::ptr::eq(a, b),
+            "real_spec() handed out two instances -- the OnceLock cache is gone"
+        );
+        let fresh = PleSpec::real();
+        assert_eq!(a.prime_sizes, fresh.prime_sizes);
+        assert_eq!(a.head_offsets, fresh.head_offsets);
+        assert_eq!(a.total, fresh.total);
+        assert_eq!(a.padded, fresh.padded);
+        assert_eq!(a.eos, fresh.eos);
+        assert_eq!(a.multipliers, fresh.multipliers);
+    }
 
     #[test]
     fn primes_match_gguf() {

@@ -26,7 +26,6 @@ use std::ptr;
 use engramdb_core::layout::Layout;
 use engramdb_io::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_io::view::ViewReader;
-use engramdb_keygen::PleSpec;
 
 pub struct StoreHandle {
     batch: BadgeGather<'static>,
@@ -131,7 +130,8 @@ pub unsafe extern "C" fn engramdb_rowids_for_seq(
     }
     let tokens = std::slice::from_raw_parts(ids, len);
     let out_slice = std::slice::from_raw_parts_mut(out, need);
-    let spec = PleSpec::real();
+    // cached: see engramdb_keygen::real_spec
+    let spec = engramdb_keygen::real_spec();
     let rows = spec.rowids_for_seq(tokens);
     for (i, row) in rows.iter().enumerate() {
         for (j, rid) in row.iter().enumerate() {
