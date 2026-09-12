@@ -1,0 +1,125 @@
+########## HOST ##########
+Linux autodl-container-63b64b9474-e82ce085 5.15.0-94-generic #104-Ubuntu SMP Tue Jan 9 15:25:40 UTC 2024 x86_64 x86_64 x86_64 GNU/Linux
+CPU(s):                             128
+Model name:                         Intel(R) Xeon(R) Gold 6430
+Thread(s) per core:                 2
+Core(s) per socket:                 32
+Socket(s):                          2
+NUMA node(s):                       2
+cgroup memory.max: 128849018880
+               total        used        free      shared  buff/cache   available
+Mem:            1007          29         101           5         877         967
+load: 10.77 11.92 10.43 10/6031 3886
+disk: /dev/md0       xfs    86G   49G   38G  57% /root/autodl-tmp
+md0: raid1 over dev-nvme0n1 dev-nvme1n1 
+nvme: SAMSUNG MZQL27T6HBLA-00A07               16.0 GT/s PCIe x4
+data: 25G  shards=65  shard_bytes=400001920
+
+########## SWEEP A: rows_per_token=16 (Qwen geometry; Mac/USB=30.0, WSL=55.9-57.9 us/row) ##########
+== nvme_gate  dir=/root/autodl-tmp/qwen35-ple/qwen38-rows  shards=65  rows_per_shard=2500012  width=160 (row_bytes=160) ==
+   key space N=162500780  rows_per_token=16  tokens/round=512  rounds=5  stride=6  seed=0xa11ce1
+   per-round rows=8192 (1.25 MiB payload);  total distinct indices consumed=49152 of 162500780
+   冷读来源：双射 + 轮间不相交切片 ⇒ 本次运行内**从不重读**任何 key。
+但**这不足以**保证冷读：若数据此前已被别人读过，它会一直留在 page cache 里
+（本机 cgroup 上限 120 GiB ≫ 表体积，"表比内存大" 不成立，drop_caches 又被拒）。
+故 drop_mode=fadvise 决定是否在每轮冷读前按文件 fadvise(DONTNEED)。
+
+  threads=1   round 0:   1367.30 us/token     85.46 us/row  wall=    700.1 ms  distinct_4KiB_pages=8192
+  threads=1   round 1:   1379.08 us/token     86.19 us/row  wall=    706.1 ms  distinct_4KiB_pages=8192
+  threads=1   round 2:   1374.29 us/token     85.89 us/row  wall=    703.6 ms  distinct_4KiB_pages=8192
+  threads=1   round 3:   1371.91 us/token     85.74 us/row  wall=    702.4 ms  distinct_4KiB_pages=8192
+  threads=1   round 4:   1369.22 us/token     85.58 us/row  wall=    701.0 ms  distinct_4KiB_pages=8192
+  threads=1   MEDIAN over 5 rounds: 1371.91 us/token  (85.74 us/row)
+
+  threads=2   round 0:    703.62 us/token     43.98 us/row  wall=    360.3 ms  distinct_4KiB_pages=8192
+  threads=2   round 1:    706.29 us/token     44.14 us/row  wall=    361.6 ms  distinct_4KiB_pages=8192
+  threads=2   round 2:    702.46 us/token     43.90 us/row  wall=    359.7 ms  distinct_4KiB_pages=8192
+  threads=2   round 3:    707.09 us/token     44.19 us/row  wall=    362.0 ms  distinct_4KiB_pages=8192
+  threads=2   round 4:    704.78 us/token     44.05 us/row  wall=    360.8 ms  distinct_4KiB_pages=8192
+  threads=2   MEDIAN over 5 rounds: 704.78 us/token  (44.05 us/row)
+
+  threads=4   round 0:    371.00 us/token     23.19 us/row  wall=    190.0 ms  distinct_4KiB_pages=8192
+  threads=4   round 1:    365.54 us/token     22.85 us/row  wall=    187.2 ms  distinct_4KiB_pages=8192
+  threads=4   round 2:    364.63 us/token     22.79 us/row  wall=    186.7 ms  distinct_4KiB_pages=8192
+  threads=4   round 3:    365.64 us/token     22.85 us/row  wall=    187.2 ms  distinct_4KiB_pages=8192
+  threads=4   round 4:    366.08 us/token     22.88 us/row  wall=    187.4 ms  distinct_4KiB_pages=8192
+  threads=4   MEDIAN over 5 rounds: 365.64 us/token  (22.85 us/row)
+
+  threads=8   round 0:    202.49 us/token     12.66 us/row  wall=    103.7 ms  distinct_4KiB_pages=8192
+  threads=8   round 1:    204.17 us/token     12.76 us/row  wall=    104.5 ms  distinct_4KiB_pages=8192
+  threads=8   round 2:    198.10 us/token     12.38 us/row  wall=    101.4 ms  distinct_4KiB_pages=8192
+  threads=8   round 3:    206.02 us/token     12.88 us/row  wall=    105.5 ms  distinct_4KiB_pages=8192
+  threads=8   round 4:    204.50 us/token     12.78 us/row  wall=    104.7 ms  distinct_4KiB_pages=8192
+  threads=8   MEDIAN over 5 rounds: 204.17 us/token  (12.76 us/row)
+
+  threads=16  round 0:    119.10 us/token      7.44 us/row  wall=     61.0 ms  distinct_4KiB_pages=8192
+  threads=16  round 1:    120.27 us/token      7.52 us/row  wall=     61.6 ms  distinct_4KiB_pages=8192
+  threads=16  round 2:    117.69 us/token      7.36 us/row  wall=     60.3 ms  distinct_4KiB_pages=8192
+  threads=16  round 3:    119.28 us/token      7.46 us/row  wall=     61.1 ms  distinct_4KiB_pages=8192
+  threads=16  round 4:    119.40 us/token      7.46 us/row  wall=     61.1 ms  distinct_4KiB_pages=8192
+  threads=16  MEDIAN over 5 rounds: 119.28 us/token  (7.46 us/row)
+
+  threads=32  round 0:     77.00 us/token      4.81 us/row  wall=     39.4 ms  distinct_4KiB_pages=8192
+  threads=32  round 1:     72.83 us/token      4.55 us/row  wall=     37.3 ms  distinct_4KiB_pages=8192
+  threads=32  round 2:     77.45 us/token      4.84 us/row  wall=     39.7 ms  distinct_4KiB_pages=8192
+  threads=32  round 3:     73.27 us/token      4.58 us/row  wall=     37.5 ms  distinct_4KiB_pages=8192
+  threads=32  round 4:     75.67 us/token      4.73 us/row  wall=     38.7 ms  distinct_4KiB_pages=8192
+  threads=32  MEDIAN over 5 rounds: 75.67 us/token  (4.73 us/row)
+
+-- 机械自校验：把上一轮（round 4，threads=32）的 keys 立刻重读 --
+   若 warm 没有远快于 cold，则本次冷读口径为坏 ⇒ 结果作废（VOID）
+   SELFCHECK-warm: 10.70 us/token  (0.67 us/row)  wall=5.5 ms
+   cold(median, threads=32) = 75.67 us/token   warm = 10.70 us/token   ratio = 7.07x
+   >>> VALID: 冷热比 7.07x ≥ 5x，冷读口径成立。
+
+########## SWEEP B: rows_per_token=48 (V4.1 geometry) ##########
+== nvme_gate  dir=/root/autodl-tmp/qwen35-ple/qwen38-rows  shards=65  rows_per_shard=2500012  width=160 (row_bytes=160) ==
+   key space N=162500780  rows_per_token=48  tokens/round=512  rounds=5  stride=6  seed=0xb0b2
+   per-round rows=24576 (3.75 MiB payload);  total distinct indices consumed=147456 of 162500780
+   冷读来源：双射 + 轮间不相交切片 ⇒ 本次运行内**从不重读**任何 key。
+但**这不足以**保证冷读：若数据此前已被别人读过，它会一直留在 page cache 里
+（本机 cgroup 上限 120 GiB ≫ 表体积，"表比内存大" 不成立，drop_caches 又被拒）。
+故 drop_mode=fadvise 决定是否在每轮冷读前按文件 fadvise(DONTNEED)。
+
+  threads=1   round 0:   4078.41 us/token     84.97 us/row  wall=   2088.1 ms  distinct_4KiB_pages=24576
+  threads=1   round 1:   4074.55 us/token     84.89 us/row  wall=   2086.2 ms  distinct_4KiB_pages=24576
+  threads=1   round 2:   4072.47 us/token     84.84 us/row  wall=   2085.1 ms  distinct_4KiB_pages=24576
+  threads=1   round 3:   4080.01 us/token     85.00 us/row  wall=   2089.0 ms  distinct_4KiB_pages=24576
+  threads=1   round 4:   4109.11 us/token     85.61 us/row  wall=   2103.9 ms  distinct_4KiB_pages=24576
+  threads=1   MEDIAN over 5 rounds: 4078.41 us/token  (84.97 us/row)
+
+  threads=4   round 0:   1112.92 us/token     23.19 us/row  wall=    569.8 ms  distinct_4KiB_pages=24576
+  threads=4   round 1:   1111.16 us/token     23.15 us/row  wall=    568.9 ms  distinct_4KiB_pages=24576
+  threads=4   round 2:   1106.35 us/token     23.05 us/row  wall=    566.4 ms  distinct_4KiB_pages=24576
+  threads=4   round 3:   1105.99 us/token     23.04 us/row  wall=    566.3 ms  distinct_4KiB_pages=24576
+  threads=4   round 4:   1110.78 us/token     23.14 us/row  wall=    568.7 ms  distinct_4KiB_pages=24576
+  threads=4   MEDIAN over 5 rounds: 1110.78 us/token  (23.14 us/row)
+
+  threads=8   round 0:    610.35 us/token     12.72 us/row  wall=    312.5 ms  distinct_4KiB_pages=24576
+  threads=8   round 1:    602.09 us/token     12.54 us/row  wall=    308.3 ms  distinct_4KiB_pages=24576
+  threads=8   round 2:    608.96 us/token     12.69 us/row  wall=    311.8 ms  distinct_4KiB_pages=24576
+  threads=8   round 3:    604.36 us/token     12.59 us/row  wall=    309.4 ms  distinct_4KiB_pages=24576
+  threads=8   round 4:    602.01 us/token     12.54 us/row  wall=    308.2 ms  distinct_4KiB_pages=24576
+  threads=8   MEDIAN over 5 rounds: 604.36 us/token  (12.59 us/row)
+
+  threads=16  round 0:    355.39 us/token      7.40 us/row  wall=    182.0 ms  distinct_4KiB_pages=24576
+  threads=16  round 1:    354.40 us/token      7.38 us/row  wall=    181.5 ms  distinct_4KiB_pages=24576
+  threads=16  round 2:    350.46 us/token      7.30 us/row  wall=    179.4 ms  distinct_4KiB_pages=24576
+  threads=16  round 3:    345.65 us/token      7.20 us/row  wall=    177.0 ms  distinct_4KiB_pages=24576
+  threads=16  round 4:    353.44 us/token      7.36 us/row  wall=    181.0 ms  distinct_4KiB_pages=24576
+  threads=16  MEDIAN over 5 rounds: 353.44 us/token  (7.36 us/row)
+
+  threads=32  round 0:    225.31 us/token      4.69 us/row  wall=    115.4 ms  distinct_4KiB_pages=24576
+  threads=32  round 1:    220.92 us/token      4.60 us/row  wall=    113.1 ms  distinct_4KiB_pages=24576
+  threads=32  round 2:    221.89 us/token      4.62 us/row  wall=    113.6 ms  distinct_4KiB_pages=24576
+  threads=32  round 3:    222.58 us/token      4.64 us/row  wall=    114.0 ms  distinct_4KiB_pages=24576
+  threads=32  round 4:    223.85 us/token      4.66 us/row  wall=    114.6 ms  distinct_4KiB_pages=24576
+  threads=32  MEDIAN over 5 rounds: 222.58 us/token  (4.64 us/row)
+
+-- 机械自校验：把上一轮（round 4，threads=32）的 keys 立刻重读 --
+   若 warm 没有远快于 cold，则本次冷读口径为坏 ⇒ 结果作废（VOID）
+   SELFCHECK-warm: 27.55 us/token  (0.57 us/row)  wall=14.1 ms
+   cold(median, threads=32) = 222.58 us/token   warm = 27.55 us/token   ratio = 8.08x
+   >>> VALID: 冷热比 8.08x ≥ 5x，冷读口径成立。
+
+load after: 10.78 11.82 10.43 9/6022 4465

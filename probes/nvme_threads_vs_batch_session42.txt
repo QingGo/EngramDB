@@ -1,0 +1,82 @@
+    Finished `release` profile [optimized] target(s) in 0.52s
+host load: 9.54 9.75 9.97 8/6008 13301
+
+=========== tokens_per_round=1 (keys/round=48) ===========
+  threads=1   MEDIAN cold:   4951.01 us/token ( 103.15 us/row) | warm(overhead):    459.15 us/token (   9.57 us/row) | ratio 10.78x | marginal  93.58 us/row
+  threads=1   >>> VALID（比值 10.78x ≥ 5x）
+  threads=4   MEDIAN cold:   1600.40 us/token (  33.34 us/row) | warm(overhead):    330.05 us/token (   6.88 us/row) | ratio  4.85x | marginal  26.47 us/row
+  threads=4   >>> VALID（边际 26.47 μs/行 ≥ 2）
+  threads=8   MEDIAN cold:   1064.21 us/token (  22.17 us/row) | warm(overhead):    322.38 us/token (   6.72 us/row) | ratio  3.30x | marginal  15.45 us/row
+  threads=8   >>> VALID（边际 15.45 μs/行 ≥ 2）
+  threads=16  MEDIAN cold:    894.34 us/token (  18.63 us/row) | warm(overhead):    812.32 us/token (  16.92 us/row) | ratio  1.10x | marginal   1.71 us/row
+  threads=16  >>> VOID：比值 1.10x < 5x 且边际 1.71 μs/行 < 2 —— 读数不冷，本配置作废
+  threads=32  MEDIAN cold:    953.23 us/token (  19.86 us/row) | warm(overhead):    515.36 us/token (  10.74 us/row) | ratio  1.85x | marginal   9.12 us/row
+  threads=32  >>> VALID（边际 9.12 μs/行 ≥ 2）
+   >>> 至少一个线程配置被判 VOID：**只引用被判 VALID 的配置**，其余不得引用。
+
+=========== tokens_per_round=4 (keys/round=192) ===========
+  threads=1   MEDIAN cold:   4316.17 us/token (  89.92 us/row) | warm(overhead):    295.19 us/token (   6.15 us/row) | ratio 14.62x | marginal  83.77 us/row
+  threads=1   >>> VALID（比值 14.62x ≥ 5x）
+  threads=4   MEDIAN cold:   1276.85 us/token (  26.60 us/row) | warm(overhead):    114.38 us/token (   2.38 us/row) | ratio 11.16x | marginal  24.22 us/row
+  threads=4   >>> VALID（比值 11.16x ≥ 5x）
+  threads=8   MEDIAN cold:    788.81 us/token (  16.43 us/row) | warm(overhead):    115.46 us/token (   2.41 us/row) | ratio  6.83x | marginal  14.03 us/row
+  threads=8   >>> VALID（比值 6.83x ≥ 5x）
+  threads=16  MEDIAN cold:    506.11 us/token (  10.54 us/row) | warm(overhead):    146.20 us/token (   3.05 us/row) | ratio  3.46x | marginal   7.50 us/row
+  threads=16  >>> VALID（边际 7.50 μs/行 ≥ 2）
+  threads=32  MEDIAN cold:    436.04 us/token (   9.08 us/row) | warm(overhead):    202.43 us/token (   4.22 us/row) | ratio  2.15x | marginal   4.87 us/row
+  threads=32  >>> VALID（边际 4.87 μs/行 ≥ 2）
+   >>> 全部线程配置 VALID。
+
+=========== tokens_per_round=16 (keys/round=768) ===========
+  threads=1   MEDIAN cold:   4132.45 us/token (  86.09 us/row) | warm(overhead):    236.92 us/token (   4.94 us/row) | ratio 17.44x | marginal  81.16 us/row
+  threads=1   >>> VALID（比值 17.44x ≥ 5x）
+  threads=4   MEDIAN cold:   1142.25 us/token (  23.80 us/row) | warm(overhead):     94.11 us/token (   1.96 us/row) | ratio 12.14x | marginal  21.84 us/row
+  threads=4   >>> VALID（比值 12.14x ≥ 5x）
+  threads=8   MEDIAN cold:    654.58 us/token (  13.64 us/row) | warm(overhead):     66.15 us/token (   1.38 us/row) | ratio  9.89x | marginal  12.26 us/row
+  threads=8   >>> VALID（比值 9.89x ≥ 5x）
+  threads=16  MEDIAN cold:    405.20 us/token (   8.44 us/row) | warm(overhead):     71.75 us/token (   1.49 us/row) | ratio  5.65x | marginal   6.95 us/row
+  threads=16  >>> VALID（比值 5.65x ≥ 5x）
+  threads=32  MEDIAN cold:    281.99 us/token (   5.87 us/row) | warm(overhead):     66.05 us/token (   1.38 us/row) | ratio  4.27x | marginal   4.50 us/row
+  threads=32  >>> VALID（边际 4.50 μs/行 ≥ 2）
+   >>> 全部线程配置 VALID。
+
+=========== tokens_per_round=64 (keys/round=3072) ===========
+  threads=1   MEDIAN cold:   4103.65 us/token (  85.49 us/row) | warm(overhead):    153.19 us/token (   3.19 us/row) | ratio 26.79x | marginal  82.30 us/row
+  threads=1   >>> VALID（比值 26.79x ≥ 5x）
+  threads=4   MEDIAN cold:   1110.70 us/token (  23.14 us/row) | warm(overhead):     70.62 us/token (   1.47 us/row) | ratio 15.73x | marginal  21.67 us/row
+  threads=4   >>> VALID（比值 15.73x ≥ 5x）
+  threads=8   MEDIAN cold:    611.62 us/token (  12.74 us/row) | warm(overhead):     47.83 us/token (   1.00 us/row) | ratio 12.79x | marginal  11.75 us/row
+  threads=8   >>> VALID（比值 12.79x ≥ 5x）
+  threads=16  MEDIAN cold:    363.53 us/token (   7.57 us/row) | warm(overhead):     43.12 us/token (   0.90 us/row) | ratio  8.43x | marginal   6.68 us/row
+  threads=16  >>> VALID（比值 8.43x ≥ 5x）
+  threads=32  MEDIAN cold:    238.92 us/token (   4.98 us/row) | warm(overhead):     40.11 us/token (   0.84 us/row) | ratio  5.96x | marginal   4.14 us/row
+  threads=32  >>> VALID（比值 5.96x ≥ 5x）
+   >>> 全部线程配置 VALID。
+
+=========== tokens_per_round=512 (keys/round=24576) ===========
+  threads=1   MEDIAN cold:   4091.25 us/token (  85.23 us/row) | warm(overhead):    120.74 us/token (   2.52 us/row) | ratio 33.89x | marginal  82.72 us/row
+  threads=1   >>> VALID（比值 33.89x ≥ 5x）
+  threads=4   MEDIAN cold:   1095.15 us/token (  22.82 us/row) | warm(overhead):     47.56 us/token (   0.99 us/row) | ratio 23.03x | marginal  21.82 us/row
+  threads=4   >>> VALID（比值 23.03x ≥ 5x）
+  threads=8   MEDIAN cold:    592.54 us/token (  12.34 us/row) | warm(overhead):     30.77 us/token (   0.64 us/row) | ratio 19.26x | marginal  11.70 us/row
+  threads=8   >>> VALID（比值 19.26x ≥ 5x）
+  threads=16  MEDIAN cold:    344.32 us/token (   7.17 us/row) | warm(overhead):     28.28 us/token (   0.59 us/row) | ratio 12.18x | marginal   6.58 us/row
+  threads=16  >>> VALID（比值 12.18x ≥ 5x）
+  threads=32  MEDIAN cold:    219.63 us/token (   4.58 us/row) | warm(overhead):     31.40 us/token (   0.65 us/row) | ratio  6.99x | marginal   3.92 us/row
+  threads=32  >>> VALID（比值 6.99x ≥ 5x）
+   >>> 全部线程配置 VALID。
+
+=========== tokens_per_round=4096 (keys/round=196608) ===========
+  threads=1   MEDIAN cold:   4062.81 us/token (  84.64 us/row) | warm(overhead):     98.73 us/token (   2.06 us/row) | ratio 41.15x | marginal  82.59 us/row
+  threads=1   >>> VALID（比值 41.15x ≥ 5x）
+  threads=4   MEDIAN cold:   1093.04 us/token (  22.77 us/row) | warm(overhead):     35.05 us/token (   0.73 us/row) | ratio 31.18x | marginal  22.04 us/row
+  threads=4   >>> VALID（比值 31.18x ≥ 5x）
+  threads=8   MEDIAN cold:    591.94 us/token (  12.33 us/row) | warm(overhead):     27.24 us/token (   0.57 us/row) | ratio 21.73x | marginal  11.76 us/row
+  threads=8   >>> VALID（比值 21.73x ≥ 5x）
+  threads=16  MEDIAN cold:    337.59 us/token (   7.03 us/row) | warm(overhead):     22.96 us/token (   0.48 us/row) | ratio 14.70x | marginal   6.55 us/row
+  threads=16  >>> VALID（比值 14.70x ≥ 5x）
+  threads=32  MEDIAN cold:    212.02 us/token (   4.42 us/row) | warm(overhead):     22.76 us/token (   0.47 us/row) | ratio  9.31x | marginal   3.94 us/row
+  threads=32  >>> VALID（比值 9.31x ≥ 5x）
+   >>> 全部线程配置 VALID。
+
+load after: 11.27 9.99 10.02 10/6017 14650

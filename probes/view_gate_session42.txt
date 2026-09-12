@@ -1,0 +1,80 @@
+host load: 11.23 10.37 10.16 10/6025 17966
+
+=========== Store-P: records_per_token=1, tokens/round=1 ===========
+  threads=1        MEDIAN cold:     88.71 us/token | warm:      1.60 us/token | ratio  55.38x | marginal    87.11 us/token
+  threads=1        >>> VALID（比值 55.38x）
+  threads=8        MEDIAN cold:     81.08 us/token | warm:      1.15 us/token | ratio  70.44x | marginal    79.93 us/token
+  threads=8        >>> VALID（比值 70.44x）
+  threads=32       MEDIAN cold:     81.17 us/token | warm:      1.00 us/token | ratio  81.50x | marginal    80.17 us/token
+  threads=32       >>> VALID（比值 81.50x）
+  threads=default  MEDIAN cold:    102.68 us/token | warm:     14.58 us/token | ratio   7.04x | marginal    88.10 us/token
+  threads=default  >>> VALID（比值 7.04x）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=4 ===========
+  threads=1        MEDIAN cold:    109.84 us/token | warm:      5.44 us/token | ratio  20.21x | marginal   104.40 us/token
+  threads=1        >>> VALID（比值 20.21x）
+  threads=8        MEDIAN cold:    101.91 us/token | warm:      1.88 us/token | ratio  54.15x | marginal   100.03 us/token
+  threads=8        >>> VALID（比值 54.15x）
+  threads=32       MEDIAN cold:     90.80 us/token | warm:      1.83 us/token | ratio  49.59x | marginal    88.97 us/token
+  threads=32       >>> VALID（比值 49.59x）
+  threads=default  MEDIAN cold:    100.08 us/token | warm:      5.84 us/token | ratio  17.13x | marginal    94.24 us/token
+  threads=default  >>> VALID（比值 17.13x）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=16 ===========
+  threads=1        MEDIAN cold:     91.51 us/token | warm:      2.23 us/token | ratio  40.96x | marginal    89.28 us/token
+  threads=1        >>> VALID（比值 40.96x）
+  threads=8        MEDIAN cold:     89.67 us/token | warm:      1.86 us/token | ratio  48.10x | marginal    87.81 us/token
+  threads=8        >>> VALID（比值 48.10x）
+  threads=32       MEDIAN cold:     89.15 us/token | warm:      1.86 us/token | ratio  47.97x | marginal    87.29 us/token
+  threads=32       >>> VALID（比值 47.97x）
+  threads=default  MEDIAN cold:     91.95 us/token | warm:      2.78 us/token | ratio  33.03x | marginal    89.17 us/token
+  threads=default  >>> VALID（比值 33.03x）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=32 ===========
+  threads=1        MEDIAN cold:     93.11 us/token | warm:      1.92 us/token | ratio  48.53x | marginal    91.19 us/token
+  threads=1        >>> VALID（比值 48.53x）
+  threads=8        MEDIAN cold:     28.56 us/token | warm:     12.09 us/token | ratio   2.36x | marginal    16.47 us/token
+  threads=8        >>> VALID（边际 16.47 us/token）
+  threads=32       MEDIAN cold:     66.14 us/token | warm:     51.38 us/token | ratio   1.29x | marginal    14.77 us/token
+  threads=32       >>> VALID（边际 14.77 us/token）
+  threads=default  MEDIAN cold:     23.18 us/token | warm:     16.13 us/token | ratio   1.44x | marginal     7.05 us/token
+  threads=default  >>> VALID（边际 7.05 us/token）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=64 ===========
+  threads=1        MEDIAN cold:     93.88 us/token | warm:      2.47 us/token | ratio  38.01x | marginal    91.42 us/token
+  threads=1        >>> VALID（比值 38.01x）
+  threads=8        MEDIAN cold:     19.61 us/token | warm:      6.72 us/token | ratio   2.92x | marginal    12.89 us/token
+  threads=8        >>> VALID（边际 12.89 us/token）
+  threads=32       MEDIAN cold:     24.63 us/token | warm:     19.23 us/token | ratio   1.28x | marginal     5.40 us/token
+  threads=32       >>> VALID（边际 5.40 us/token）
+  threads=default  MEDIAN cold:     16.18 us/token | warm:     13.13 us/token | ratio   1.23x | marginal     3.04 us/token
+  threads=default  >>> VALID（边际 3.04 us/token）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=512 ===========
+  threads=1        MEDIAN cold:    100.21 us/token | warm:      5.81 us/token | ratio  17.25x | marginal    94.40 us/token
+  threads=1        >>> VALID（比值 17.25x）
+  threads=8        MEDIAN cold:     14.28 us/token | warm:      1.98 us/token | ratio   7.22x | marginal    12.30 us/token
+  threads=8        >>> VALID（比值 7.22x）
+  threads=32       MEDIAN cold:      7.69 us/token | warm:      2.78 us/token | ratio   2.76x | marginal     4.91 us/token
+  threads=32       >>> VALID（边际 4.91 us/token）
+  threads=default  MEDIAN cold:      8.46 us/token | warm:      2.41 us/token | ratio   3.51x | marginal     6.04 us/token
+  threads=default  >>> VALID（边际 6.04 us/token）
+   >>> 全部配置 VALID。
+
+=========== Store-P: records_per_token=1, tokens/round=4096 ===========
+  threads=1        MEDIAN cold:     96.35 us/token | warm:      5.04 us/token | ratio  19.12x | marginal    91.31 us/token
+  threads=1        >>> VALID（比值 19.12x）
+  threads=8        MEDIAN cold:     13.28 us/token | warm:      1.44 us/token | ratio   9.22x | marginal    11.84 us/token
+  threads=8        >>> VALID（比值 9.22x）
+  threads=32       MEDIAN cold:      5.53 us/token | warm:      1.19 us/token | ratio   4.66x | marginal     4.34 us/token
+  threads=32       >>> VALID（边际 4.34 us/token）
+  threads=default  MEDIAN cold:      7.34 us/token | warm:      1.40 us/token | ratio   5.23x | marginal     5.94 us/token
+  threads=default  >>> VALID（比值 5.23x）
+   >>> 全部配置 VALID。
+
+load after: 11.21 10.38 10.16 9/6021 18877

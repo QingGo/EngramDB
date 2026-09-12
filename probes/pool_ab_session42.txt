@@ -1,0 +1,21 @@
+=== fmt/clippy/test ===
+fmt: CLEAN
+clippy findings: 0
+tests: passed=32 failed=0
+pool workers (this host): 
+
+=== COUNTERBALANCED P N N P, t=32, all batch sizes ===
+pool    tok=1     577.36 cold | warm(overhead):    147.49 | marg=8.96
+nopool  tok=1     1012.67 cold | warm(overhead):   1838.85 | marg=0.00
+nopool  tok=1     1007.55 cold | warm(overhead):    471.17 | marg=11.17
+pool    tok=1     515.12 cold | warm(overhead):     73.46 | marg=9.20
+pool    tok=16    265.04 cold | warm(overhead):     29.23 | marg=4.91
+nopool  tok=16    286.57 cold | warm(overhead):     62.58 | marg=4.67
+nopool  tok=16    310.70 cold | warm(overhead):     55.11 | marg=5.32
+pool    tok=16    261.52 cold | warm(overhead):     31.68 | marg=4.79
+pool    tok=512   254.32 cold | warm(overhead):     28.77 | marg=4.70
+nopool  tok=512   248.54 cold | warm(overhead):     32.21 | marg=4.51
+nopool  tok=512   246.26 cold | warm(overhead):     33.63 | marg=4.43
+pool    tok=512   246.36 cold | warm(overhead):     30.89 | marg=4.49
+
+load: 8.90 9.81 10.05 10/6042 386778

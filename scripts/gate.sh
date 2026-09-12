@@ -67,4 +67,28 @@ else
   echo "  [gate] decode baseline CSVs missing; skip"
 fi
 
+echo "== [gate] real perf gate decision logic (no data needed) =="
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 scripts/real_perf_gate_test.py >/tmp/real_perf_gate_test.log 2>&1; then
+    echo "  [gate] FAIL: real_perf_gate decision logic"
+    cat /tmp/real_perf_gate_test.log
+    exit 1
+  fi
+  echo "  [gate] PASS: real_perf_gate fails on missing/slow adapter"
+else
+  echo "  [gate] python3 not found; skip"
+fi
+
+echo "== [gate] overhead budget (5% -> 500us/token) =="
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 scripts/overhead_budget_check.py >/tmp/overhead_budget_check.log 2>&1; then
+    echo "  [gate] FAIL: overhead budget exceeded"
+    cat /tmp/overhead_budget_check.log
+    exit 1
+  fi
+  cat /tmp/overhead_budget_check.log
+else
+  echo "  [gate] python3 not found; skip"
+fi
+
 echo "== [gate] PASS =="

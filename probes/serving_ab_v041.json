@@ -1,0 +1,55 @@
+{
+  "mode": "real",
+  "tokens": 4096,
+  "heads": 16,
+  "rowids": "random",
+  "base_offset": 108152207,
+  "path_offsets": {
+    "store": 108152207,
+    "mem": 108283279,
+    "adapter": 108414351
+  },
+  "warmup": 2,
+  "reps": 5,
+  "store_fetch_seconds": 0.069393861,
+  "store_fetch_tokens_per_s": 59025.39419156977,
+  "store_fetch_microseconds_per_token": 16.941860595703126,
+  "store_fetch_cold_seconds": 1.61416642,
+  "store_fetch_cold_microseconds_per_token": 394.08359863281254,
+  "store_fetch_stats": {
+    "seconds_cold": 1.61416642,
+    "seconds_median": 0.069393861,
+    "seconds_min": 0.06850335800000007,
+    "seconds_max": 0.07059417300000037,
+    "reps": 5,
+    "warmup": 2
+  },
+  "ple_memory_seconds": 0.08835734999999989,
+  "ple_memory_tokens_per_s": 46357.207408325456,
+  "ple_memory_microseconds_per_token": 21.571618652343723,
+  "ple_memory_cold_seconds": 1.749038063,
+  "ple_memory_cold_microseconds_per_token": 427.0112458496094,
+  "ple_memory_stats": {
+    "seconds_cold": 1.749038063,
+    "seconds_median": 0.08835734999999989,
+    "seconds_min": 0.08659899299999996,
+    "seconds_max": 0.09000134800000037,
+    "reps": 5,
+    "warmup": 2
+  },
+  "ple_memory_adapter": {
+    "seconds": 0.036690577999999974,
+    "tokens_per_s": 27254.953574184652,
+    "microseconds_per_token": 36.690577999999974,
+    "cold_seconds": 0.47680670399999947,
+    "cold_microseconds_per_token": 476.80670399999946,
+    "stats": {
+      "seconds_cold": 0.47680670399999947,
+      "seconds_median": 0.036690577999999974,
+      "seconds_min": 0.03593756899999967,
+      "seconds_max": 0.03795622600000037,
+      "reps": 5,
+      "warmup": 2
+    }
+  }
+}

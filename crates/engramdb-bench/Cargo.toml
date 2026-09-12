@@ -23,3 +23,19 @@ path = "src/bin/p3sim.rs"
 [[bin]]
 name = "p2rowid"
 path = "src/bin/p2rowid.rs"
+
+[[bin]]
+name = "nvme_gate"
+path = "src/bin/nvme_gate.rs"
+
+[[bin]]
+name = "uring_gate"
+path = "src/bin/uring_gate.rs"
+
+[[bin]]
+name = "view_gate"
+path = "src/bin/view_gate.rs"
+
+[[bin]]
+name = "call_cost"
+path = "src/bin/call_cost.rs"
