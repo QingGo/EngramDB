@@ -1,0 +1,65 @@
+{
+  "model": "/root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B",
+  "engine": "vllm",
+  "faithful": true,
+  "enforce_eager": true,
+  "rows_per_token": 1,
+  "note": "input embedding only (1 row/token); NOT the 16-row PLE I/O shape",
+  "table": {
+    "key": "model.language_model.embed_tokens.weight",
+    "vocab": 248320,
+    "hidden": 1024,
+    "width": 2048,
+    "shards": 2
+  },
+  "baseline_tok_per_s": 46.52926269177722,
+  "disk_tok_per_s": 47.323706850908735,
+  "delta_pct": 1.707407582179272,
+  "added_us_per_token": -360.7932885643095,
+  "greedy_token_ids_identical": true,
+  "disk_reader": {
+    "calls": 192,
+    "fetch_s": 0.02193429321050644,
+    "us_per_call": 114.2411104713877
+  },
+  "baseline_runs": [
+    {
+      "tag": "baseline",
+      "seconds": 1.4278209498152137,
+      "tokens": 64,
+      "tok_per_s": 44.82354738406295
+    },
+    {
+      "tag": "baseline",
+      "seconds": 1.375478490255773,
+      "tokens": 64,
+      "tok_per_s": 46.52926269177722
+    },
+    {
+      "tag": "baseline",
+      "seconds": 1.3737940778955817,
+      "tokens": 64,
+      "tok_per_s": 46.58631233731702
+    }
+  ],
+  "disk_runs": [
+    {
+      "tag": "disk-embed",
+      "seconds": 1.3523877197876573,
+      "tokens": 64,
+      "tok_per_s": 47.323706850908735
+    },
+    {
+      "tag": "disk-embed",
+      "seconds": 1.345541127026081,
+      "tokens": 64,
+      "tok_per_s": 47.56450673600218
+    },
+    {
+      "tag": "disk-embed",
+      "seconds": 1.358589573763311,
+      "tokens": 64,
+      "tok_per_s": 47.10767787119046
+    }
+  ]
+}

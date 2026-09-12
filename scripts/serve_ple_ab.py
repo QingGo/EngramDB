@@ -6,7 +6,7 @@ Engine  vLLM 0.29.0 offline ``LLM`` API (real scheduler, KV cache, continuous
 Model   Qwen3.5-0.8B (``Qwen3_5ForConditionalGeneration``, 24 layers).
 Reader  injected at **layer 2** -- the PLE layer per ``docs/real-weights-spec.json``
         (``ple_layer_ids=[2]``).
-Table   the real Qwen3.8-Flash-Next PLE shards (65 x 400,001,920 B, width 160).
+Table   the real Qwen3.8-Flash-Next PLE shards (128 x 400,001,920 B, width 160).
 
 Arms
 ----
@@ -180,10 +180,17 @@ class EngramStoreReader(BaseReader):
         """Real EngramDB PLE rowids (``PLE_QWEN_V1``), 16 heads per token.
 
         Row ids come from EngramDB's own keygen over the full padded table
-        space (320,001,536 rows).  Only 65 of the 128 shards exist locally, so
-        the ids are folded modulo the rows we actually have.  The I/O *shape*
-        (N random 160 B reads per token over a multi-GB file set) is preserved
-        and is the variable under test; the table identity is not complete.
+        space (320,001,536 rows = 128 shards x 2,500,012).  The modulo below
+        exists only for the case where the local table is a partial download
+        (the first serving run had 65 of 128 shards): it folds ids into the rows
+        that actually exist.
+
+        With all 128 shards present the modulo is a **no-op**: keygen's largest
+        possible id is ``total_vocab - 1 = 320,001,445``, which is below
+        ``_rows_total = 320,001,536``.  So a full-table run needs no special
+        flag -- just have the shards there.  Verified by
+        ``probes/ple_rowid_exactness_session42.md`` (padded_vocab == on-disk
+        rows == 320,001,536).
         """
         toks = [int(t) for t in token_ids]
         ids = self._engramdb.rowids_for_seq(toks, self._engramdb.PLE_QWEN_V1)

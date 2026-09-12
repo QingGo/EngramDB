@@ -356,19 +356,22 @@ hook = install_target_reader_hook(model, reader, mode="post")
 ### 5.2 vLLM / SGLang：不修改源码，启动前 patch
 
 > ⚠️ **验证边界（别把本节读成「已验证的 serving 配方」）**
-> **已在真实引擎里跑通**（4090 + vLLM 0.29.0 + Qwen3.5-0.8B + 真实 26 GB PLE 表，
+> **已在真实引擎里跑通**（4090 + vLLM 0.29.0 + Qwen3.5-0.8B + 真实 PLE 行几何，
 > 第 2 层注入，`enforce_eager=True`）：batch=1 下磁盘臂 43.9 tok/s vs 无 reader 45.0，
 > **−2.4%，与 2.5% 的噪声地板同量级**；`shm`/`mmap` 臂落在基准之上。
 > 见 `probes/serve_ple_ab_session42.md`。
 > **但下列仍然是未验证/不成立的**：
 > ① 上面的注入是**随机投影**、输出是乱码 —— 只测存储代价，**不构成质量声明**；
-> ② 绝对 tok/s 是 eager 数字，**不是 CUDA-graph 数字**（Python reader 进不了 graph，
+> ② 该次运行的本地表是 **65/128 分片**（26 GB），rowid 对现有行数取了模；完整
+> 128 分片（47.7 GiB）此后已到位，冷态自校验跑的就是全表，但**臂的 A/B 数字尚未在全表上重跑**
+> （脚本用 `glob` 动态发现分片，全表下取模是空操作，重跑无需改代码）；
+> ③ 绝对 tok/s 是 eager 数字，**不是 CUDA-graph 数字**（Python reader 进不了 graph，
 > 要改成 splitting op + `PIECEWISE` capture，见 `docs/engine-integration.md` §4.1）；
-> ③ 本节示例用的 `embed_tokens_per_layer` 路径**仍未测**（实测跑通的是 `embed_tokens` 注入点）；
-> ④ **Python 级后台预取实测让性能更差 2.7×**（GIL 争用），要掩盖 I/O 必须把
+> ④ 本节示例用的 `embed_tokens_per_layer` 路径**仍未测**（实测跑通的是 `embed_tokens` 注入点）；
+> ⑤ **Python 级后台预取实测让性能更差 2.7×**（GIL 争用），要掩盖 I/O 必须把
 > rowid 生成 + 取数 + 张量构造合并为一次 GIL-free 的 PyO3 调用 —— 见
 > `docs/prefetch-lead-time.md` §6.2；
-> ⑤ FP8 `weight_scale` 的反量化不在这一层。
+> ⑥ FP8 `weight_scale` 的反量化不在这一层。
 > 另外，「加速」只能相对**同样从磁盘读**的方案或「跑不起来」成立 —— 表能装进 HBM 时用本库一定更慢。
 
 ```python
@@ -510,8 +513,9 @@ engramdb serve <root> --port 8765 [--binary]
 | **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **条件成立**：Store-I 需 batch ≥16 且 32 线程（V4.1 282 μs，56%）；**Store-P 任意 batch 都成立**（1.5–10%）。见 §3.2 |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
+| **rowid 与引擎一致** | 与引擎自己的 PLE 代码**逐位相同** | ✅ **IDENTICAL** —— 37 用例 / 18,048 个 rowid，`probes/ple_rowid_exactness_session42.md` |
 | GPU 端 vLLM A/B 差距 | ≤5% | ⚠️ **数值已达标，验收未闭合** —— 见下方六条子条件 |
-| GPU 端 SGLang A/B 差距 | ≤5% | ⏳ 引擎已装好（0.5.19 + 4090），**尚未跑过** |
+| GPU 端 SGLang A/B 差距 | ≤5% | ❌ **当前不可做**：SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids` 代码路径（见子条件 6） |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
 > 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
@@ -524,17 +528,43 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 
 | # | 子条件 | 状态 |
 |---|---|---|
-| 1 | 表用**模型自己的**权重，不是随机投影 | ✅ 磁盘路径对真实权重的逐位忠实性已证（`probes/ple_disk_faithfulness_session42.json`，248,320 行 bf16 全等）；serving 侧忠实注入脚本已就位，**待 GPU 空闲重跑** |
-| 2 | **完整分片** | ✅ 128 分片真数据全在（47.7 GiB），不再取模 |
+| 1a | **输入嵌入**用模型自己的权重，不是随机投影 | ✅ 逐位忠实性已证（`probes/ple_disk_faithfulness_session42.json`，248,320 行 bf16 全等）；serving 侧已跑通，两臂 **greedy token id 逐位相同**（`probes/serve_faithful_embed_ab_session42.md`） |
+| 1b | **PLE 路径**用模型自己的权重 | ❌ **本机不存在这样的 checkpoint**：带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，无权重）；三个 Qwen3.5 的 `text_config` 一个 PLE 字段都没有。所以 16 行/token 的 PLE 臂**只能是**合成投影 |
+| 2 | **完整分片** | ✅ 128 分片真数据全在（47.7 GiB）；`padded_vocab` 与磁盘行数相等（320,001,536） |
 | 3 | **冷态**且自证驱逐生效 | ✅ 自校验已入脚本（实测 ratio 78.3×，判定 `cold`）；**待独占重跑** |
-| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 目前是 `enforce_eager=True`。Python reader 进不了 graph，需改成 splitting op + `PIECEWISE` capture |
-| 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ❌ 目前只有首尾各一次 `none` 作漂移参照（噪声地板 1–2.5%） |
-| 6 | **多引擎**（vLLM + SGLang） | ❌ SGLang 尚未跑过 |
+| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 目前是 `enforce_eager=True`。Python reader 进不了 graph，需改成 splitting op + `PIECEWISE` capture。（注：vLLM 自己也把 PLE 的 rowid 生成移出了 PIECEWISE graph） |
+| 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ 忠实 A/B 已跑，但**性能栏判 VOID**：效应 0.54% ≪ 噪声 3.9%，`added_us_per_token` 甚至为负（−360.8 µs）。效应本身由 `disk_reader 114.2 µs/call` 直接测得，不需要 tok/s 反推 |
+| 6 | **多引擎**（vLLM + SGLang） | ❌ **不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容 |
 
 > **为什么必须逐条列**：eager 模式下引擎自身开销约 22 ms/token，5% 预算 = 1.1 ms，
 > 而存储代价只有 0.6 ms —— **「达标」是廉价的**。见 roadmap §35.1。
 > 「待硬件」已不成立：机器有，缺的是这六条。
 > 在此之前，每 token 开销门禁是**可本地复现的替代证据**：它不测模型端到端，但 5% 预算在算术上由它保证。
+
+#### 接入面在哪：vLLM 里的那一行
+
+真 PLE 架构是 `qwen4_exp`（`Qwen3.8-Flash-Next`）。它在 vLLM 侧收束到
+`vllm/models/qwen4_exp/nvidia/ple_layer.py` 的两行：
+
+```python
+ngram_ids = self.compute_ngram_ids(input_ids, query_start_loc, ngram_context)
+return self.ngram_embedding(ngram_ids).flatten(-2)      # ← 唯一需要改的行
+```
+
+三点结论（均为实测，见 `probes/ple_rowid_exactness_session42.md`）：
+
+1. **上半行我们已经逐位相同。** 用引擎自己的 `compute_ngram_ids`（未修改的函数体）
+   当裁判，对照 EngramDB 的生产 Rust 路径：37 用例、18,048 个 rowid、
+   multiplier 由 `seed=1234` **独立推出**而非拷贝 ⇒ **IDENTICAL**。
+2. **引擎自己已经把这个切口切好了。** 注释写着 *"Keep num_reqs-dependent ID
+   generation outside PIECEWISE CUDA graphs"* —— 算 rowid 与取行在引擎里本来就是
+   两件事。这正是预取需要的分工。
+3. **下半行无路可走，这正是我们的位置。** `ngram_embedding` 是
+   `PLEVocabParallelEmbedding`（GPU 常驻）。vLLM 0.29.0 的 offload 只有
+   **整张量 / 整层** 两种粒度（`cpu_offload_gb` 按参数名段 + GiB 预算；
+   `offload_group_size` 按 decoder layer 分组）。PLE 表是 layer 2 里的
+   **单个 51 GB 张量**，所以任何 offload 配置都只能整表搬运，**没有「按 rowid 取
+   16 行 = 2,560 B」这个粒度**。这不是配置能解决的问题。
 
 ---
 

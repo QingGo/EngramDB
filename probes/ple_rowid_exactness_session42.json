@@ -1,0 +1,322 @@
+{
+  "config": "/root/autodl-tmp/qwen35-ple/models/Qwen3.8-Flash-Next-FP8-tokenizer/config.json",
+  "geometry": {
+    "ngram_size": 3,
+    "heads_per_ngram": 8,
+    "ngram_heads": 16,
+    "ple_dense_layer_id": 0,
+    "seed": 1234,
+    "eos_token_id": 248044,
+    "unigram_vocab_size": 248320,
+    "multipliers": [
+      23703573157769,
+      20109073645365,
+      8052911324071
+    ],
+    "head_sizes": [
+      20000003,
+      20000023,
+      20000033,
+      20000047,
+      20000059,
+      20000063,
+      20000069,
+      20000077,
+      20000081,
+      20000093,
+      20000107,
+      20000147,
+      20000153,
+      20000159,
+      20000161,
+      20000171
+    ],
+    "head_offsets": [
+      0,
+      20000003,
+      40000026,
+      60000059,
+      80000106,
+      100000165,
+      120000228,
+      140000297,
+      160000374,
+      180000455,
+      200000548,
+      220000655,
+      240000802,
+      260000955,
+      280001114,
+      300001275
+    ],
+    "total_vocab": 320001446,
+    "padded_vocab": 320001536,
+    "divisor": 128
+  },
+  "cases": [
+    {
+      "name": "A n=1",
+      "rows": 1,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=2",
+      "rows": 2,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=3",
+      "rows": 3,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=4",
+      "rows": 4,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=8",
+      "rows": 8,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=63",
+      "rows": 63,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=64",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "A n=257",
+      "rows": 257,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=6 eos\u00d71 at 1",
+      "rows": 6,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=6 eos\u00d72 at 2",
+      "rows": 6,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=6 eos\u00d73 at 3",
+      "rows": 6,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=16 eos\u00d71 at 1",
+      "rows": 16,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=16 eos\u00d72 at 2",
+      "rows": 16,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=16 eos\u00d73 at 3",
+      "rows": 16,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=64 eos\u00d71 at 1",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=64 eos\u00d72 at 2",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B n=64 eos\u00d73 at 3",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B eos at position 0",
+      "rows": 9,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "B eos at last position",
+      "rows": 9,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "C packed [3, 5]",
+      "rows": 8,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "C packed [1, 1, 1]",
+      "rows": 3,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "C packed [17, 4, 9, 2]",
+      "rows": 32,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "C packed [2, 2]",
+      "rows": 4,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "D hist=2 new=1",
+      "rows": 1,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "D hist=2 new=2",
+      "rows": 2,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "D hist=2 new=4",
+      "rows": 4,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "D history contains eos",
+      "rows": 3,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E engine-match n=16 cut=5 hist=[100705, 212346]",
+      "rows": 11,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E self-consistent n=16 cut=5",
+      "rows": 16,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E engine-match n=32 cut=16 hist=[39681, 212412]",
+      "rows": 16,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E self-consistent n=32 cut=16",
+      "rows": 32,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E engine-match n=64 cut=1 hist=[248044, 34787]",
+      "rows": 63,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E self-consistent n=64 cut=1",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E engine-match n=64 cut=2 hist=[66947, 236210]",
+      "rows": 62,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E self-consistent n=64 cut=2",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E engine-match n=64 cut=63 hist=[247903, 32829]",
+      "rows": 1,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    },
+    {
+      "name": "E self-consistent n=64 cut=63",
+      "rows": 64,
+      "mismatched": 0,
+      "first_mismatch": null,
+      "verdict": "pass"
+    }
+  ],
+  "multipliers_match": true,
+  "padded_vocab_matches_table": true,
+  "first_primes_match": true,
+  "failures": 0,
+  "verdict": "IDENTICAL"
+}
