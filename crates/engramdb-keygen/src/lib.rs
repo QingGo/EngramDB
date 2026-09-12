@@ -7,7 +7,10 @@
 //!    - 段语义：`_shift_right_ignore_eos`（越界/跨 EOS 回填 EOS=248044）
 //!    - 表：padded_vocab = ceil(Σ素数 /128)*128 = 320,001,536 行 × 160 维（= 128 分片 × 2,500,012）
 //!
-//! ② DeepSeek Engram（demo 口径）在 `demo.rs`：压缩词表 + 各层独立乘子（占位，M0 后续对拍）。
+//! ② DeepSeek V4.1 Engram：**规格已闭合但尚未实现** —— 见 `docs/v41-engram-analysis.md`
+//!    （层号 [1,14]、每层 24 个素数、乘子 `rng(10007*layer_id)`、行 264 B、48 行/token）。
+//!    本 crate 目前只有 Qwen PLE 的 `PleSpec`。
+//!    （原文指向 `demo.rs`，该文件不存在 —— V172）
 //!
 //! 本 crate 无 IO 依赖，纯函数，`golden.json`（scripts/ref_ple_hash.py 生成）做 P0 对拍。
 

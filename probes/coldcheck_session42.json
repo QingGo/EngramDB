@@ -1,0 +1,16 @@
+{
+  "table": "/root/autodl-tmp/qwen35-ple/qwen38-rows",
+  "shards": 128,
+  "gib": 47.7,
+  "method": "fadvise(POSIX_FADV_DONTNEED) on all shards, then 8 random 4 KiB pages read twice",
+  "cold_us_total": 697.6,
+  "warm_us_total": 8.9,
+  "ratio": 78.3,
+  "marginal_us_per_read": 86.1,
+  "thresholds": {
+    "ratio_min": 5.0,
+    "marginal_us_min": 2.0
+  },
+  "verdict": "cold",
+  "note": "proves fadvise works on this box; an earlier suspicion that it did not was wrong"
+}

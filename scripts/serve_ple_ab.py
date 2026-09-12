@@ -78,6 +78,62 @@ def drop_table_cache(shards: list[Path]) -> int:
     return sum(1 for p in shards if _fadvise_dontneed(str(p)))
 
 
+#: Minimum cold/warm ratio for a run to be allowed to call itself "cold".
+COLD_RATIO_MIN = 5.0
+#: ...or a minimum per-read marginal over warm, in microseconds.
+COLD_MARGINAL_US_MIN = 2.0
+
+
+def verify_cold(shards: list[Path], sample: int = 8) -> dict:
+    """Prove that ``drop_table_cache`` actually evicted something.
+
+    Without this the word "cold" is a *claim*, not a measurement.  The
+    2026-09-12 run is the cautionary case: after ``fadvise(DONTNEED)`` on all
+    128 shards of a 48 GB table, the reader cost moved only 185 -> 230 us, which
+    is what a *failed* eviction looks like -- yet the log said "cold".
+
+    Method: pick ``sample`` random 4 KiB pages, read them once (cold), read the
+    same pages again (warm), compare.  The caller must have already called
+    ``drop_table_cache``.
+
+    Returns a dict with ``ok`` False meaning the run must be reported as VOID
+    rather than as a cold number.
+    """
+    import random
+
+    fds = [os.open(p, os.O_RDONLY) for p in shards]
+    try:
+        rng = random.Random(0xC01D)
+        picks = [
+            (rng.randrange(len(fds)), rng.randrange(0, SHARD_BYTES - 4096, 4096))
+            for _ in range(sample)
+        ]
+        t0 = time.perf_counter()
+        for i, off in picks:
+            os.pread(fds[i], 4096, off)
+        cold = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        for i, off in picks:
+            os.pread(fds[i], 4096, off)
+        warm = time.perf_counter() - t0
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+    ratio = (cold / warm) if warm > 0 else float("inf")
+    marginal_us = (cold - warm) / sample * 1e6
+    ok = ratio >= COLD_RATIO_MIN or marginal_us >= COLD_MARGINAL_US_MIN
+    return {
+        "ok": ok,
+        "cold_us_total": cold * 1e6,
+        "warm_us_total": warm * 1e6,
+        "ratio": ratio,
+        "marginal_us_per_read": marginal_us,
+        "sample": sample,
+        "verdict": "cold" if ok else "VOID (eviction did not take effect)",
+    }
+
+
 # --------------------------------------------------------------------------- #
 # readers
 # --------------------------------------------------------------------------- #
@@ -586,6 +642,11 @@ def main() -> int:
     ap.add_argument("--batch", type=int, default=1)
     ap.add_argument("--shm-budget-gb", type=float, default=20.0)
     ap.add_argument("--cold", action="store_true", help="fadvise DONTNEED before each iteration")
+    ap.add_argument(
+        "--selfcheck-cache",
+        action="store_true",
+        help="only verify that fadvise actually evicts, then exit; needs no GPU/vLLM",
+    )
     ap.add_argument("--gpu-mem-util", type=float, default=0.85)
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
@@ -595,6 +656,27 @@ def main() -> int:
     # then silently never fire and every arm would look identically fast --
     # a beautiful, completely false "no overhead" result.
     os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
+
+    # Cache self-check runs BEFORE importing vllm: it needs no engine and no
+    # GPU, so it can be used to answer "is fadvise even working on this box?"
+    # without paying a model load.
+    if args.selfcheck_cache:
+        sc_shards = sorted(Path(ROWS_DIR).glob("shard_*.bin"))
+        if not sc_shards:
+            print(f"FATAL: no shards under {ROWS_DIR}", file=sys.stderr)
+            return 2
+        n = drop_table_cache(sc_shards)
+        v = verify_cold(sc_shards)
+        print(
+            f"[selfcheck] fadvise on {n}/{len(sc_shards)} shards "
+            f"({sum(p.stat().st_size for p in sc_shards) / 2**30:.1f} GiB)\n"
+            f"[selfcheck] cold={v['cold_us_total']:.1f}us warm={v['warm_us_total']:.1f}us "
+            f"ratio={v['ratio']:.1f}x marginal={v['marginal_us_per_read']:.1f}us/read\n"
+            f"[selfcheck] verdict: {v['verdict']}"
+        )
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(v, indent=2) + "\n")
+        return 0 if v["ok"] else 3
 
     from vllm import LLM, SamplingParams
 
@@ -660,6 +742,7 @@ def main() -> int:
         return None
 
     results = []
+    cold_checks: list = []
     sample_text = None
     for arm in arms:
         reader = make_reader(arm)
@@ -670,7 +753,18 @@ def main() -> int:
         for it in range(args.iterations):
             if args.cold and arm not in ("none", "shm"):
                 n = drop_table_cache(shards)
-                print(f"[cold] {arm} iter={it}: fadvise DONTNEED on {n}/{len(shards)} shards")
+                v = verify_cold(shards)
+                cold_checks.append(v)
+                print(
+                    f"[cold] {arm} iter={it}: fadvise on {n}/{len(shards)} shards; "
+                    f"ratio={v['ratio']:.1f}x marginal={v['marginal_us_per_read']:.1f}us "
+                    f"-> {v['verdict']}"
+                )
+                if not v["ok"]:
+                    print(
+                        "  >>> this iteration's numbers are VOID: the cache was not "
+                        "actually evicted, so 'cold' would be a false claim"
+                    )
             t0 = time.perf_counter()
             outs = llm.generate(prompts, sp)
             dt = time.perf_counter() - t0
@@ -733,6 +827,9 @@ def main() -> int:
         "max_tokens": args.max_tokens,
         "cold": args.cold,
         "table_shards": len(shards),
+        "table_gib": sum(p.stat().st_size for p in shards) / 2**30,
+        "cold_checks": cold_checks,
+        "cold_verified": (all(c["ok"] for c in cold_checks) if cold_checks else None),
         "results": results,
         "sample_output": sample_text,
     }

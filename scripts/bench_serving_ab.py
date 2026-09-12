@@ -122,8 +122,22 @@ def main() -> int:
 
     real = os.environ.get("ENGRAMDB_REAL_ROWS")
     if not args.synthetic and real:
-        store = engramdb.Store(real, 128, 2_500_012, 160)
-        rows_available = 128 * 2_500_012
+        # Geometry is overridable because a real table on a test box is often a
+        # *partial* download: the full Qwen3.8 PLE table is 128 shards and the
+        # machine we measure on only holds 65.  Hard-coding 128 here silently
+        # mis-maps rowids onto shards that do not exist.
+        shards = int(os.environ.get("ENGRAMDB_REAL_SHARDS", "128"))
+        rows_per_shard = int(os.environ.get("ENGRAMDB_REAL_ROWS_PER_SHARD", "2500012"))
+        width = int(os.environ.get("ENGRAMDB_REAL_WIDTH", "160"))
+        present = len(list(Path(real).glob("shard_*.bin")))
+        if present and present != shards:
+            raise SystemExit(
+                f"{real} holds {present} shards but ENGRAMDB_REAL_SHARDS={shards}. "
+                "Set it to the number actually present, or the rowid->shard map "
+                "will address shards that do not exist."
+            )
+        store = engramdb.Store(real, shards, rows_per_shard, width)
+        rows_available = shards * rows_per_shard
     else:
         td = tempfile.TemporaryDirectory(prefix="engramdb-serving-ab-")
         store = _make_store(Path(td.name), args.rows)
