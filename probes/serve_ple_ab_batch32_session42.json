@@ -1,0 +1,169 @@
+{
+  "engine": "vllm",
+  "vllm": "0.29.0",
+  "enforce_eager": true,
+  "model": "/root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B",
+  "layer": 2,
+  "rows_per_token": 16,
+  "row_width": 160,
+  "batch": 32,
+  "prompt_len": 64,
+  "max_tokens": 128,
+  "cold": false,
+  "table_shards": 65,
+  "results": [
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.647900470532477,
+          "tokens": 4096,
+          "tok_per_s": 1122.8376522570295
+        },
+        {
+          "iter": 1,
+          "seconds": 3.3549997732043266,
+          "tokens": 4096,
+          "tok_per_s": 1220.8644640497103
+        },
+        {
+          "iter": 2,
+          "seconds": 3.4839341305196285,
+          "tokens": 4096,
+          "tok_per_s": 1175.6823885155034
+        }
+      ],
+      "tok_per_s_median": 1175.6823885155034,
+      "tok_per_s_best": 1220.8644640497103,
+      "reader": {},
+      "payload_bytes_per_token": 0,
+      "pages_per_token": 0,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": 0.0,
+      "added_us_per_token": 0.0
+    },
+    {
+      "arm": "engram-i",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.626862408593297,
+          "tokens": 4096,
+          "tok_per_s": 1129.3508103023576
+        },
+        {
+          "iter": 1,
+          "seconds": 3.6558957835659385,
+          "tokens": 4096,
+          "tok_per_s": 1120.3820465595402
+        },
+        {
+          "iter": 2,
+          "seconds": 3.4445856139063835,
+          "tokens": 4096,
+          "tok_per_s": 1189.1125549220621
+        }
+      ],
+      "tok_per_s_median": 1129.3508103023576,
+      "tok_per_s_best": 1189.1125549220621,
+      "reader": {
+        "reader_fetch_s_total": 0.21668351255357265,
+        "reader_calls": 384,
+        "reader_us_per_call": 564.2799806082621
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": -3.9408243812895085,
+      "added_us_per_token": 34.89459913907933
+    },
+    {
+      "arm": "shm-keygen",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.32890353910625,
+          "tokens": 4096,
+          "tok_per_s": 1230.4351723870323
+        },
+        {
+          "iter": 1,
+          "seconds": 3.402371509000659,
+          "tokens": 4096,
+          "tok_per_s": 1203.8661825037068
+        },
+        {
+          "iter": 2,
+          "seconds": 3.4281832352280617,
+          "tokens": 4096,
+          "tok_per_s": 1194.80194579725
+        }
+      ],
+      "tok_per_s_median": 1203.8661825037068,
+      "tok_per_s_best": 1230.4351723870323,
+      "reader": {
+        "shm_shards": 53,
+        "shm_bytes": 21200101760,
+        "reader_fetch_s_total": 0.3450807938352227,
+        "rowid_s_total": 0.05198296718299389,
+        "reader_calls": 384,
+        "reader_us_per_call": 898.6479006125592,
+        "rowid_us_per_call": 135.37231037237993
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": 2.39722855964443,
+      "added_us_per_token": -19.912749394279444
+    },
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.2816761285066605,
+          "tokens": 4096,
+          "tok_per_s": 1248.142668443001
+        },
+        {
+          "iter": 1,
+          "seconds": 3.2561214547604322,
+          "tokens": 4096,
+          "tok_per_s": 1257.9383345825966
+        },
+        {
+          "iter": 2,
+          "seconds": 3.306867027655244,
+          "tokens": 4096,
+          "tok_per_s": 1238.634624780875
+        }
+      ],
+      "tok_per_s_median": 1248.142668443001,
+      "tok_per_s_best": 1257.9383345825966,
+      "reader": {},
+      "payload_bytes_per_token": 0,
+      "pages_per_token": 0,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": 6.163252986973028,
+      "added_us_per_token": -49.37939502269717
+    }
+  ],
+  "sample_output": "_1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+}
