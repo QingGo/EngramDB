@@ -553,7 +553,7 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 | 1b | **PLE 路径**用模型自己的权重 | ❌ **本机不存在这样的 checkpoint**：带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，无权重）；三个 Qwen3.5 的 `text_config` 一个 PLE 字段都没有。所以 16 行/token 的 PLE 臂**只能是**合成投影 |
 | 2 | **完整分片** | ✅ **128/128，47.68 GiB**。`padded_vocab == 磁盘行数 == 320,001,536` ⇒ rowid 取模是**空操作**（已验，见 `probes/ple_rowid_exactness_session42.md` §F） |
 | 3 | **冷态**且自证驱逐生效 | ✅ **每次迭代自证**：全表冷态跑 10 次抽检全部 `verdict=cold`，ratio **58.3–115.9×**，marginal 83.2–103.5 µs/read（`probes/serve_ple_ab_fulltable_session42.md`） |
-| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 仍是 `enforce_eager=True`。**但路已有现成范例**：vLLM 的 `compilation_config.splitting_ops` 里就有 `vllm::qwen4_exp_compute_ple_ngram_ids` —— 引擎把自己的 PLE rowid 计算注册成了 splitting op（`cudagraph_mode=FULL_AND_PIECEWISE`），可变形状部分留图外、其余进图。照抄这个模式即可，不需要发明机制 |
+| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ **仍未闭合，但失败点已定位到一层**。eager 下注入全部验证通过（类级补丁、自定义 op、`op_calls=256/op_rows=510`、输出确实改变）；`enforce_eager=False` 时 op **一次都不执行**。过程中排掉四个不同的坑（实例补丁静默失效 / **编译缓存复用未打补丁的产物** / 在 trace 里改计数器被 torch 拒绝 / 静态 buffer 被 Inductor 当常量折叠掉）。见 `probes/subcondition4_cuda_graph_session42.md` |
 | 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ counterbalance 已做（首尾各一段 `none`），因此**测出了漂移 +2.6%**；`engram-i` 臂内散布 45.3–47.3 仍**跨越** `none` 的 46.4–47.1 ⇒ 它的 tok/s 栏判 VOID。**但 `mmap` 冷态 −17.7% 高于地板、可引用。** 直接测量栏才是主证据：**195.9 µs/token（16 行 = 2,560 B，冷 NVMe）= 500 µs 预算的 39%** |
 | 6 | **多引擎**（vLLM + SGLang） | ❌ **PLE 侧不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。**SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容。** 但引擎地板已两引擎都测到（§6.1.1），「5% 的分母」不再只有 vLLM 一个来源 |
 

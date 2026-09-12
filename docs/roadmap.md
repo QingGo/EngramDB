@@ -3876,6 +3876,39 @@ nopool 245.25 266.96 244.69 249.16   marg 4.43 4.90 4.44 4.51
 **splitting op**（`cudagraph_mode=FULL_AND_PIECEWISE`），可变形状部分留图外、其余进图。
 我们要做的是照抄这个模式，不是发明机制。
 
+### 35.1c 子条件 4 的首次实现：eager 全通、graph 全不通（8 次运行留档）
+
+`probes/subcondition4_cuda_graph_session42.md`。**未闭合**，但失败点被压到一层：
+
+| 环节 | 状态 |
+|---|---|
+| 类级补丁在 trace 前生效 | ✅ |
+| 自定义 op 注册 + `mutates_args` 契约 | ✅（eager 下 `op_calls=256 / op_rows=510`） |
+| 磁盘读取经 op 发生 | ✅（eager 下 reader 210–220 µs/次） |
+| delta 进入模型（语义） | ✅（`identical_to_none=False`） |
+| **`enforce_eager=False` 时 op 在 replay 中执行** | ❌ |
+
+排掉的四个坑，每一个都值得单独记：
+
+| # | 坑 | 后果 |
+|---|---|---|
+| W1 | 补丁打在 `LLM()` **之后** | `embed_tokens` 在编译区外所以照跑，但 `Qwen3_5Model.forward` 已 trace 完，`layer.forward` 被固化 ⇒ **静默无效** |
+| W2 | **`~/.cache/vllm/torch_compile_cache`**（87 MB，由未打补丁的运行编译） | 后续每次运行复用旧图 ⇒ 补丁移到 `LLM()` 之前**仍然无效**。⇒ `VLLM_DISABLE_COMPILE_CACHE=1` 是这类实验的**必要条件** |
+| W3 | 在被 trace 的 forward 里**改计数器** | torch 直接拒绝：*"Assigning / modifying buffers of nn.Module during forward pass is not allowed when using cudagraph inside the compiler"* ⇒ **计数器永远无法自证 replay**，必须用功能性判据（输出必须改变） |
+| W4 | **静态 buffer + 普通加法** | 闭包变量是 constant、`nn.Module` buffer 是 `get_attr`，两者都被 Inductor 折进常量池，`hidden_states + 0` **被整个折叠掉** ⇒ 与 Inductor 根本不兼容 |
+
+> W3 与 W4 合起来给出一条通用纪律：**在 CUDA graph 下，任何「图外写好、图内读」的方案
+> 都必须让那个张量成为 `get_attr` 之外的东西** —— 即**算子的实参**。
+> 这就是 `mutates_args` 存在的理由。
+
+**下一个 session 从这里开始**（按可能性排序）：
+1. 启动后 dump `vllm_config.compilation_config.splitting_ops`，确认我们的项**真的在里面**
+   （`set_splitting_ops_for_v1()` 与 `compute_hash()` 的执行顺序可能吃掉它）；
+2. 读 `vllm/compilation/` 里消费 `splitting_ops` 的那段，确认匹配的是名字还是 **tag**
+   （`direct_register_custom_op` 有 `tags` 参数，引擎的 op 没传）；
+3. 检查 `use_inductor_graph_partition=False` 下的切分实现；
+4. 检查 `FULL_AND_PIECEWISE` 是否把整段 forward 当 full graph 捕获而绕过切分点。
+
 ### 35.2 本轮技术债（V166–V177）
 
 > 净关闭率纪律（§29.4）：12 条中只有 5 条是真正新增，

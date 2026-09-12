@@ -28,6 +28,25 @@ fadvise 没生效 / 批量为敌 / 用那个 venv 的只有我），全部是同
 - [ ] 引擎若把执行体放在**子进程**（vLLM V1 默认如此），进程内 hook 不会生效。
       需要 `VLLM_ENABLE_V1_MULTIPROCESSING=0`，并**在结果里写明**。
 
+### 1b. 编译 / CUDA graph 类实验（Session 42 尾，8 次运行换来）
+
+- [ ] **补丁必须在 `LLM()` 构造之前**，而且要在**类**上打。引擎初始化里有一次
+      profiling forward 会触发 `torch.compile`，它**内联** `layer.forward`；
+      之后再打补丁是**静默失效**（不报错，只是没有任何效果）。
+- [ ] **关掉编译缓存：`VLLM_DISABLE_COMPILE_CACHE=1`。** 这是**必要条件**，不是优化。
+      实测 `~/.cache/vllm/torch_compile_cache` 里一份 87 MB、**由未打补丁的运行**编译出的
+      产物被后续每次运行复用，于是补丁明明打对了却依然无效。
+- [ ] **被 trace 的 forward 里不能有任何副作用**（计数器也不行）。torch 会直接拒绝：
+      *"Assigning / modifying buffers of nn.Module during forward pass is not allowed
+      when using cudagraph inside the compiler"*。推论：**计数器永远无法自证 replay**，
+      必须改用**功能性判据** —— 例如「读取臂的输出必须与 baseline 不同」。
+- [ ] **"图外写好、图内读" 的静态张量会被折叠掉。** 闭包变量对 Dynamo 是 constant，
+      `nn.Module` buffer 是 `get_attr`，两者都会被 Inductor 折进常量池，
+      `hidden_states + 0` 整个消失。唯一的出路是让该张量成为**算子的实参**
+      （`mutates_args` 就是为此存在的）。
+- [ ] **每一层都要分开验证。** 本次分界线极干净：eager 下注入全通、graph 下 op 一次不跑。
+      若不分别在两种模式下各跑一次，会把"某一段坏了"误判成"整条链坏了"。
+
 ## 2. 冷态
 
 - [ ] 冷必须**自证**：`fadvise(DONTNEED)` 后读若干随机页两次，冷/温比 ≥5×
@@ -82,3 +101,5 @@ fadvise 没生效 / 批量为敌 / 用那个 venv 的只有我），全部是同
 | 「批量为敌」 | 补测后修正；§3 最后一条 |
 | 「uv 缓存 65% 命中」 | §0 元规则（name-version 重叠 ≠ 复用，未验证即断言） |
 | 「fadvise 没生效」 | §2 自证 —— 补测后**被推翻**，规则有效 |
+| 「mmap 臂 −0.1%，与内存一样快」 | §2 自证盲区 —— 持有映射的臂自检看不见（3814→850 µs 衰减）；修后 **−17.7%** |
+| 「graph 模式下 engram-i 慢 20%」 | §1b 功能性判据 —— `identical_to_none=True` 说明 delta 从未进入模型，那 20% 是白付的 I/O |

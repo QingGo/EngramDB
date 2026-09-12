@@ -1,0 +1,76 @@
+{
+  "engine": "vllm",
+  "vllm": "0.29.0",
+  "enforce_eager": true,
+  "mode": "eager",
+  "injection": "eager fill (embed instance) -> static buffer -> class-level layer patch consumed inside the graph",
+  "stage": "1 of 2 (read is eager and serial; splitting-op overlap not done)",
+  "layer": 2,
+  "rows_per_token": 16,
+  "payload_bytes_per_token": 2560,
+  "batch": 1,
+  "prompt_len": 128,
+  "max_tokens": 128,
+  "table_shards": 128,
+  "graph_mode_detected": false,
+  "reader_arm_reached_model": true,
+  "verdict": "valid",
+  "results": [
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.774031816981733,
+          "tokens": 128,
+          "tok_per_s": 46.14222490759661
+        },
+        {
+          "iter": 1,
+          "seconds": 2.7163757476955652,
+          "tokens": 128,
+          "tok_per_s": 47.12161051672939
+        }
+      ],
+      "tok_per_s_median": 47.12161051672939,
+      "tok_per_s_best": 47.12161051672939,
+      "reader": {},
+      "counters": {
+        "fill_calls": 256,
+        "fill_tokens": 510
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": true
+    },
+    {
+      "arm": "engram-i",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.0535334097221494,
+          "tokens": 128,
+          "tok_per_s": 41.91865056804704
+        },
+        {
+          "iter": 1,
+          "seconds": 2.709078780375421,
+          "tokens": 128,
+          "tok_per_s": 47.248533681350494
+        }
+      ],
+      "tok_per_s_median": 47.248533681350494,
+      "tok_per_s_best": 47.248533681350494,
+      "reader": {
+        "reader_fetch_s_total": 0.04743766412138939,
+        "reader_calls": 256,
+        "reader_us_per_call": 185.3033754741773
+      },
+      "counters": {
+        "fill_calls": 256,
+        "fill_tokens": 510
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": false
+    }
+  ]
+}

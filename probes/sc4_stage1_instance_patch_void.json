@@ -1,0 +1,126 @@
+{
+  "engine": "vllm",
+  "vllm": "0.29.0",
+  "enforce_eager": false,
+  "mode": "cuda_graph",
+  "injection": "eager fill -> static buffer -> graph consumes at layer",
+  "stage": "1 of 2 (read is eager and serial; splitting-op overlap not yet done)",
+  "layer": 2,
+  "rows_per_token": 16,
+  "payload_bytes_per_token": 2560,
+  "batch": 1,
+  "prompt_len": 128,
+  "max_tokens": 128,
+  "table_shards": 128,
+  "results": [
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 0.350216343998909,
+          "tokens": 128,
+          "tok_per_s": 365.4883679569185
+        },
+        {
+          "iter": 1,
+          "seconds": 0.31564510334283113,
+          "tokens": 128,
+          "tok_per_s": 405.5187254432886
+        },
+        {
+          "iter": 2,
+          "seconds": 0.31303815077990294,
+          "tokens": 128,
+          "tok_per_s": 408.89584761825654
+        }
+      ],
+      "tok_per_s_median": 405.5187254432886,
+      "tok_per_s_best": 408.89584761825654,
+      "reader": {},
+      "counters": {
+        "fill_calls": 384,
+        "fill_tokens": 765,
+        "consume_calls": 0,
+        "consume_tokens": 0,
+        "consume_skipped_non2d": 0
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": true
+    },
+    {
+      "arm": "engram-i",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 0.46410690154880285,
+          "tokens": 128,
+          "tok_per_s": 275.7985273928107
+        },
+        {
+          "iter": 1,
+          "seconds": 0.39558160211890936,
+          "tokens": 128,
+          "tok_per_s": 323.5741988868431
+        },
+        {
+          "iter": 2,
+          "seconds": 0.3730340264737606,
+          "tokens": 128,
+          "tok_per_s": 343.1322370507763
+        }
+      ],
+      "tok_per_s_median": 323.5741988868431,
+      "tok_per_s_best": 343.1322370507763,
+      "reader": {
+        "reader_fetch_s_total": 0.07642547227442265,
+        "reader_calls": 384,
+        "reader_us_per_call": 199.02466738130897
+      },
+      "counters": {
+        "fill_calls": 384,
+        "fill_tokens": 765,
+        "consume_calls": 0,
+        "consume_tokens": 0,
+        "consume_skipped_non2d": 0
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": true
+    },
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 0.3124734787270427,
+          "tokens": 128,
+          "tok_per_s": 409.6347649133218
+        },
+        {
+          "iter": 1,
+          "seconds": 0.3119850540533662,
+          "tokens": 128,
+          "tok_per_s": 410.27606398768427
+        },
+        {
+          "iter": 2,
+          "seconds": 0.3120250813663006,
+          "tokens": 128,
+          "tok_per_s": 410.22343280710476
+        }
+      ],
+      "tok_per_s_median": 410.22343280710476,
+      "tok_per_s_best": 410.27606398768427,
+      "reader": {},
+      "counters": {
+        "fill_calls": 384,
+        "fill_tokens": 765,
+        "consume_calls": 0,
+        "consume_tokens": 0,
+        "consume_skipped_non2d": 0
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": true
+    }
+  ]
+}

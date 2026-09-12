@@ -1,0 +1,79 @@
+{
+  "engine": "vllm",
+  "vllm": "0.29.0",
+  "enforce_eager": true,
+  "mode": "eager",
+  "injection": "eager fill (embed instance) -> static buffer -> class-level layer patch consumed inside the graph",
+  "read_mode": "op",
+  "stage": "2 of 2: disk read inside a registered splitting op",
+  "layer": 2,
+  "rows_per_token": 16,
+  "payload_bytes_per_token": 2560,
+  "batch": 1,
+  "prompt_len": 128,
+  "max_tokens": 128,
+  "table_shards": 128,
+  "graph_mode_detected": false,
+  "reader_arm_reached_model": true,
+  "verdict": "valid",
+  "results": [
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.7311372058466077,
+          "tokens": 128,
+          "tok_per_s": 46.866924051266075
+        },
+        {
+          "iter": 1,
+          "seconds": 2.6912474995478988,
+          "tokens": 128,
+          "tok_per_s": 47.56158622404764
+        }
+      ],
+      "tok_per_s_median": 47.56158622404764,
+      "tok_per_s_best": 47.56158622404764,
+      "reader": {},
+      "counters": {
+        "fill_calls": 256,
+        "fill_tokens": 510
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": true
+    },
+    {
+      "arm": "engram-i",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.9021624913439155,
+          "tokens": 128,
+          "tok_per_s": 44.105042492202614
+        },
+        {
+          "iter": 1,
+          "seconds": 2.6925191460177302,
+          "tokens": 128,
+          "tok_per_s": 47.53912342250699
+        }
+      ],
+      "tok_per_s_median": 47.53912342250699,
+      "tok_per_s_best": 47.53912342250699,
+      "reader": {
+        "reader_fetch_s_total": 0.05621831491589546,
+        "reader_calls": 256,
+        "reader_us_per_call": 219.60279264021665
+      },
+      "counters": {
+        "fill_calls": 256,
+        "fill_tokens": 510,
+        "op_calls": 256,
+        "op_rows": 510
+      },
+      "deterministic_across_iters": true,
+      "tokens_identical_to_none": false
+    }
+  ]
+}
