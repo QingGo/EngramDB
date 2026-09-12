@@ -93,3 +93,43 @@ bash scripts/gate.sh
 | `gather_pp: index out of bounds` | 表分片与布局不匹配（真表=128 shard；mock 用 `--dir` 检查）|
 | crates.io 429（发布时）| `release.sh` 已自动规避 TUNA；本地开发换官方源 |
 | bench 数字漂移 | 固定 seed + keys 文件 + `--warm` 口径 + 介质标注 |
+
+## PyPI 镜像选择：先量持续吞吐，别量索引页
+
+**结论（2026-09-12，AutoDL 容器，100 MB 区段实测）**：
+
+| 镜像 | 持续吞吐 |
+|---|---|
+| `mirrors.aliyun.com/pypi/simple` | **16.98 MB/s** |
+| `pypi.tuna.tsinghua.edu.cn/simple` | **16.33 MB/s** |
+| `mirrors.ustc.edu.cn/pypi/simple` | **0.56 MB/s** |
+| `files.pythonhosted.org`（直连 PyPI CDN） | 0.09 MB/s |
+
+**差 30 倍。** 配合 `uv` 的 8 路并发，实测 aliyun 达到 **42.7 MB/s**。
+
+### 教训：第一次测量用的是错的样本
+
+最初用「下载 1.7 MB 的 simple 索引页」比较镜像，TLS 握手与建连占了大部分时间，
+于是选出了 **ustc（实际最慢）**，装 vLLM 花了 40 分钟。
+**索引页不能代表持续吞吐。**
+
+### 正确的测速方法
+
+拿一个**真实的大 wheel**，下 100 MB 区段：
+
+```bash
+HREF=$(curl -s https://pypi.tuna.tsinghua.edu.cn/simple/nvidia-cublas/ \
+  | grep -oE 'href="[^"]*manylinux[^"]*x86_64\.whl[^"]*"' | tail -1 | sed 's/href="//;s/"$//;s/#.*//')
+REL=$(echo "$HREF" | sed 's#^\.\./\.\./##')        # 注意：tuna 的 href 是相对路径
+curl -sL -o /dev/null -w '%{speed_download}\n' --max-time 50 -r 0-104857599 \
+  "https://mirrors.aliyun.com/pypi/$REL"
+```
+
+### 附带发现
+
+- `github.com` 从 AutoDL 容器**不可达**；`pypi.org` 与 `files.pythonhosted.org` 可达但极慢。
+- **中断 `uv pip install` 会作废该轮的全部下载**：半成品留在 `$UV_CACHE_DIR/.tmp*`，
+  不进入可用缓存。实测累积了 **5.4 GB 孤儿**。重装前应先 `rm -rf $UV_CACHE_DIR/.tmp*`。
+- venv 与 `UV_CACHE_DIR` 应放**同一文件系统**（uv 文档：否则无法 link，退回拷贝）。
+  *注意*：这条只影响链接性能，**不影响是否会重新下载** —— 曾误判为「跨盘导致重下」，
+  同盘（xfs→xfs）实测缓存照样增长，该假设已被否证。
