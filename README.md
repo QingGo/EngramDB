@@ -355,6 +355,22 @@ hook = install_target_reader_hook(model, reader, mode="post")
 
 ### 5.2 vLLM / SGLang：不修改源码，启动前 patch
 
+> ⚠️ **验证边界（别把本节读成「已验证的 serving 配方」）**
+> **已在真实引擎里跑通**（4090 + vLLM 0.29.0 + Qwen3.5-0.8B + 真实 26 GB PLE 表，
+> 第 2 层注入，`enforce_eager=True`）：batch=1 下磁盘臂 43.9 tok/s vs 无 reader 45.0，
+> **−2.4%，与 2.5% 的噪声地板同量级**；`shm`/`mmap` 臂落在基准之上。
+> 见 `probes/serve_ple_ab_session42.md`。
+> **但下列仍然是未验证/不成立的**：
+> ① 上面的注入是**随机投影**、输出是乱码 —— 只测存储代价，**不构成质量声明**；
+> ② 绝对 tok/s 是 eager 数字，**不是 CUDA-graph 数字**（Python reader 进不了 graph，
+> 要改成 splitting op + `PIECEWISE` capture，见 `docs/engine-integration.md` §4.1）；
+> ③ 本节示例用的 `embed_tokens_per_layer` 路径**仍未测**（实测跑通的是 `embed_tokens` 注入点）；
+> ④ **Python 级后台预取实测让性能更差 2.7×**（GIL 争用），要掩盖 I/O 必须把
+> rowid 生成 + 取数 + 张量构造合并为一次 GIL-free 的 PyO3 调用 —— 见
+> `docs/prefetch-lead-time.md` §6.2；
+> ⑤ FP8 `weight_scale` 的反量化不在这一层。
+> 另外，「加速」只能相对**同样从磁盘读**的方案或「跑不起来」成立 —— 表能装进 HBM 时用本库一定更慢。
+
 ```python
 # ---- vLLM ----
 from engramdb import Store

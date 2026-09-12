@@ -1,0 +1,251 @@
+{
+  "engine": "vllm",
+  "vllm": "0.29.0",
+  "enforce_eager": true,
+  "model": "/root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B",
+  "layer": 2,
+  "rows_per_token": 16,
+  "row_width": 160,
+  "batch": 1,
+  "prompt_len": 128,
+  "max_tokens": 128,
+  "cold": false,
+  "table_shards": 65,
+  "results": [
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.8791791927069426,
+          "tokens": 128,
+          "tok_per_s": 44.457114834751614
+        },
+        {
+          "iter": 1,
+          "seconds": 2.846123314462602,
+          "tokens": 128,
+          "tok_per_s": 44.97345541901393
+        },
+        {
+          "iter": 2,
+          "seconds": 2.8407266112044454,
+          "tokens": 128,
+          "tok_per_s": 45.058894261468204
+        }
+      ],
+      "tok_per_s_median": 44.97345541901393,
+      "tok_per_s_best": 45.058894261468204,
+      "reader": {},
+      "payload_bytes_per_token": 0,
+      "pages_per_token": 0,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": 0.0,
+      "added_us_per_token": 0.0
+    },
+    {
+      "arm": "shm",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.9433319391682744,
+          "tokens": 128,
+          "tok_per_s": 43.488129319240215
+        },
+        {
+          "iter": 1,
+          "seconds": 2.9101658780127764,
+          "tokens": 128,
+          "tok_per_s": 43.98374710083727
+        },
+        {
+          "iter": 2,
+          "seconds": 2.926558142527938,
+          "tokens": 128,
+          "tok_per_s": 43.73738493007851
+        }
+      ],
+      "tok_per_s_median": 43.73738493007851,
+      "tok_per_s_best": 43.98374710083727,
+      "reader": {
+        "shm_shards": 53,
+        "shm_bytes": 21200101760,
+        "reader_fetch_s_total": 0.04536735638976097,
+        "rowid_s_total": 0.01396803930401802,
+        "reader_calls": 384,
+        "reader_us_per_call": 118.14415726500253,
+        "rowid_us_per_call": 36.375102354213595
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": -2.7484445600611576,
+      "added_us_per_token": 628.3970942604356
+    },
+    {
+      "arm": "shm-keygen",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.976765344850719,
+          "tokens": 128,
+          "tok_per_s": 42.999694356633626
+        },
+        {
+          "iter": 1,
+          "seconds": 3.067180735990405,
+          "tokens": 128,
+          "tok_per_s": 41.73213482271963
+        },
+        {
+          "iter": 2,
+          "seconds": 2.971648145467043,
+          "tokens": 128,
+          "tok_per_s": 43.07374013819618
+        }
+      ],
+      "tok_per_s_median": 42.999694356633626,
+      "tok_per_s_best": 43.07374013819618,
+      "reader": {
+        "shm_shards": 53,
+        "shm_bytes": 21200101760,
+        "reader_fetch_s_total": 0.3454901743680239,
+        "rowid_s_total": 0.31187005061656237,
+        "reader_calls": 384,
+        "reader_us_per_call": 899.7139957500622,
+        "rowid_us_per_call": 812.1615901472978
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": -4.388724513139891,
+      "added_us_per_token": 1020.6408624071628
+    },
+    {
+      "arm": "engram-i",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 3.0735049275681376,
+          "tokens": 128,
+          "tok_per_s": 41.64626477474952
+        },
+        {
+          "iter": 1,
+          "seconds": 2.949899329803884,
+          "tokens": 128,
+          "tok_per_s": 43.39131125824207
+        },
+        {
+          "iter": 2,
+          "seconds": 2.9349053828045726,
+          "tokens": 128,
+          "tok_per_s": 43.61299030283702
+        }
+      ],
+      "tok_per_s_median": 43.39131125824207,
+      "tok_per_s_best": 43.61299030283702,
+      "reader": {
+        "reader_fetch_s_total": 0.35368594713509083,
+        "reader_calls": 384,
+        "reader_us_per_call": 921.0571539976323
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": -3.517951080323173,
+      "added_us_per_token": 810.7501198537648
+    },
+    {
+      "arm": "mmap",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.8641686039045453,
+          "tokens": 128,
+          "tok_per_s": 44.69010652009293
+        },
+        {
+          "iter": 1,
+          "seconds": 2.8800216810777783,
+          "tokens": 128,
+          "tok_per_s": 44.44410986242961
+        },
+        {
+          "iter": 2,
+          "seconds": 2.891139881685376,
+          "tokens": 128,
+          "tok_per_s": 44.273195085041344
+        }
+      ],
+      "tok_per_s_median": 44.44410986242961,
+      "tok_per_s_best": 44.69010652009293,
+      "reader": {
+        "reader_fetch_s_total": 0.061427281238138676,
+        "reader_calls": 384,
+        "reader_us_per_call": 159.96687822431946
+      },
+      "payload_bytes_per_token": 2560,
+      "pages_per_token": 16,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": -1.177017757813913,
+      "added_us_per_token": 264.83098918106407
+    },
+    {
+      "arm": "none",
+      "runs": [
+        {
+          "iter": 0,
+          "seconds": 2.82266359962523,
+          "tokens": 128,
+          "tok_per_s": 45.34723869220363
+        },
+        {
+          "iter": 1,
+          "seconds": 2.8117246199399233,
+          "tokens": 128,
+          "tok_per_s": 45.523661560688296
+        },
+        {
+          "iter": 2,
+          "seconds": 2.8056193944066763,
+          "tokens": 128,
+          "tok_per_s": 45.622724256605395
+        }
+      ],
+      "tok_per_s_median": 45.523661560688296,
+      "tok_per_s_best": 45.622724256605395,
+      "reader": {},
+      "payload_bytes_per_token": 0,
+      "pages_per_token": 0,
+      "diag": {
+        "stash_forward": 0,
+        "stash_embed": 384,
+        "layer_hits": 384
+      },
+      "tok_per_s_vs_none_pct": 1.2234019746718172,
+      "added_us_per_token": -268.73980095842853
+    }
+  ],
+  "sample_output": "e,\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}\t}"
+}
