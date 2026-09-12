@@ -530,16 +530,43 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 |---|---|---|
 | 1a | **输入嵌入**用模型自己的权重，不是随机投影 | ✅ 逐位忠实性已证（`probes/ple_disk_faithfulness_session42.json`，248,320 行 bf16 全等）；serving 侧已跑通，两臂 **greedy token id 逐位相同**（`probes/serve_faithful_embed_ab_session42.md`） |
 | 1b | **PLE 路径**用模型自己的权重 | ❌ **本机不存在这样的 checkpoint**：带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，无权重）；三个 Qwen3.5 的 `text_config` 一个 PLE 字段都没有。所以 16 行/token 的 PLE 臂**只能是**合成投影 |
-| 2 | **完整分片** | ✅ 128 分片真数据全在（47.7 GiB）；`padded_vocab` 与磁盘行数相等（320,001,536） |
-| 3 | **冷态**且自证驱逐生效 | ✅ 自校验已入脚本（实测 ratio 78.3×，判定 `cold`）；**待独占重跑** |
+| 2 | **完整分片** | ✅ **128/128，47.68 GiB**。`padded_vocab == 磁盘行数 == 320,001,536` ⇒ rowid 取模是**空操作**（已验，见 `probes/ple_rowid_exactness_session42.md` §F） |
+| 3 | **冷态**且自证驱逐生效 | ✅ **每次迭代自证**：全表冷态跑 10 次抽检全部 `verdict=cold`，ratio **58.3–115.9×**，marginal 83.2–103.5 µs/read（`probes/serve_ple_ab_fulltable_session42.md`） |
 | 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 目前是 `enforce_eager=True`。Python reader 进不了 graph，需改成 splitting op + `PIECEWISE` capture。（注：vLLM 自己也把 PLE 的 rowid 生成移出了 PIECEWISE graph） |
-| 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ 忠实 A/B 已跑，但**性能栏判 VOID**：效应 0.54% ≪ 噪声 3.9%，`added_us_per_token` 甚至为负（−360.8 µs）。效应本身由 `disk_reader 114.2 µs/call` 直接测得，不需要 tok/s 反推 |
+| 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ counterbalance 已做（首尾各一段 `none`），因此**测出了漂移 +2.6%**；`engram-i` 臂内散布 45.3–47.3 仍**跨越** `none` 的 46.4–47.1 ⇒ 它的 tok/s 栏判 VOID。**但 `mmap` 冷态 −17.7% 高于地板、可引用。** 直接测量栏才是主证据：**195.9 µs/token（16 行 = 2,560 B，冷 NVMe）= 500 µs 预算的 39%** |
 | 6 | **多引擎**（vLLM + SGLang） | ❌ **不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容 |
 
 > **为什么必须逐条列**：eager 模式下引擎自身开销约 22 ms/token，5% 预算 = 1.1 ms，
 > 而存储代价只有 0.6 ms —— **「达标」是廉价的**。见 roadmap §35.1。
 > 「待硬件」已不成立：机器有，缺的是这六条。
 > 在此之前，每 token 开销门禁是**可本地复现的替代证据**：它不测模型端到端，但 5% 预算在算术上由它保证。
+
+#### 全表冷态这一轮可以直接引用的三个数
+
+`probes/serve_ple_ab_fulltable_session42.md`（128/128 分片，每次迭代自证冷态，注入自证触发
+`layer_hits=640`/臂，counterbalanced，首尾各一段 `none` 测出漂移 +2.6%）：
+
+| 介质 | µs / token（16 行 = 2,560 B） | 占 500 µs 预算 | tok/s 中位 | vs `none` |
+|---|---|---|---|---|
+| **NVMe 冷（Store-I，我们的路径）** | **195.9** | **39%** | 47.0 | −0.2%（在漂移内） |
+| RAM（/dev/shm 同字节） | 93.1 | 19% | 47.6 | −0.3% |
+| `np.memmap` 冷（引擎原生形态） | **3801.4** | **760%** | **38.7** | **−17.7%** |
+
+- **介质差 = 102.8 µs/token**（NVMe vs RAM，同字节同形状）。
+- 我们的批量 pread 比 `np.memmap` 快 **19.4×**；mmap 的代价（14.8% 单步）**高到可分辨**，
+  这是本轮唯一一个高于噪声地板的 tok/s 差异。
+- `engram-i` 的 −0.2% 与漂移 +2.6% 同量级 ⇒ 它的 tok/s 栏仍不可引用，
+  可引用的是直接测量的 195.9 µs/token。
+
+> **踩过的坑（对任何 mmap offload 都成立）**：`fadvise(DONTNEED)` 走
+> `invalidate_mapping_pages()`，**跳过被进程映射的页**。第一轮 `mmap` 臂一直持有
+> `np.memmap`，于是自检报 `cold` 而该臂实际是温的（3814→850 µs 单调衰减）。
+> 修法是 reader 接口加 `release()`（丢映射、下次惰性重建），并用 `mmap_reopens`
+> 计数自证。**「我 fadvise 了所以我是冷的」在有活映射时是错的。**
+
+> **外推警告**：V4.1 是 48 行 × 264 B = 12,672 B/token（上表 4.95×），线性外推 ~970 µs
+> 会**超出预算**。这是外推不是实测；出路是「藏」而非「快」——
+> V4.1 的 `τ(14) = 2295 µs` 足够，但藏需要 GIL-free 的合并调用（`docs/prefetch-lead-time.md` §6.2）。
 
 #### 接入面在哪：vLLM 里的那一行
 

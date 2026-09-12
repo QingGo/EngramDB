@@ -150,6 +150,15 @@ class BaseReader:
     def stats(self) -> dict:
         return {}
 
+    def release(self) -> None:
+        """Drop any state that would defeat ``fadvise(DONTNEED)``.
+
+        Called before each cold iteration.  A reader that holds an open
+        ``mmap`` keeps its own pages resident -- see ``MmapReader.release`` --
+        and would then be measured warm while the self-check (which preads)
+        happily reports "cold".  Readers that own no mapping need do nothing.
+        """
+
 
 def _flatten_rowids(rowids: list[list[int]]) -> list[int]:
     return [r for row in rowids for r in row]
@@ -232,15 +241,45 @@ class MmapReader(BaseReader):
         import numpy as np
 
         self._np = np
+        self._rows_dir = rows_dir
         self._shards = sorted(Path(rows_dir).glob("shard_*.bin"))
-        self.maps = [np.memmap(p, dtype=np.uint8, mode="r") for p in self._shards]
-        self._n_shards = len(self.maps)
-        self._rows_total = self._n_shards * ROWS_PER_SHARD
+        self._rows_total = len(self._shards) * ROWS_PER_SHARD
         self.rows_per_token = rows_per_token
         self.payload_bytes_per_token = rows_per_token * ROW_WIDTH
         self.pages_per_token = rows_per_token
         self._fetch_s = 0.0
         self._calls = 0
+        self._remaps = 0
+        self.maps: list = []
+        self._open()
+
+    def _open(self) -> None:
+        # Must go through self._np: `np` is a local of __init__ and is not
+        # visible in this method.  (That exact mistake cost one run.)
+        self.maps = [
+            self._np.memmap(p, dtype=self._np.uint8, mode="r") for p in self._shards
+        ]
+        self._remaps += 1
+
+    def release(self) -> None:
+        """Close the mapping so ``fadvise(DONTNEED)`` can actually evict.
+
+        ``posix_fadvise(POSIX_FADV_DONTNEED)`` goes through
+        ``invalidate_mapping_pages()``, which **skips pages currently mapped by a
+        process**.  While ``self.maps`` is alive this reader therefore keeps its
+        own working set resident no matter how many times we fadvise, and a
+        warm arm gets reported as cold.  Dropping the mappings and re-opening
+        them on the next ``fetch`` is what makes the mmap baseline honest.
+
+        Observed before this fix: ``reader_us/call`` fell 3814 -> 850 across
+        five supposedly-cold iterations while every self-check said "cold".
+        """
+        for m in self.maps:
+            try:
+                m._mmap.close()
+            except Exception:
+                pass
+        self.maps = []
 
     def _rowids(self, n: int) -> list[int]:
         # Deterministic spread over the whole table.  The mmap arm is a
@@ -254,6 +293,8 @@ class MmapReader(BaseReader):
         import torch
 
         t0 = time.perf_counter()
+        if not self.maps:  # released before a cold iteration; re-fault from scratch
+            self._open()
         n = len(token_ids)
         rids = self._rowids(n)
         buf = bytearray(n * self.payload_bytes_per_token)
@@ -273,6 +314,9 @@ class MmapReader(BaseReader):
             "reader_fetch_s_total": self._fetch_s,
             "reader_calls": self._calls,
             "reader_us_per_call": (self._fetch_s / self._calls * 1e6) if self._calls else None,
+            # >1 proves release() ran and the mapping was rebuilt, i.e. the arm
+            # really was cold rather than riding its own resident pages.
+            "mmap_reopens": self._remaps,
         }
 
     def close(self) -> None:
@@ -759,6 +803,10 @@ def main() -> int:
         runs = []
         for it in range(args.iterations):
             if args.cold and arm not in ("none", "shm"):
+                # Release any reader-held mapping FIRST: fadvise cannot evict
+                # pages a process still has mapped (see MmapReader.release).
+                if reader is not None:
+                    reader.release()
                 n = drop_table_cache(shards)
                 v = verify_cold(shards)
                 cold_checks.append(v)

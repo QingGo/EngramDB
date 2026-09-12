@@ -3879,6 +3879,50 @@ nopool 245.25 266.96 244.69 249.16   marg 4.43 4.90 4.44 4.51
 另有两处**文档/工具**更正已随本轮提交：README §5.2 的「未验证 serving 配方」加边界；
 `bench_serving_ab.py` 的真实表几何由硬编码 128 分片改为可配（否则指向半表会静默错映射）。
 
+### 35.2b 收盘补记（V178–V181）：接入面只有一行，而 SGLang 没有那一行
+
+**E. 结构性的（不是「还没做」，是「本机/本引擎做不到」）**
+
+| # | 事实 |
+|---|---|
+| V178 | **本机不存在含 PLE 的 checkpoint。** 带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，只有 config + tokenizer，**无权重**）；三个 Qwen3.5（0.8B/2B/4B）的 `text_config` **一个 PLE 字段都没有**。⇒ 子条件 1b（PLE 路径用模型自己的权重）在本机**不可达**；16 行/token 的 PLE 臂**只能**是合成投影。要闭合需 125B 主干 + 51B 表，或官方放出小号 PLE 模型 |
+| V179 | **SGLang 0.5.19 没有 PLE 这个「缝」。** vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；SGLang registry **无条目**、全 `sglang/srt` **无 `ple_layer_ids`**、venv-sg 的 transformers 5.12.1 **无 `qwen4_exp`**。⇒ 子条件 6 从「❌ 未做」改判为「❌ **不可做**」。这不是我们库的兼容性问题 |
+| V180 | **在测了 6 类代价之后，才第一次验证「读的是不是正确的行」。** 直到本轮才有 `scripts/ple_rowid_exactness.py`。此前所有 serving 数字都以「rowid 正确」为前提，而那个前提从未被检验过 |
+
+**F. 本轮的正向结论（应写进对外表述）**
+
+**接入面收束到 vLLM 里的一行**，而且**引擎自己已经把它切好了**：
+
+```python
+# vllm/models/qwen4_exp/nvidia/ple_layer.py
+ngram_ids = self.compute_ngram_ids(input_ids, query_start_loc, ngram_context)
+return self.ngram_embedding(ngram_ids).flatten(-2)      # ← 唯一需要改的行
+```
+
+1. **上半行已证逐位相同。** 拿引擎自己的 `compute_ngram_ids`（未修改的函数体）当裁判，
+   对照我们的生产 Rust 路径：37 用例 / 18,048 个 rowid / **IDENTICAL**，multiplier 由
+   `seed=1234` 独立推出。见 `probes/ple_rowid_exactness_session42.md`。
+2. **切口是引擎给的。** 源码注释：*"Keep num_reqs-dependent ID generation outside
+   PIECEWISE CUDA graphs"* —— 算 rowid 与取行在引擎里本来就是两件事。
+3. **下半行无路可走，那正是我们的位置。** `ngram_embedding` 是 GPU 常驻的
+   `PLEVocabParallelEmbedding`；vLLM 0.29.0 的 offload 只有**整张量 / 整层**两种粒度
+   （`cpu_offload_gb` 按参数名段 + GiB 预算；`offload_group_size` 按 decoder layer 分组）。
+   PLE 表是 layer 2 里的**单个 51 GB 张量**，任何配置都只能整表搬运，
+   **没有「按 rowid 取 16 行 = 2,560 B」这个粒度**。这是粒度问题，不是配置问题。
+
+| V181 | `docs/prefetch-lead-time.md` §6 把 **Qwen3.5-0.8B** 与 `ple_layer_ids=[2]` 混为一谈（前者根本没有 PLE）。已改成一张来源表：`N` 取自实测模型，`L` 与 I/O 形状取自目标架构，注入是合成的。**凡跨模型引用的量都要标来源。** |
+| V182 | **冷态自检对持有 mmap 的臂是瞎的。** `fadvise(DONTNEED)` 走 `invalidate_mapping_pages()`，**跳过被进程映射的页**。第一轮 `mmap` 臂一直持有 `np.memmap`，自检报 `cold` 而该臂实为温态（3814→850 µs 单调衰减）。加 `release()` 后平在 3801–3865 µs，**代价 −17.7% tok/s**。⇒ 「我 fadvise 了所以我是冷的」在有活映射时是错的；**冷态自检必须与工作负载读同一组页**（本轮的自检抽样 8 页 pread，看不见 mmap 的驻留） |
+
+**G. 本轮唯一高于噪声地板的 tok/s 差异**
+
+修正后 `mmap` 冷态 = **3801 µs/token（−17.7% tok/s，占单步 14.8%）**，
+对比我们的批量 pread **195.9 µs/token（−0.2%，在 +2.6% 漂移内）= 19.4×**。
+两者都对照同一个 500 µs 预算：**39% vs 760%**。
+
+这条把「磁盘从来不是代价」的旧叙述**限定清楚了**：在 batch=1、表 47.7 GiB **且真冷**时，
+用**持映射**的方式读要付 15% 的单步代价；用我们的批量 pread 付 0.9%。
+早先「mmap ≈ none」是温态映射的假象。
+
 ### 35.3 计划：四个阶段，每阶段一个可证伪的退出标准
 
 **Phase A（1 session，最高杠杆）—— 闭合真 serving 六条子条件**
@@ -3886,12 +3930,26 @@ nopool 245.25 266.96 244.69 249.16   marg 4.43 4.90 4.44 4.51
 完整分片或显式标注半表 / CUDA-graph 或显式标注 eager。
 **退出标准**：README §6.1「GPU 端 vLLM/SGLang A/B 差距 ≤5%」从 ⏳ 变成一张六列 ✓/❌ 表。
 
+> **已执行（Session 42 尾）**：表已闭合，且**多出一条原本没有的判据** ——
+> 子条件表从 6 条变成 7 条（含 1a/1b 拆分），其中 **1b 与 6 是结构性不可达**（V178/V179），
+> 不该继续挂在待办里当「还没做」。**Phase A 的真正剩余项只有 4（CUDA graph）与 5（counterbalance）**，
+> 二者都需先把 reader 变成 splitting op。
+> **新增的 7 号判据（rowid 逐位一致）已 ✅** —— 它比其余六条的优先级都高：
+> 代价再低，读错行也是零分。
+
 **Phase B（1–2 session）—— 换裁判**
 测 `O_engine / F_storage` 随配置的变化。这是唯一能让「≤5%」在 CUDA graph 下仍可测的表述。
 
 **Phase C —— 四条接入面按「谁能给出可证伪的数字」排序，不要四条都浅**
 1. vLLM（最接近，只差 Phase A）→ 2. PyTorch 研究者（不需 GPU）→
-3. SGLang（补 V162 另一半）→ 4. llama.cpp（零代码，最后）
+3. ~~SGLang（补 V162 另一半）~~ → 4. llama.cpp（零代码，最后）
+
+> **排序已改（V179）**：SGLang 从第 3 位**移出**。它缺的不是我们补的验证，
+> 而是 `qwen4_exp` 这个架构本身 —— 没有 PLE 的缝，就不是「接入面」。
+> 要恢复它只有两条路：等 SGLang 上游实现 `qwen4_exp`，或把我们的接入点
+> 从「PLE 缝」上移到**输入嵌入缝**（后者每个引擎都有，且已证逐位相同 —— 见
+> `probes/serve_faithful_embed_ab_session42.md`）。**后一条本身可能就是正确答案**：
+> 它是唯一在所有引擎里都存在的缝。
 
 **Phase D —— V4.1 只做接口形状，不做实现**（§29.3 已定）。
 本轮补上 per-module deadline 的**量化依据**：layer 1 需 **293K IOPS**，layer 14 只需 **21K**，
