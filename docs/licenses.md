@@ -17,6 +17,9 @@
 | Qwen3.8-Flash-Next 权重（33 safetensors，含 PLE 表） | **Qwen Community License 1.0** | 个人研究/开发 OK；提取 PLE 参数、嫁接实验、基准发布在**非商业渠道写明来源**；商业使用需单独授权。**model 权重的再发布视同模型再分发**，应避免直接托管，引用原始 repo 即可 |
 | DeepSeek Engram demo（研究参照） | DeepSeek 代码仓库（Apache-2.0 风格）/论文 | 我们实现为 Rust 独立代码（按设计文档引用），仅算法参照；论文 arXiv 2601.07372 引用即可 |
 | `transformers` qwen4_exp 实现 | Apache-2.0 | `refs/qwen4_exp_modeling.py` 仅作本地参考，未并入源码树发布 |
+| DeepSeek-V4.1-Flash `inference/engram.py`（研究参照） | **MIT**（repo LICENSE，Copyright (c) 2023 DeepSeek） | `refs/v41_engram.py` 仅作本地参考；MIT 允许再分发，但仍保留版权头/来源说明 |
+| DeepSeek-V4.1-Flash `config.json`（Engram 规格） | **MIT**（同上） | `refs/v41_config.json`；派生产物 `refs/v41_engram_constants.json`（48 素数 + 8 乘子）为纯数值常量，由 `scripts/gen_v41_engram_constants.py` 复算校验 |
+| DeepSeek-V4.1-Flash `tokenizer.json`（压缩词表来源） | **MIT**（同上） | **不随仓库分发**（6.4 MB 原始文件）；仅入库派生的纯数值表 `refs/v41_token_map.bin`（129,280 × u32，517 KB），由 `scripts/gen_v41_token_map.py` 生成/校验，sidecar JSON 记录源文件 sha256 |
 
 ## 3. 语料与负载数据（统计产物：zipf/热集；不含正文）
 
