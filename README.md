@@ -510,15 +510,36 @@ engramdb serve <root> --port 8765 [--binary]
 |---|---|---|
 | 视图字节放大 | ≤2× | ✅ **1.00×** |
 | 视图路径吞吐 | ≥4M 等效行/s | ✅ 4.50M（200K 热态，8 线程） |
-| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **条件成立**：Store-I 需 batch ≥16 且 32 线程（V4.1 282 μs，56%）；**Store-P 任意 batch 都成立**（1.5–10%）。见 §3.2 |
+| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **必须连分母一起说**：500 µs 是「5% of 100 tok/s」的旧表述。**实测冷读 16 行 × 160 B = 195.9 µs/token**——占 eager 单步 **0.92%**（达标），占 **CUDA graph 单步 6.7–8.6%**（**超标**）。见 §6.1.1 与 `probes/engine_floor_session42.md` |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
 | **rowid 与引擎一致** | 与引擎自己的 PLE 代码**逐位相同** | ✅ **IDENTICAL** —— 37 用例 / 18,048 个 rowid，`probes/ple_rowid_exactness_session42.md` |
-| GPU 端 vLLM A/B 差距 | ≤5% | ⚠️ **数值已达标，验收未闭合** —— 见下方六条子条件 |
-| GPU 端 SGLang A/B 差距 | ≤5% | ❌ **当前不可做**：SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids` 代码路径（见子条件 6） |
+| GPU 端 vLLM A/B 差距 | ≤5% | ❌ **graph 模式下超标**：冷读占 graph 单步 **6.70%**（vLLM）/ **8.63%**（SGLang）。此前「达标」是 eager 分母放大 7.3× 的产物。验收仍未闭合，见下方子条件 |
+| GPU 端 SGLang A/B 差距 | ≤5% | ❌ **PLE 不可做**（SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids`）；**引擎地板已测**（graph 440.4 tok/s） |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
 > 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
+
+#### 6.1.1 分母：engine floor 2×2（同一模型、同一 GPU、同一负载）
+
+`probes/engine_floor_session42.md`。**这一张表改变了上表所有百分比的含义。**
+
+| 引擎 | 模式 | tok/s 中位 | ms/token | 500 µs 占单步 | graph 收益 |
+|---|---|---|---|---|---|
+| vLLM 0.29.0 | eager | 47.0 | 21.28 | 2.35% | — |
+| vLLM 0.29.0 | **CUDA graph** | **342.0** | **2.92** | **17.10%** | **7.28×** |
+| SGLang 0.5.19 | eager | 56.3 | 17.76 | 2.82% | — |
+| SGLang 0.5.19 | **CUDA graph** | **440.4** | **2.27** | **22.02%** | **7.82×** |
+
+- 两引擎 eager 可比（47.0 vs 56.3）⇒ 差异是 **graph 开关**，不是引擎质量。
+- **分母一变，同一笔 195.9 µs 从 0.92% 变成 6.70–8.63%** ⇒ **我们超标了**。
+  「eager 下落进噪声」不是达标，是分母被放大 7.3×。
+- 提前量检查（`τ(L) = O + (L/N)·C`，取上界）：layer 2 在 SGLang graph 下只等到
+  **189.2 µs**，而冷读要 **195.9 µs** ⇒ **按最有利假设也装不下**。
+  这就是 V4.1 把 PLE 放在 **layer 14**（τ=2295 µs）的原因 —— 不是随便选的层。
+- **子条件 4 的路有现成范例**：vLLM 的 `splitting_ops` 里就有
+  `vllm::qwen4_exp_compute_ple_ngram_ids` —— 引擎把自己的 PLE rowid 计算注册成了
+  splitting op，这正是「留在 PIECEWISE graph 之外」的实现方式。照抄即可。
 
 #### 「GPU 端 A/B ≤5%」的六条子条件
 
@@ -532,12 +553,13 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 | 1b | **PLE 路径**用模型自己的权重 | ❌ **本机不存在这样的 checkpoint**：带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，无权重）；三个 Qwen3.5 的 `text_config` 一个 PLE 字段都没有。所以 16 行/token 的 PLE 臂**只能是**合成投影 |
 | 2 | **完整分片** | ✅ **128/128，47.68 GiB**。`padded_vocab == 磁盘行数 == 320,001,536` ⇒ rowid 取模是**空操作**（已验，见 `probes/ple_rowid_exactness_session42.md` §F） |
 | 3 | **冷态**且自证驱逐生效 | ✅ **每次迭代自证**：全表冷态跑 10 次抽检全部 `verdict=cold`，ratio **58.3–115.9×**，marginal 83.2–103.5 µs/read（`probes/serve_ple_ab_fulltable_session42.md`） |
-| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 目前是 `enforce_eager=True`。Python reader 进不了 graph，需改成 splitting op + `PIECEWISE` capture。（注：vLLM 自己也把 PLE 的 rowid 生成移出了 PIECEWISE graph） |
+| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 仍是 `enforce_eager=True`。**但路已有现成范例**：vLLM 的 `compilation_config.splitting_ops` 里就有 `vllm::qwen4_exp_compute_ple_ngram_ids` —— 引擎把自己的 PLE rowid 计算注册成了 splitting op（`cudagraph_mode=FULL_AND_PIECEWISE`），可变形状部分留图外、其余进图。照抄这个模式即可，不需要发明机制 |
 | 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ counterbalance 已做（首尾各一段 `none`），因此**测出了漂移 +2.6%**；`engram-i` 臂内散布 45.3–47.3 仍**跨越** `none` 的 46.4–47.1 ⇒ 它的 tok/s 栏判 VOID。**但 `mmap` 冷态 −17.7% 高于地板、可引用。** 直接测量栏才是主证据：**195.9 µs/token（16 行 = 2,560 B，冷 NVMe）= 500 µs 预算的 39%** |
-| 6 | **多引擎**（vLLM + SGLang） | ❌ **不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容 |
+| 6 | **多引擎**（vLLM + SGLang） | ❌ **PLE 侧不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。**SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容。** 但引擎地板已两引擎都测到（§6.1.1），「5% 的分母」不再只有 vLLM 一个来源 |
 
-> **为什么必须逐条列**：eager 模式下引擎自身开销约 22 ms/token，5% 预算 = 1.1 ms，
-> 而存储代价只有 0.6 ms —— **「达标」是廉价的**。见 roadmap §35.1。
+> **为什么必须逐条列**：eager 模式下引擎自身开销约 21 ms/token，5% 预算 = 1.06 ms，
+> 而存储代价只有 0.20 ms —— **「达标」是廉价的**。见 roadmap §35.1 与 §6.1.1：
+> 换成 CUDA graph 后单步只剩 2.3–2.9 ms，同一笔代价就变成 **6.7–8.6%，超标**。
 > 「待硬件」已不成立：机器有，缺的是这六条。
 > 在此之前，每 token 开销门禁是**可本地复现的替代证据**：它不测模型端到端，但 5% 预算在算术上由它保证。
 

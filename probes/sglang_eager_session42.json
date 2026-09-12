@@ -1,0 +1,46 @@
+{
+  "engine": "sglang",
+  "sglang": "0.5.19",
+  "model": "/root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B",
+  "cuda_graph": false,
+  "batch": 1,
+  "prompt_len": 128,
+  "max_tokens": 128,
+  "tok_per_s_median": 56.316096293202186,
+  "tok_per_s_best": 57.077120486000695,
+  "ms_per_token": 17.756912602635566,
+  "budget_500us_as_pct_of_step": 2.8158048146601096,
+  "runs": [
+    {
+      "iter": 0,
+      "seconds": 3.634065540507436,
+      "tokens": 128,
+      "tok_per_s": 35.22225963545142
+    },
+    {
+      "iter": 1,
+      "seconds": 2.283658548258245,
+      "tokens": 128,
+      "tok_per_s": 56.05041090649304
+    },
+    {
+      "iter": 2,
+      "seconds": 2.2728848131373525,
+      "tokens": 128,
+      "tok_per_s": 56.316096293202186
+    },
+    {
+      "iter": 3,
+      "seconds": 2.248546626418829,
+      "tokens": 128,
+      "tok_per_s": 56.925659666600076
+    },
+    {
+      "iter": 4,
+      "seconds": 2.2425798447802663,
+      "tokens": 128,
+      "tok_per_s": 57.077120486000695
+    }
+  ],
+  "greedy_deterministic_across_iterations": true
+}
