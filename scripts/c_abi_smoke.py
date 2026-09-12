@@ -36,7 +36,7 @@ def find_c_library() -> Path | None:
 def main() -> int:
     lib_path = find_c_library()
     if lib_path is None:
-        print("C ABI library not found; run: cargo build --release -p engramdb-python")
+        print("C ABI library not found; run: cargo build --release -p engramdb-cabi")
         return 1
 
     lib = ctypes.CDLL(str(lib_path))

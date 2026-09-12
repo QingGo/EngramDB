@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -57,7 +58,10 @@ def test_page_reader() -> None:
                 pages = reader.read_pages([fd], [0])
                 assert len(pages) == 1
                 assert pages[0] == payload
-                print(f"{name} OK")
+                # io_uring 在容器里会被 seccomp 拦掉；`IoUringPageReader` 会自行退回
+                # pread（roadmap §34.3），所以这里必须**真的读对**，不能跳过。
+                backend = getattr(reader, "backend", "pread")
+                print(f"{name} OK (backend={backend})")
         finally:
             os.close(fd)
     finally:
@@ -619,6 +623,28 @@ def test_official_loader_sharded_load() -> None:
         assert torch.all(model.model.linear.bias == 0.0)
     print("official_loader sharded load OK")
 
+def test_native_backend_is_pyo3() -> None:
+    """The wheel must actually carry the PyO3 extension.
+
+    There is no ctypes fallback any more (roadmap §34).  Before, a wheel that
+    had silently lost its extension would downgrade to a subset implementation
+    and this smoke would still pass; now it must fail here, loudly.
+
+    Note: a module-level ``__repr__`` does *not* override ``repr(module)`` in
+    Python (PEP 562 covers only ``__getattr__``/``__dir__``), so this asserts on
+    ``_USING_PYO3`` and on where the extension was actually loaded from.
+    """
+    assert getattr(engramdb, "_USING_PYO3", False), "PyO3 extension did not load"
+    ext = sys.modules.get("engramdb._engramdb")
+    assert ext is not None, "engramdb._engramdb is not in sys.modules"
+    ext_file = getattr(ext, "__file__", None)
+    assert ext_file, f"cannot locate the loaded extension: {ext!r}"
+    abi = engramdb.abi_version()
+    assert abi >= 1, f"unexpected abi_version {abi}"
+    assert engramdb.Store is not None and engramdb.View is not None
+    print(f"  native backend OK: abi_version={abi} from {ext_file}")
+
+
 def test_rowids_for_seq() -> None:
     rows = engramdb.rowids_for_seq([1000, 99999, 42])
     assert len(rows) == 3
@@ -936,6 +962,7 @@ def main() -> None:
     test_official_loader_placeholder_patch()
     test_official_loader_sharded_load()
     test_rowids_for_seq()
+    test_native_backend_is_pyo3()
     test_store_pool()
     test_ple_memory()
     test_bundle_and_target_reader()

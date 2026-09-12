@@ -48,7 +48,7 @@ def find_c_library() -> Path | None:
 def c_abi_smoke() -> None:
     lib_path = find_c_library()
     if lib_path is None:
-        raise SystemExit("C ABI library not found; run cargo build --release -p engramdb-python")
+        raise SystemExit("C ABI library not found; run cargo build --release -p engramdb-cabi")
     lib = ctypes.CDLL(str(lib_path))
     lib.engramdb_abi_version.restype = ctypes.c_uint32
     assert lib.engramdb_abi_version() == 1

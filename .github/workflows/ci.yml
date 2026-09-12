@@ -59,7 +59,7 @@ jobs:
       - name: run service smoke
         run: python scripts/service_smoke.py
       - name: build C ABI
-        run: cargo build --release -p engramdb-python
+        run: cargo build --release -p engramdb-cabi
       - name: run C ABI smoke
         run: python scripts/c_abi_smoke.py
 

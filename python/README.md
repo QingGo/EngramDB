@@ -4,13 +4,21 @@ Disk-first storage engine for **Engram / PLE n-gram memory tables** (Rust).
 
 > **分发名 `engramdb-python`（PyPI 相似名规避）；import 名仍为 `engramdb`。**
 >
-> 当前 v0.2.12 的 **Python 发布路径以 PyO3 原生扩展为主**：
-> 1. **PyO3 原生扩展**（发行 wheel 的实际承载）：`crates/engramdb-pyo3`，构建后以
->    `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` / Linux `IoUringPageReader`。
-> 2. **ctypes C-ABI 仅作源码/开发回退**：`crates/engramdb-python`，用于未构建 PyO3 的本地源码树，
->    不作为 PyPI wheel 的发布依赖。
+> **Python 后端只有一个：PyO3 原生扩展**（`crates/engramdb-pyo3`），构建后以
+> `python/engramdb/_engramdb.so` 提供 `Store` / `View` / `PageReader` /
+> `IoUringPageReader`（Linux）。**扩展随 wheel 分发，且没有纯 Python 回退** ——
+> 导入失败会直接抛出带修复指引的 `ImportError`，而不是静默降级。
 >
-> `python/engramdb/__init__.py` 会自动优先加载 PyO3；找不到时才尝试 ctypes。
+> 🛑 **曾经存在的 ctypes 回退已删除**（roadmap §34）。它是同一套 API 的**第二份实现**，
+> 只对「源码树 + 未构建扩展」可达，**CI 从未覆盖过**，并且会掩盖
+> 「扩展没加载成功」这个真问题。在源码树里跑之前先构建扩展：
+>
+> ```bash
+> cd python && maturin develop --release
+> ```
+>
+> **C ABI 仍然保留，但它是另一件事**：`crates/engramdb-cabi`（cdylib 名 `libengramdb_c`）
+> 是给 **C/C++ 消费者**的嵌入面，Python 包**不再加载它**。
 
 v0.2.12 新增：
 

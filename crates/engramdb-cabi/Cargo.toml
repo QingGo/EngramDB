@@ -1,9 +1,9 @@
 [package]
-name = "engramdb-python"
+name = "engramdb-cabi"
 version = "0.2.12"
 edition = "2021"
 license = "Apache-2.0"
-description = "C ABI / ctypes binding for EngramDB (offline-first minimal Python bridge)"
+description = "EngramDB C ABI: the C/C++ embedding surface (NOT a Python backend; Python uses engramdb-pyo3)"
 
 [lib]
 name = "engramdb_c"

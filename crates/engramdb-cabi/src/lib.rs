@@ -1,9 +1,21 @@
-//! Minimal C ABI binding for EngramDB.
+//! EngramDB 的 **C ABI** —— 面向 C/C++ 的嵌入面。
 //!
-//! This deliberately avoids external Python/Rust binding crates so it can be
-//! built in offline sandboxes. The Python package (`python/engramdb`)
-//! loads this cdylib through `ctypes` and exposes a small `Store` / `View`
-//! API for engram-peft and other Python consumers.
+//! # 这个 crate 不是 Python 后端
+//!
+//! Python 包只使用 PyO3 扩展（`crates/engramdb-pyo3`）。曾经存在一个由
+//! `python/engramdb/__init__.py` 通过 `ctypes` 加载本 cdylib 的**回退实现**，
+//! 已在 roadmap §34 删除 —— 它是同一套 API 的第二份实现，**CI 从未覆盖过**，
+//! 并且会在扩展导入失败时**静默降级**成子集功能而不是报错。
+//!
+//! 因此本 crate 现在的定位是：给 C/C++ 消费者一个**小而稳定、带版本号**的表面
+//! （`engramdb_abi_version() == 1`）。它刻意不依赖任何绑定生成库，
+//! 以便在离线沙箱里也能构建。
+//!
+//! # ⚠️ 能力边界
+//!
+//! 本面**只实现 `PLE_QWEN_V1`**（`ple_spec == 1`）；`ENG_DEEPSEEK_V1`
+//! （DeepSeek-V4.1 Engram 规格）**尚未实现**，传入会直接报错。
+//! 见 roadmap 技术债 **V55**。要让 C/C++ 面支持 V4.1，需要先做 `EngramSpec` 泛化。
 
 #![allow(clippy::not_unsafe_ptr_arg_deref, clippy::missing_safety_doc)]
 
@@ -12,7 +24,7 @@ use std::path::Path;
 use std::ptr;
 
 use engramdb_core::layout::Layout;
-use engramdb_io::batch::BadgeGather;
+use engramdb_io::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_io::view::ViewReader;
 use engramdb_keygen::PleSpec;
 
@@ -66,7 +78,7 @@ pub unsafe extern "C" fn engramdb_store_fetch(
     }
     let ids = std::slice::from_raw_parts(rowids, n);
     let out_slice = std::slice::from_raw_parts_mut(out, need);
-    match h.batch.gather_pp(ids, out_slice, 8) {
+    match h.batch.gather_pp(ids, out_slice, DEFAULT_GATHER_THREADS) {
         Ok(()) => 0,
         Err(_) => -3,
     }
@@ -162,6 +174,34 @@ pub unsafe extern "C" fn engramdb_view_read_record(
     let out = std::slice::from_raw_parts_mut(buf, need);
     match h.reader.read_record(index, out) {
         Ok(_) => 0,
+        Err(_) => -3,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn engramdb_view_read_records(
+    handle: *mut ViewHandle,
+    indices: *const usize,
+    count: usize,
+    buf: *mut u8,
+    buf_cap: usize,
+) -> i32 {
+    if handle.is_null() || indices.is_null() || buf.is_null() {
+        return -1;
+    }
+    let h = &*handle;
+    let slot = h.reader.slot_bytes() as usize;
+    let need = match count.checked_mul(slot) {
+        Some(n) => n,
+        None => return -2,
+    };
+    if buf_cap < need {
+        return -2;
+    }
+    let idx = std::slice::from_raw_parts(indices, count);
+    let out = std::slice::from_raw_parts_mut(buf, need);
+    match h.reader.read_records(idx, out) {
+        Ok(()) => 0,
         Err(_) => -3,
     }
 }

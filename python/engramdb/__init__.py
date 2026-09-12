@@ -1,9 +1,14 @@
 
 """EngramDB: disk-first storage engine for Engram/PLE n-gram memory tables.
 
-The package prefers the native PyO3 extension (`_engramdb`) when present.
-If that is unavailable, it falls back to the ctypes C-ABI bridge; if neither
-is available, importing the module still works but Store/View will raise on use.
+**必须使用原生 PyO3 扩展（``engramdb._engramdb``），没有纯 Python 回退。**
+
+这里曾经有一份 ctypes C-ABI 回退实现，已删除（见 ``docs/roadmap.md`` §34）：
+它是同一套 API 的**第二份、且 CI 从未覆盖过**的实现，会在扩展导入失败时
+**静默降级**成子集功能，而不是报错。
+
+C ABI 本身仍然保留 —— 作为 **C/C++ 嵌入面**（``crates/engramdb-python``），
+那是与「Python 后端」不同的产品。
 """
 
 from __future__ import annotations
@@ -14,193 +19,34 @@ from .addressable_memory import AddressableNgramMemory, MemoryMatch
 
 __version__ = "0.2.12"
 
-_USING_PYO3 = False
-_USING_CTYPES = False
+# PyO3 是唯一后端，恒为 True；保留该名字供外部代码探测。
+_USING_PYO3 = True
 
 try:
     from ._engramdb import Store, View, read_keys
-    try:
-        from ._engramdb import PageReader
-    except ImportError:
-        PageReader = None  # type: ignore[assignment]
-    try:
-        from ._engramdb import IoUringPageReader
-    except ImportError:
-        IoUringPageReader = None  # type: ignore[assignment]
+except ImportError as _exc:  # pragma: no cover - 取决于运行环境
+    raise ImportError(
+        "无法导入 EngramDB 的原生扩展 `engramdb._engramdb`，而它是必需的"
+        "（本包没有纯 Python 回退）。\n"
+        "\n"
+        "该扩展随 wheel 一起分发，所以通常只有两种情况：\n"
+        "  * 在源码树里跑但没构建过扩展 —— 执行：\n"
+        "        cd python && maturin develop --release\n"
+        "  * wheel 与当前 Python ABI 不匹配 —— 重装：\n"
+        "        python -m pip install --force-reinstall engramdb-python\n"
+        f"\n底层错误：{_exc!r}"
+    ) from _exc
+
+# 以下两个是平台可选面：PageReader 仅 unix，IoUringPageReader 仅 linux。
+try:
+    from ._engramdb import PageReader
 except ImportError:
-    pass
-else:
-    _USING_PYO3 = True
+    PageReader = None  # type: ignore[assignment]
 
-
-if not _USING_PYO3:
-    try:
-        import ctypes
-        from pathlib import Path
-    except ImportError:
-        ctypes = None  # type: ignore[assignment]
-        Path = None  # type: ignore[assignment]
-
-    if ctypes is not None:
-        def _find_library() -> str | None:
-            root = Path(__file__).resolve().parents[2] if Path else None
-            if root is None:
-                return None
-            candidates = [
-                root / "target" / "release" / "libengramdb_c.dylib",
-                root / "target" / "debug" / "libengramdb_c.dylib",
-                root / "target" / "release" / "libengramdb_c.so",
-                root / "target" / "debug" / "libengramdb_c.so",
-                root / "target" / "release" / "libengramdb_c.dll",
-                root / "target" / "debug" / "libengramdb_c.dll",
-            ]
-            for p in candidates:
-                if p.exists():
-                    return str(p)
-            return None
-
-        _lib_path = _find_library()
-        if _lib_path is not None:
-            _lib = ctypes.CDLL(_lib_path)
-
-            if hasattr(_lib, "engramdb_abi_version"):
-                _lib.engramdb_abi_version.restype = ctypes.c_uint32
-                _lib.engramdb_rowids_for_seq.restype = ctypes.c_int
-                _lib.engramdb_rowids_for_seq.argtypes = [
-                    ctypes.POINTER(ctypes.c_uint32),
-                    ctypes.c_size_t,
-                    ctypes.POINTER(ctypes.c_uint64),
-                    ctypes.c_size_t,
-                    ctypes.c_uint32,
-                ]
-
-            _lib.engramdb_store_open.restype = ctypes.c_void_p
-            _lib.engramdb_store_open.argtypes = [
-                ctypes.c_char_p,
-                ctypes.c_uint64,
-                ctypes.c_uint64,
-                ctypes.c_uint64,
-            ]
-            _lib.engramdb_store_fetch.restype = ctypes.c_int
-            _lib.engramdb_store_fetch.argtypes = [
-                ctypes.c_void_p,
-                ctypes.POINTER(ctypes.c_uint64),
-                ctypes.c_size_t,
-                ctypes.POINTER(ctypes.c_uint8),
-                ctypes.c_size_t,
-            ]
-            _lib.engramdb_store_width.restype = ctypes.c_uint64
-            _lib.engramdb_store_width.argtypes = [ctypes.c_void_p]
-            _lib.engramdb_store_close.restype = None
-            _lib.engramdb_store_close.argtypes = [ctypes.c_void_p]
-            _lib.engramdb_view_open.restype = ctypes.c_void_p
-            _lib.engramdb_view_open.argtypes = [ctypes.c_char_p]
-            _lib.engramdb_view_read_record.restype = ctypes.c_int
-            _lib.engramdb_view_read_record.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_size_t,
-                ctypes.POINTER(ctypes.c_uint8),
-                ctypes.c_size_t,
-            ]
-            _lib.engramdb_view_len.restype = ctypes.c_size_t
-            _lib.engramdb_view_len.argtypes = [ctypes.c_void_p]
-            _lib.engramdb_view_slot_bytes.restype = ctypes.c_uint64
-            _lib.engramdb_view_slot_bytes.argtypes = [ctypes.c_void_p]
-            _lib.engramdb_view_close.restype = None
-            _lib.engramdb_view_close.argtypes = [ctypes.c_void_p]
-
-            class Store:
-                def __init__(self, directory, shards, rows_per_shard, width):
-                    handle = _lib.engramdb_store_open(
-                        directory.encode("utf-8"),
-                        ctypes.c_uint64(shards),
-                        ctypes.c_uint64(rows_per_shard),
-                        ctypes.c_uint64(width),
-                    )
-                    if not handle:
-                        raise OSError(f"failed to open EngramDB store: {directory}")
-                    self._handle = handle
-                    self._closed = False
-
-                @property
-                def width(self):
-                    return int(_lib.engramdb_store_width(self._handle))
-
-                def fetch(self, rowids):
-                    if self._closed:
-                        raise ValueError("store is closed")
-                    if not rowids:
-                        return b""
-                    n = len(rowids)
-                    arr = (ctypes.c_uint64 * n)(*rowids)
-                    width = self.width
-                    out = (ctypes.c_uint8 * (n * width))()
-                    rc = _lib.engramdb_store_fetch(self._handle, arr, n, out, n * width)
-                    if rc != 0:
-                        raise OSError(f"engramdb_store_fetch failed with code {rc}")
-                    return bytes(out)
-
-                def fetch_one(self, rowid):
-                    return self.fetch([rowid])
-
-                def close(self):
-                    if not self._closed:
-                        _lib.engramdb_store_close(self._handle)
-                        self._closed = True
-
-                def __del__(self):
-                    try:
-                        self.close()
-                    except Exception:
-                        pass
-
-            class View:
-                def __init__(self, path):
-                    handle = _lib.engramdb_view_open(path.encode("utf-8"))
-                    if not handle:
-                        raise OSError(f"failed to open EngramDB view: {path}")
-                    self._handle = handle
-                    self._closed = False
-
-                def __len__(self):
-                    return int(_lib.engramdb_view_len(self._handle))
-
-                @property
-                def slot_bytes(self):
-                    return int(_lib.engramdb_view_slot_bytes(self._handle))
-
-                def read_record(self, index):
-                    if self._closed:
-                        raise ValueError("view is closed")
-                    size = self.slot_bytes
-                    out = (ctypes.c_uint8 * size)()
-                    rc = _lib.engramdb_view_read_record(self._handle, index, out, size)
-                    if rc != 0:
-                        raise OSError(f"engramdb_view_read_record failed with code {rc}")
-                    return bytes(out)
-
-                def close(self):
-                    if not self._closed:
-                        _lib.engramdb_view_close(self._handle)
-                        self._closed = True
-
-                def __del__(self):
-                    try:
-                        self.close()
-                    except Exception:
-                        pass
-
-            def read_keys(path):
-                result = []
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            result.append(int(line))
-                return result
-
-            _USING_CTYPES = True
-
+try:
+    from ._engramdb import IoUringPageReader
+except ImportError:
+    IoUringPageReader = None  # type: ignore[assignment]
 
 from .tables import Database
 from .server import EngramDBServer, EngramDBBinaryServer
@@ -225,10 +71,8 @@ ENG_DEEPSEEK_V1 = 2
 
 def abi_version() -> int:
     """Return the EngramDB C ABI version implemented by this package."""
-    if _USING_PYO3 and hasattr(_engramdb, "abi_version"):
+    if hasattr(_engramdb, "abi_version"):
         return int(_engramdb.abi_version())
-    if _USING_CTYPES and hasattr(_lib, "engramdb_abi_version"):
-        return int(_lib.engramdb_abi_version())
     return 1
 
 
@@ -268,18 +112,9 @@ def rowids_for_seq(
 
     custom_multipliers = multipliers is not None or info_multipliers is not None
     if not custom_multipliers:
-        if _USING_PYO3 and hasattr(_engramdb, "rowids_for_seq"):
+        if hasattr(_engramdb, "rowids_for_seq"):
             return [list(r) for r in _engramdb.rowids_for_seq(tok, ple_spec)]
-        if _USING_CTYPES and hasattr(_lib, "engramdb_rowids_for_seq"):
-            n = len(tok)
-            if n == 0:
-                return []
-            arr = (ctypes.c_uint32 * n)(*tok)
-            out = (ctypes.c_uint64 * (n * 16))()
-            rc = _lib.engramdb_rowids_for_seq(arr, n, out, n * 16, ple_spec)
-            if rc != 0:
-                raise OSError(f"engramdb_rowids_for_seq failed with code {rc}")
-            return [list(out[i * 16:(i + 1) * 16]) for i in range(n)]
+        # 否则落到下面的纯 Python 参考实现（ple_adapter.ple_rowids）
 
     from .ple_adapter import ple_rowids
 
@@ -381,8 +216,3 @@ def __getattr__(name: str):
             "install_sglang_target_reader": install_sglang_target_reader,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __repr__() -> str:
-    backend = "pyo3" if _USING_PYO3 else ("ctypes" if _USING_CTYPES else "unavailable")
-    return f"<engramdb {__version__} {backend} bindings>"
