@@ -510,10 +510,30 @@ engramdb serve <root> --port 8765 [--binary]
 | **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **条件成立**：Store-I 需 batch ≥16 且 32 线程（V4.1 282 μs，56%）；**Store-P 任意 batch 都成立**（1.5–10%）。见 §3.2 |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
-| GPU 端 vLLM/SGLang A/B 差距 | ≤5% | ⏳ 待硬件 |
+| GPU 端 vLLM A/B 差距 | ≤5% | ⚠️ **数值已达标，验收未闭合** —— 见下方六条子条件 |
+| GPU 端 SGLang A/B 差距 | ≤5% | ⏳ 引擎已装好（0.5.19 + 4090），**尚未跑过** |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
 > 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
+
+#### 「GPU 端 A/B ≤5%」的六条子条件
+
+2026-09-12 在 RTX 4090 + vLLM 0.29.0 + Qwen3.5-0.8B + 真实 PLE 表上跑通了真 serving，
+batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内 ⇒ **数值达标**。
+但当时验的是下面这套配置，**逐条列出来才算验收**（`probes/serve_ple_ab_session42.md`）：
+
+| # | 子条件 | 状态 |
+|---|---|---|
+| 1 | 表用**模型自己的**权重，不是随机投影 | ✅ 磁盘路径对真实权重的逐位忠实性已证（`probes/ple_disk_faithfulness_session42.json`，248,320 行 bf16 全等）；serving 侧忠实注入脚本已就位，**待 GPU 空闲重跑** |
+| 2 | **完整分片** | ✅ 128 分片真数据全在（47.7 GiB），不再取模 |
+| 3 | **冷态**且自证驱逐生效 | ✅ 自校验已入脚本（实测 ratio 78.3×，判定 `cold`）；**待独占重跑** |
+| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ 目前是 `enforce_eager=True`。Python reader 进不了 graph，需改成 splitting op + `PIECEWISE` capture |
+| 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ❌ 目前只有首尾各一次 `none` 作漂移参照（噪声地板 1–2.5%） |
+| 6 | **多引擎**（vLLM + SGLang） | ❌ SGLang 尚未跑过 |
+
+> **为什么必须逐条列**：eager 模式下引擎自身开销约 22 ms/token，5% 预算 = 1.1 ms，
+> 而存储代价只有 0.6 ms —— **「达标」是廉价的**。见 roadmap §35.1。
+> 「待硬件」已不成立：机器有，缺的是这六条。
 > 在此之前，每 token 开销门禁是**可本地复现的替代证据**：它不测模型端到端，但 5% 预算在算术上由它保证。
 
 ---
