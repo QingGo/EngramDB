@@ -17,7 +17,7 @@ from typing import Any
 
 from .addressable_memory import AddressableNgramMemory, MemoryMatch
 
-__version__ = "0.2.12"
+__version__ = "0.3.0"
 
 # PyO3 是唯一后端，恒为 True；保留该名字供外部代码探测。
 _USING_PYO3 = True

@@ -1,6 +1,6 @@
 [package]
 name = "engramdb-cabi"
-version = "0.2.12"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "EngramDB C ABI: the C/C++ embedding surface (NOT a Python backend; Python uses engramdb-pyo3)"
