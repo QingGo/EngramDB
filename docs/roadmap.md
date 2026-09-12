@@ -2347,7 +2347,7 @@ LLM-CompileForge  推理 runtime（后续）
 
 | # | 债 | 影响 | 处置 |
 |---|---|---|---|
-| V157 | `PleMemoryAdapter` 真表 torch 热路径仅约 1.6K–2K tok/s | 服务化还不是生产性能 | rowid/history/fetch/dequant 下沉 Rust/PyO3 |
+| V157 | ~~`PleMemoryAdapter` 真表 torch 热路径仅约 1.6K–2K tok/s~~ **已重测：计算路径在免费介质上仅 11.6–198 µs/token（batch 1/4/64/1000），故 500–625 µs/token 是被 I/O 主导，不是 rowid** | 原处置方向误诊 | **改为：先测真表绝对值（需 128 分片），I/O 侧由 Store-P 折叠承接（§32.3, 7.69 µs/token）**；见 `probes/serve_ple_ab_session42.md` §2.3 |
 | V158 | DiskSlotIndex v3 对 cache 敏感，verify/查询需高 cache | 大表内存和读放大不稳定 | 评估 block index / hash 均匀性 / Rust lookup API |
 | V159 | 真实 20M keys 含重复 rowid tuple | 下游误用单槽 lookup 可能拿错记录 | 固化 `lookup` 代表槽与 `lookup_all` 全部槽契约 |
 | V160 | Python 双桥：PyO3 + ctypes fallback | API 不完整、双维护、误导 | Python 发布只走 PyO3；C ABI 仅 C/C++ 外部用 |

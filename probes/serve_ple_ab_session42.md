@@ -157,8 +157,45 @@ pub fn real_spec() -> &'static PleSpec {
 ≈ `none` 45.2。`engram-i` 与 `mmap` 的 it0 低（37.5 / 36.3）是**冷启动**（页缓存），
 两者同量级，与 keygen 无关 —— 若只看中位数会把这个冷启动误读成磁盘代价。
 
-**仍未做**：冷态 `fadvise`、batch ≥8 的规模化。修复后这两个才是剩下的真问题
-（§2.1 已显示 batch=64 时 I/O 占 83%）。
+### 影响范围（重要边界，别扩大）
+
+**受影响**：`engramdb.rowids_for_seq` / `rowids_for_seq_with_history` 的直接调用方，
+以及 **C ABI** 的 rowid 入口 —— 两者都在每次调用时重建 spec。
+
+**不受影响**：**`PleMemory` / `PleMemoryAdapter`**。它们走
+`ple_memory.py:251,261 -> _ple_rowids -> ple_math`（纯 Python 参考实现），
+素数表在 `PleMemory.__init__` 里**只算一次**（`self.prime_sizes` / `self.offsets`）。
+
+⇒ 即 **Rust 「快路径」比它要取代的纯 Python 路径慢约 400×**（941 µs vs 数 µs），
+因为 Python 侧在构造时缓存、Rust 侧每次重算。
+
+实测确认（同一 sparse 完整 128 分片地址空间，前后各一次）：
+
+| tokens/次 | 修复前 | 修复后 |
+|---|---|---|
+| 1 | 198.3 µs/token | 180.8 |
+| 4 | 69.7 | 63.2 |
+| 64 | 18.1 | 19.9 |
+| 1000 | 11.6 | 11.2 |
+
+**基本无变化 ⇒ 修复确实不经过 adapter，符合预期，不是零结果。**
+
+### 对 V157 的影响：它的表述可能是误诊
+
+V157 说 `PleMemoryAdapter` 真表热路径 500–625 µs/token，处置方向是
+「rowid/history/fetch/dequant 下沉 Rust/PyO3」。但本次实测：
+
+- adapter 的**计算路径**（keygen + 转换）在**介质免费**（sparse 空洞）时为
+  **11.6–198 µs/token**（batch 1/4/64/1000），全部远低于 500–625。
+- 既然介质是免费的还这么快，V157 的 500–625 只能是**被 I/O 主导**。
+- 而 rowid 在 adapter 里**每次调用只算一次**，不是瓶颈。
+
+⇒ **V157 提出的处置（把 rowid 下沉）对一个不是瓶颈的环节**；
+真正的瓶颈是 fetch/介质，而 Store-P 折叠（7.69 µs/token，roadmap §32.3）已经是它的答案。
+**建议重写 V157**，而不是继续按原方向投入。
+
+**仍未做**：真表（非 sparse）的 adapter 绝对值 —— 本机只有 65/128 分片。
+冷态 `fadvise`、batch ≥8 的 serving 规模化。
 
 
 
