@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
 use crate::backend::{platform_read_at, platform_read_exact_at};
-use crate::batch::BadgeGather;
+use crate::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_core::layout::Layout;
 
 pub const HEAD_W: u64 = 16;
@@ -80,7 +80,7 @@ pub fn build_view(
         }
         let mut out = vec![0u8; rowids.len() * ROW_BYTES as usize];
         batch
-            .gather_pp(&rowids, &mut out, 8)
+            .gather_pp(&rowids, &mut out, DEFAULT_GATHER_THREADS)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut s = vec![0u8; slot_bytes as usize];
         let rec_len = (HEAD_W * ROW_BYTES) as usize;
@@ -207,7 +207,26 @@ impl ViewReader {
     }
 
     /// 按物理槽位读取多条记录；`out` 长度必须 >= indices.len() * slot_bytes。
+    ///
+    /// 这是 Store-P 折叠收益能否兑现的关键路径。此前它是**串行 for 循环**，
+    /// 于是"16 次散读折叠成 1 次"只换来 ~1.5×：单次冷随机读的代价由 IO 延迟主导
+    /// （实测同一介质上 160B 与 2560B 的冷读只差 1.1×），所以折叠的收益取决于
+    /// **能否并行发起这些读**，而不是单次读多大。
     pub fn read_records(&self, indices: &[usize], out: &mut [u8]) -> std::io::Result<()> {
+        // 默认线程数用 `DEFAULT_GATHER_THREADS`，**不要**用 `available_parallelism()`：
+        // 后者遵守 cgroup CPU 配额（实测本机返回 16，而 `nproc` 是 128），
+        // 对 IO 密集的随机读来说并发度不该被 CPU 配额卡住 —— 实测 t=32 明显优于 t=16
+        // （`roadmap.md` §32.2/§32.3，同一台机器上池子被 16 卡住时冷读慢了 1.7×）。
+        self.read_records_parallel(indices, out, DEFAULT_GATHER_THREADS)
+    }
+
+    /// 与 [`Self::read_records`] 相同，但显式指定线程数（1 表示串行）。
+    pub fn read_records_parallel(
+        &self,
+        indices: &[usize],
+        out: &mut [u8],
+        threads: usize,
+    ) -> std::io::Result<()> {
         let want = self.slot_bytes as usize;
         if out.len() < indices.len() * want {
             return Err(std::io::Error::new(
@@ -215,10 +234,65 @@ impl ViewReader {
                 "read_records: output buffer too small",
             ));
         }
-        for (j, &idx) in indices.iter().enumerate() {
-            self.read_record(idx, &mut out[j * want..(j + 1) * want])?;
+        // 先整体越界检查，避免并行路径返回"部分成功"。
+        if let Some(&bad) = indices.iter().find(|&&i| i >= self.count) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "view record index {bad} out of range (count {})",
+                    self.count
+                ),
+            ));
         }
-        Ok(())
+        let nt = threads.max(1).min(indices.len().max(1));
+        // 阈值又一次取小。历史：1024（沿用 gather_pp）→ 32（Session 41，USB 口径）
+        // → **4**（Session 42，原生 NVMe 实测）。
+        //
+        // 实测（roadmap §32.3；原生 NVMe，V4.1 几何 slot=12672B，`view_gate`）：
+        // 阈值 32 使得 **16 条记录**在**任何**线程数下都走串行，读数恒为 ~90 μs/token
+        // （t=1/8/32 完全相同 → 证明走的确实是串行路径）；而刚好越过阈值的 32 条
+        // 走并行时只有 28.6 μs/token（t=8）。即阈值本身在 16–31 条区间**净损失约 3×**。
+        //
+        // 为什么 4 是安全的：n 条记录 -> nt = min(threads, n) 个线程，多花的成本是
+        // (n-1) 次线程创建（本机实测约 8–10 μs/个），省下的是 (n-1) 次冷读延迟
+        // （NVMe QD1 ≈ 77 μs，USB ≈ 272 μs）。n=2 时就已经划得来，取 4 留余量。
+        if nt <= 1 || indices.len() < 4 {
+            for (j, &idx) in indices.iter().enumerate() {
+                self.read_record(idx, &mut out[j * want..(j + 1) * want])?;
+            }
+            return Ok(());
+        }
+
+        let chunk = indices.len().div_ceil(nt);
+        let slot_bytes = self.slot_bytes;
+        let file = &self.file;
+        // 同样走常驻池：本机单次 spawn 约 30–35 μs（见 `crate::pool` 模块头）。
+        let errs: std::sync::Arc<std::sync::Mutex<Vec<std::io::Error>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut jobs: Vec<Box<dyn FnOnce() + Send + '_>> = Vec::with_capacity(nt);
+        for (idx_chunk, out_chunk) in indices.chunks(chunk).zip(out.chunks_mut(chunk * want)) {
+            let errs = std::sync::Arc::clone(&errs);
+            jobs.push(Box::new(move || {
+                for (j, &idx) in idx_chunk.iter().enumerate() {
+                    if let Err(e) = platform_read_exact_at(
+                        file,
+                        &mut out_chunk[j * want..(j + 1) * want],
+                        idx as u64 * slot_bytes,
+                    ) {
+                        errs.lock().unwrap().push(e);
+                        return;
+                    }
+                }
+            }));
+        }
+        crate::pool::scope_run(jobs);
+        let errs = std::sync::Arc::try_unwrap(errs)
+            .map(|m| m.into_inner().unwrap())
+            .unwrap_or_default();
+        match errs.into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -290,7 +364,7 @@ pub fn build_view_from_keys(
         let m = chunk.len() / HEAD_W as usize;
         let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
         batch
-            .gather_pp(chunk, &mut out, 8)
+            .gather_pp(chunk, &mut out, DEFAULT_GATHER_THREADS)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut slot = vec![0u8; slot_bytes as usize];
         for i in 0..m {
@@ -371,7 +445,7 @@ pub fn build_view_from_keys_file(
             let m = chunk.len() / HEAD_W as usize;
             let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
             batch
-                .gather_pp(&chunk, &mut out, 8)
+                .gather_pp(&chunk, &mut out, DEFAULT_GATHER_THREADS)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             let mut slot = vec![0u8; slot_bytes as usize];
             for i in 0..m {
@@ -401,7 +475,7 @@ pub fn build_view_from_keys_file(
         let m = chunk.len() / HEAD_W as usize;
         let mut out = vec![0u8; chunk.len() * ROW_BYTES as usize];
         batch
-            .gather_pp(&chunk, &mut out, 8)
+            .gather_pp(&chunk, &mut out, DEFAULT_GATHER_THREADS)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut slot = vec![0u8; slot_bytes as usize];
         for i in 0..m {
@@ -492,7 +566,7 @@ pub fn bench_view(
     if !keys.is_empty() {
         let t0 = std::time::Instant::now();
         batch
-            .gather_pp(keys, &mut out_a, 8)
+            .gather_pp(keys, &mut out_a, DEFAULT_GATHER_THREADS)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let dt_a = t0.elapsed();
         let p = unique_pages(&keys[..n_grams * HEAD_W as usize], batch.layout);
@@ -548,7 +622,11 @@ pub fn bench_view(
     let a_rps = if !keys.is_empty() {
         let t3 = std::time::Instant::now();
         batch
-            .gather_pp(&keys[..n_grams * HEAD_W as usize], &mut out_a, 8)
+            .gather_pp(
+                &keys[..n_grams * HEAD_W as usize],
+                &mut out_a,
+                DEFAULT_GATHER_THREADS,
+            )
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let dt_a2 = t3.elapsed();
         let a = report("A", (n_grams * HEAD_W as usize) as u64, dt_a2);
@@ -734,7 +812,7 @@ pub fn verify_view(
         let start = gi * HEAD_W as usize;
         let rowids = &keys[start..start + HEAD_W as usize];
         batch
-            .gather_pp(rowids, &mut src_buf, 8)
+            .gather_pp(rowids, &mut src_buf, DEFAULT_GATHER_THREADS)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let got = reader.read_record(gi, &mut view_buf)?;
         if got < RECORD_BYTES as usize || view_buf[..RECORD_BYTES as usize] != src_buf[..] {

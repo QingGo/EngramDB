@@ -325,6 +325,34 @@ class PleMemory:
             )
         return raw
 
+    def tensor_from_raw(self, raw: bytes, count: int) -> Any:
+        """Convert already-fetched PLE bytes into a ``[count, heads, head_dim]`` tensor.
+
+        This exists so a serving path that needs both the raw record and the
+        tensor (``PleSequence.feed``) reads the storage exactly once.  Before
+        this split, ``feed`` called ``fetch_raw`` and then ``fetch_tensor``,
+        and the latter re-ran ``_coerce_rows`` + ``fetch_raw`` internally --
+        two disk reads and two rowid coercions per token batch.
+        """
+        import torch
+
+        dtype = self.dtype or torch.float8_e4m3fn
+        out_dtype = self.out_dtype or torch.float32
+        if count == 0:
+            return torch.empty((0, self.num_heads, self.head_dim), dtype=out_dtype)
+        expected = count * self.record_bytes
+        if len(raw) != expected:
+            raise RuntimeError(
+                f"raw buffer has {len(raw)} bytes for {count} records, expected {expected}"
+            )
+        arr = torch.frombuffer(bytearray(raw), dtype=dtype)
+        if arr.dtype != out_dtype:
+            arr = arr.to(out_dtype)
+        arr = arr.reshape(count, self.num_heads, self.head_dim)
+        if self.scale != 1.0:
+            arr = arr * self.scale
+        return arr
+
     def fetch_tensor(self, rowid_tuples: Iterable[Sequence[int] | Any]) -> Any:
         """Return a ``[N, num_heads, head_dim]`` torch tensor.
 
@@ -340,16 +368,7 @@ class PleMemory:
                 (0, self.num_heads, self.head_dim),
                 dtype=self.out_dtype or torch.float32,
             )
-        raw = self.fetch_raw(rows)
-        dtype = self.dtype or torch.float8_e4m3fn
-        out_dtype = self.out_dtype or torch.float32
-        arr = torch.frombuffer(bytearray(raw), dtype=dtype)
-        if arr.dtype != out_dtype:
-            arr = arr.to(out_dtype)
-        arr = arr.reshape(len(rows), self.num_heads, self.head_dim)
-        if self.scale != 1.0:
-            arr = arr * self.scale
-        return arr
+        return self.tensor_from_raw(self.fetch_raw(rows), len(rows))
 
     def fetch(
         self,
@@ -456,7 +475,10 @@ class PleSequence:
 
         rows = self.memory.rowids_for_tokens(tok, self._history)
         raw = self.memory.fetch_raw(rows)
-        e_t = self.memory.fetch_tensor(rows) if as_tensor else None
+        # Read storage once: derive e_t from the same buffer instead of
+        # re-entering fetch_tensor (which would coerce rowids and hit the
+        # store a second time for every token batch).
+        e_t = self.memory.tensor_from_raw(raw, len(rows)) if as_tensor else None
         step = PleStep(tok, rows, raw, e_t)
 
         self._tokens.extend(tok)

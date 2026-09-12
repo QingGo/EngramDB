@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use engramdb_core::layout::Layout;
-use engramdb_io::batch::BadgeGather;
+use engramdb_io::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_io::view::{self, ViewReader};
 use engramdb_keygen::PleSpec;
 use pyo3::prelude::*;
@@ -19,13 +19,23 @@ struct Store {
     rows_per_shard: u64,
     shards: u64,
     width: u64,
+    threads: usize,
 }
 
 #[pymethods]
 impl Store {
+    /// `threads` 默认取 `DEFAULT_GATHER_THREADS`（=32，实测最优）。
+    /// 暴露成构造参数是为了让并发度的 A/B **不需要改代码重编译**——
+    /// 实测依据见 `engramdb_io::batch::DEFAULT_GATHER_THREADS` 与 roadmap §32。
     #[new]
-    #[pyo3(signature = (dir, shards, rows_per_shard, width))]
-    fn new(dir: &str, shards: u64, rows_per_shard: u64, width: u64) -> PyResult<Self> {
+    #[pyo3(signature = (dir, shards, rows_per_shard, width, threads=DEFAULT_GATHER_THREADS))]
+    fn new(
+        dir: &str,
+        shards: u64,
+        rows_per_shard: u64,
+        width: u64,
+        threads: usize,
+    ) -> PyResult<Self> {
         let layout = Box::leak(Box::new(Layout::new(shards, rows_per_shard, width, 1)));
         let batch = BadgeGather::open(Path::new(dir), layout)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
@@ -34,6 +44,7 @@ impl Store {
             rows_per_shard,
             shards,
             width,
+            threads,
         })
     }
 
@@ -43,10 +54,11 @@ impl Store {
         }
         let batch = &self.batch;
         let width = self.width as usize;
+        let threads = self.threads;
         let mut out = vec![0u8; rowids.len() * width];
         let ids = &rowids;
         let out_ref = &mut out;
-        py.allow_threads(move || batch.gather_pp(ids, out_ref, 8))
+        py.allow_threads(move || batch.gather_pp(ids, out_ref, threads))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
         Ok(PyBytes::new(py, &out))
     }
@@ -220,7 +232,37 @@ impl IoUringPageReader {
                 "file_descriptors and offsets must have the same length",
             ));
         }
+        // 本类型的契约是「读出这些页」，不是「必须用 io_uring」。
+        // io_uring 不可用（容器 seccomp）时退回 pread，语义完全一致。
+        let pages = if uring_available() {
+            self.read_pages_uring(&file_descriptors, &offsets)?
+        } else {
+            read_pages_pread(&file_descriptors, &offsets, self.page_size)?
+        };
+        Ok(pages
+            .into_iter()
+            .map(|p| PyBytes::new(py, &p).unbind())
+            .collect())
+    }
 
+    /// 实际生效的后端：`"io_uring"` 或 `"pread"`（容器里通常是后者）。
+    #[getter]
+    fn backend(&self) -> &'static str {
+        if uring_available() {
+            "io_uring"
+        } else {
+            "pread"
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl IoUringPageReader {
+    fn read_pages_uring(
+        &self,
+        file_descriptors: &[i32],
+        offsets: &[u64],
+    ) -> PyResult<Vec<Vec<u8>>> {
         const DEPTH: u32 = 256;
         let page_size = self.page_size;
         let mut pages: Vec<Vec<u8>> = (0..file_descriptors.len())
@@ -287,12 +329,63 @@ impl IoUringPageReader {
             }
             Ok(())
         })?;
-
-        Ok(pages
-            .into_iter()
-            .map(|p| PyBytes::new(py, &p).unbind())
-            .collect())
+        Ok(pages)
     }
+}
+
+/// io_uring 是否真的可用。
+///
+/// **`IoUringPageReader` 这个类存在只说明平台是 Linux，不代表内核允许 io_uring。**
+/// Docker 默认 seccomp profile 会让 `io_uring_setup` 直接返回 `EPERM`
+/// （本项目在 AutoDL 容器里用 `syscall(425, …)` 独立确证过）。因此这里**探测一次**
+/// 并把结果全局记住 —— seccomp 是按进程生效的，没必要每个线程重试。
+#[cfg(target_os = "linux")]
+fn uring_available() -> bool {
+    use std::sync::atomic::Ordering;
+    match URING_STATE.load(Ordering::Relaxed) {
+        URING_YES => true,
+        URING_NO => false,
+        _ => {
+            let ok = io_uring::IoUring::new(8).is_ok();
+            URING_STATE.store(if ok { URING_YES } else { URING_NO }, Ordering::Relaxed);
+            ok
+        }
+    }
+}
+
+/// `pread` 退化路径。**短读语义与 io_uring 路径严格一致**：
+/// 单次读、短读则截断、EOF 报错、负值报 errno。
+#[cfg(target_os = "linux")]
+fn read_pages_pread(
+    file_descriptors: &[i32],
+    offsets: &[u64],
+    page_size: usize,
+) -> PyResult<Vec<Vec<u8>>> {
+    let mut pages = Vec::with_capacity(file_descriptors.len());
+    for (i, &fd) in file_descriptors.iter().enumerate() {
+        let mut buf = vec![0u8; page_size];
+        let n = unsafe {
+            libc::pread(
+                fd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                page_size,
+                offsets[i] as libc::off_t,
+            )
+        };
+        if n < 0 {
+            return Err(pyo3::exceptions::PyOSError::new_err(
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        if n == 0 {
+            return Err(pyo3::exceptions::PyOSError::new_err(
+                "EOF while reading page",
+            ));
+        }
+        buf.truncate(n as usize);
+        pages.push(buf);
+    }
+    Ok(pages)
 }
 
 #[cfg(target_os = "linux")]
@@ -300,6 +393,16 @@ thread_local! {
     static IO_URING_PAGE_READER: std::cell::RefCell<Option<io_uring::IoUring>> =
         const { std::cell::RefCell::new(None) };
 }
+
+/// io_uring 可用性探测结果：未探测 / 可用 / 不可用。
+#[cfg(target_os = "linux")]
+const URING_UNKNOWN: u8 = 0;
+#[cfg(target_os = "linux")]
+const URING_YES: u8 = 1;
+#[cfg(target_os = "linux")]
+const URING_NO: u8 = 2;
+#[cfg(target_os = "linux")]
+static URING_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(URING_UNKNOWN);
 
 #[pyfunction]
 fn read_keys(path: &str) -> PyResult<Vec<u64>> {

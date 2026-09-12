@@ -6,6 +6,7 @@
 pub mod backend;
 pub mod batch;
 pub mod planner;
+pub mod pool;
 pub mod tiers;
 pub mod view;
 

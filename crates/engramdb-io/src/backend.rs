@@ -267,9 +267,26 @@ mod tests {
         let _ = default_backend();
     }
 
+    /// io_uring 是否真的可用。
+    ///
+    /// 内核 `io_uring_disabled=0` 并不代表能用：**容器的 seccomp 过滤器会直接拦掉
+    /// `io_uring_setup` 并返回 EPERM**（Docker 默认 profile 即是如此，实测于
+    /// AutoDL 容器）。此时本测试验证的「语义」根本无从谈起，应**跳过**而不是失败——
+    /// 否则任何在容器里跑 CI 的人都会看到一个与被测代码无关的红灯。
+    #[cfg(target_os = "linux")]
+    fn uring_available() -> bool {
+        io_uring::IoUring::new(8).is_ok()
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn uring_roundtrip_and_semantics() {
+        if !uring_available() {
+            eprintln!(
+                "SKIP uring_roundtrip_and_semantics: io_uring 不可用（容器 seccomp 拦 io_uring_setup / 内核策略）——环境限制，不是缺陷"
+            );
+            return;
+        }
         let dir = std::env::temp_dir().join("engramdb-uring-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

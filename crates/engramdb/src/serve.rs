@@ -12,7 +12,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 
 use engramdb_core::layout::Layout;
-use engramdb_io::batch::BadgeGather;
+use engramdb_io::batch::{BadgeGather, DEFAULT_GATHER_THREADS};
 use engramdb_io::view::ViewReader;
 use serde_json::Value;
 
@@ -191,7 +191,7 @@ fn fetch_raw_table(root: &Path, req: &Value) -> Result<(Vec<u8>, u64), String> {
     let w = layout.width as usize;
     let mut out = vec![0u8; rowids.len() * w];
     batch
-        .gather_pp(&rowids, &mut out, 8)
+        .gather_pp(&rowids, &mut out, DEFAULT_GATHER_THREADS)
         .map_err(|e| e.to_string())?;
     Ok((out, layout.width))
 }

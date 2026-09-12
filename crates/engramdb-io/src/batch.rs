@@ -3,9 +3,34 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::{default_backend, IoBackend};
 use engramdb_core::layout::Layout;
+
+/// `gather_pp` 的默认线程数。
+///
+/// **实测依据**（`docs/roadmap.md` §32；原生 NVMe RAID1 + 真实 Qwen3.8 PLE 行，
+/// V4.1 几何 48 行/token，冷读 + 机械自校验）：
+///
+/// | tokens/次调用 | 8 线程 | 16 | **32** |
+/// |---|---|---|---|
+/// | 16 | 655 μs（131%） | 405（81%） | **282（56%）** |
+/// | 64 | 612 μs（122%） | 364（73%） | **239（48%）** |
+/// | 512 | 593 μs（119%） | 344（69%） | **220（44%）** |
+///
+/// （括号内为占 500 μs/token 预算的比例。）此前硬编码的 **8 会让 V4.1 超预算**；
+/// 32 把它压回 44–56%。真正花在介质上的**边际**成本跨 batch 高度稳定
+/// （t=32 时 3.92–4.87 μs/行），所以这个选择对批大小不敏感。
+///
+/// ⚠️ 代价：每次调用都 spawn 线程，t=32 的**固定开销**在极小批（1–4 token）下
+/// 明显（约 0.5 ms/call），而那个区间本来就不在预算内（batch=1 最好也只有 894 μs）。
+/// 真正的下一步是常驻线程池，见 §32 的下一步清单。
+pub const DEFAULT_GATHER_THREADS: usize = 32;
+
+/// `gather_pp` 各任务产出的中间结果：`(out 下标, 行字节)` 的集合。
+/// 任务之间按 shard 分区、互不重叠，所以收集顺序无关，用一把锁 push 即可。
+type GatherResults = Arc<Mutex<Vec<(Vec<usize>, Vec<u8>)>>>;
 
 /// 预取计划：按分片分组的 badge 块列表（每 shard 内部升序，供顺序预读/合并）。
 #[derive(Debug, Default, Clone)]
@@ -151,64 +176,67 @@ impl<'a> BadgeGather<'a> {
         let mut tasks: Vec<(u64, Vec<(u64, usize)>)> = groups.into_iter().collect();
         tasks.sort_unstable_by_key(|&(s, _)| s);
 
-        // 各任务独立产出 (idxs 升序, rows 扁平)
+        // 各任务独立产出 (idxs 升序, rows 扁平)。
+        //
+        // 走**常驻线程池**而不是 `std::thread::scope`：实测本机单次 spawn 约 30–35 μs
+        // （`pool` 模块头有完整曲线），而这里每次调用要起 `nt` 个线程 —— 65 shard、t=32
+        // 时约 22 个 ⇒ **约 0.7 ms/次调用**，在小 batch 下直接吃掉预算。
         let nt = threads.max(1).min(tasks.len());
         let chunk = tasks.len().div_ceil(nt);
-        let mut results: Vec<(Vec<usize>, Vec<u8>)> = Vec::new();
+        let results: GatherResults = Arc::new(Mutex::new(Vec::new()));
 
-        std::thread::scope(|s| {
-            let mut handles = Vec::new();
-            let mut task_iter = tasks.into_iter();
-            while task_iter.len() > 0 {
-                let t: Vec<(u64, Vec<(u64, usize)>)> = task_iter.by_ref().take(chunk).collect();
-                handles.push(s.spawn(move || {
-                    let mut out_rows: Vec<u8> = Vec::new();
-                    let mut out_idxs: Vec<usize> = Vec::new();
-                    for (shard, mut pairs) in t {
-                        pairs.sort_unstable();
-                        let f = &self.files[shard as usize];
-                        let mut last_page: Option<u64> = None;
-                        let mut page = vec![0u8; (PAGE + 2 * (rb as u64)) as usize];
-                        let mut prev_key: Option<u64> = None;
-                        for (k, oi) in pairs {
-                            let (_, _, in_b) = self.layout.locate(k);
-                            // gather_pp groups by shard and reads from that
-                            // shard's file, so the byte offset must be local
-                            // to the shard rather than the global rowid.
-                            let local_row = k % self.layout.rows_per_shard;
-                            let byte_off = local_row * rb as u64;
-                            let page_id = byte_off & !(PAGE - 1);
-                            if last_page != Some(page_id) {
-                                let want = (PAGE + rb as u64) as usize;
-                                let n = self
-                                    .backend
-                                    .read_at(f, &mut page[..want], page_id)
-                                    .unwrap_or(0);
-                                let _ = n;
-                                last_page = Some(page_id);
-                            }
-                            let in_page = (byte_off - page_id) as usize;
-                            if in_page + rb <= PAGE as usize {
-                                out_rows.extend_from_slice(&page[in_page..in_page + rb]);
-                            } else {
-                                let mut tmp = vec![0u8; rb];
-                                let _ = self.backend.read_exact_at(f, &mut tmp, byte_off);
-                                out_rows.extend_from_slice(&tmp);
-                            }
-                            out_idxs.push(oi);
-                            let _ = (in_b, prev_key);
-                            prev_key = Some(k);
+        let mut jobs: Vec<Box<dyn FnOnce() + Send + '_>> = Vec::new();
+        let mut task_iter = tasks.into_iter();
+        while task_iter.len() > 0 {
+            let t: Vec<(u64, Vec<(u64, usize)>)> = task_iter.by_ref().take(chunk).collect();
+            let results = Arc::clone(&results);
+            jobs.push(Box::new(move || {
+                let mut out_rows: Vec<u8> = Vec::new();
+                let mut out_idxs: Vec<usize> = Vec::new();
+                for (shard, mut pairs) in t {
+                    pairs.sort_unstable();
+                    let f = &self.files[shard as usize];
+                    let mut last_page: Option<u64> = None;
+                    let mut page = vec![0u8; (PAGE + 2 * (rb as u64)) as usize];
+                    let mut prev_key: Option<u64> = None;
+                    for (k, oi) in pairs {
+                        let (_, _, in_b) = self.layout.locate(k);
+                        // gather_pp groups by shard and reads from that
+                        // shard's file, so the byte offset must be local
+                        // to the shard rather than the global rowid.
+                        let local_row = k % self.layout.rows_per_shard;
+                        let byte_off = local_row * rb as u64;
+                        let page_id = byte_off & !(PAGE - 1);
+                        if last_page != Some(page_id) {
+                            let want = (PAGE + rb as u64) as usize;
+                            let n = self
+                                .backend
+                                .read_at(f, &mut page[..want], page_id)
+                                .unwrap_or(0);
+                            let _ = n;
+                            last_page = Some(page_id);
                         }
+                        let in_page = (byte_off - page_id) as usize;
+                        if in_page + rb <= PAGE as usize {
+                            out_rows.extend_from_slice(&page[in_page..in_page + rb]);
+                        } else {
+                            let mut tmp = vec![0u8; rb];
+                            let _ = self.backend.read_exact_at(f, &mut tmp, byte_off);
+                            out_rows.extend_from_slice(&tmp);
+                        }
+                        out_idxs.push(oi);
+                        let _ = (in_b, prev_key);
+                        prev_key = Some(k);
                     }
-                    (out_idxs, out_rows)
-                }));
-            }
-            for h in handles {
-                if let Ok(r) = h.join() {
-                    results.push(r);
                 }
-            }
-        });
+                results.lock().unwrap().push((out_idxs, out_rows));
+            }));
+        }
+        crate::pool::scope_run(jobs);
+
+        let results = Arc::try_unwrap(results)
+            .map(|m| m.into_inner().unwrap())
+            .unwrap_or_default();
 
         for (idxs, rows) in results {
             for (j, &oi) in idxs.iter().enumerate() {
