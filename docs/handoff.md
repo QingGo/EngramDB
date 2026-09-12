@@ -64,7 +64,7 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 - **跨平台**：cargo check --target x86_64-pc-windows-msvc = 0 错误；Windows 原生=目标平台；
   WSL2 全链路验证过（x86_64 + aarch64 树莓派 17 tests 全绿）；
   **真实 Linux 实机验证已闭环**：树莓派 aarch64 + WSL2 Ubuntu x86_64 均安装 v0.2.4 wheel 并跑通完整 smoke（Session 8）。
-- **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 已发布并优先使用，ctypes C-ABI 作回退；
+- **Python 桥**：PyO3 原生扩展 `engramdb-pyo3` 是**唯一**后端（ctypes 回退已于 Session 42 删除，见 roadmap §34）；C ABI 移至 `crates/engramdb-cabi`，定位为 C/C++ 嵌入面；
   `DiskMultiHeadEmbedding` 和真实 `EngramLayer` 前向均通过；
   **TinyLlama + engram-peft + EngramDB 磁盘版完整文本生成已跑通**（Python 3.12 + torch 2.2.2）。
   已新增 `engramdb.PageReader`（SGLang 兼容）、`engramdb.vllm.PleDiskGather`（vLLM 方向）、
@@ -99,7 +99,33 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 | 主开发机（Mac notebook，本章运行时所在） | 本机 | 主开发；外盘长期接 |
 | 家庭机（Mac Intel） | zeng@100.73.212.21（免密） | 第二工作机，可带出门关机；**外盘可插** |
 | 树莓派（aarch64, SD 卡） | zeng@192.168.31.110 | 仅功能/门禁验证（SD 不测性能），17 测试绿 |
-| Windows（含 WSL2 / GTX1070） | minam@192.168.31.108 | Linux 语义测试 + GPU（P4b 用） |
+| Windows（含 WSL2 / GTX1070） | **`minam@100.78.250.122`**（Tailscale；旧记的 `192.168.31.108` 已不可达） | Linux 语义测试 + GPU（P4b 用）。**⚠️ 不可用作"生产 NVMe"的性能代理**：WSL2 虚拟化存储栈的冷随机读比 Mac 的 USB 外盘还慢约 2×（见 roadmap §30.7）。进 WSL 需 `ssh → cmd.exe → wsl.exe -e bash -lc`，cmd 不认 `;` 与 `\"`，命令要 base64 转发 |
+| **AutoDL 容器（原生 NVMe，Phase A 用机）** | **`ssh -p 28326 root@connect.nmb1.seetacloud.com`**（免密，已配好） | **生产介质口径的唯一有效机器**。2× Xeon Gold 6430 / 64C128T；宿主 1 TB RAM，**本容器 cgroup 120 GiB**；`/root/autodl-tmp` = XFS on **RAID1（2× Samsung PM9A3 7.68 TB NVMe，PCIe4 x4）**；RTX 4090 24 GB。见下方"使用要点" |
+
+**AutoDL 使用要点（Session 42 实测，踩过的坑）**：
+
+1. **`drop_caches` 被拒**（`CapEff` 无 `cap_sys_admin`，`echo 3 > /proc/sys/vm/drop_caches` → `Permission denied`）。
+   容器里 cgroup 120 GiB ≫ 表体积，所以"表比内存大 ⇒ 冷读"**不成立**。
+   **正确做法：按文件 `posix_fadvise(POSIX_FADV_DONTNEED)`**，且必须配冷热自校验（见 §31.2）。
+2. **`io_uring_setup` 返回 `EPERM`** —— Docker 默认 seccomp 拦截（`Seccomp: 2`，`io_uring_disabled=0` 也没用）。
+   任何走 io_uring 的测试/基准在这台机器上**不可用**，需 `--security-opt seccomp=...` 才可能放开。
+3. **无网络**（github 超时、crates.io 403）。但 **`/etc/network_turbo` 提供学术代理**，
+   且 tuna / ustc 镜像可用。装 Rust 的正确姿势：
+   ```bash
+   export RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+   curl -sSfL $RUSTUP_DIST_SERVER/rustup/dist/x86_64-unknown-linux-gnu/rustup-init -o /root/rustup-init
+   chmod +x /root/rustup-init && /root/rustup-init -y --profile minimal --default-toolchain stable --no-modify-path
+   rustup component add rustfmt clippy
+   # ~/.cargo/config.toml: source.crates-io replace-with = "tuna"（sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/）
+   ```
+4. **`python3` 不在 PATH**，但在 `/root/miniconda3/bin/python3`。`gcc`/`make`/`git` 已有。
+5. **磁盘配额实际 86 GB**（`/root/autodl-tmp`，`df` 有时显示 70 G 可用），`/` 是 30 GB overlay。
+   装 Rust + 源码 + 25 GB 数据够用，**128 shard 全表（51.2 GB）也放得下**，但要注意余量。
+6. **已有他人/前任的项目数据**：`/root/autodl-tmp/qwen35-ple/`（49 GB，含
+   `qwen38-rows` 真实 PLE 行 65 shard）。**不要删**；`qwen38-rows` 的 `manifest.json`
+   声称 128 shard，实际只剩 **65**。
+7. **宿主有其他租户**（load ≈ 11–13 / 128 核），但 4 KiB 随机读延迟不受影响
+   （复跑偏差 ≤2.4%，见 §31.4）。
 
 外盘 `/Volumes/My Passport` 唯一物理数据地（剩余 ~155G）：
 - `qwen38-rows`（真表 128 shard×2,500,012×160B = 48G）
@@ -230,3 +256,56 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
    - 后续计划重排为 Phase R1–R5：生产收敛、索引产品化、真实 serving、真表门禁/发布纪律、生态 canonical。
    - 借鉴矩阵更新：DuckDB/SQLite、RocksDB/LMDB、Arrow/Parquet、vLLM/SGLang/llama.cpp、Transformers/engram-peft/qwen35-ple。
    - 完整版见 `docs/round-40-full-summary.md` 与 Roadmap Section 28。
+
+   **Session 42（第二十八轮：Phase A 闭环 + 并发度/行折叠实测）**：
+   - **Phase A 闭环**：在 AutoDL 容器（原生 NVMe，见 §4 机器表）用**真实 Qwen3.8 PLE 行**测出可信冷读数字。
+     **容器要点**：`drop_caches` 被拒（无 `cap_sys_admin`）→ 改用按文件 `fadvise(DONTNEED)`；
+     `io_uring_setup` 被 seccomp 拦（`EPERM`）；镜像装 Rust 用 tuna；`python3` 在 `/root/miniconda3/bin`。
+   - **方法学**：给基准加了**机械自校验**（双射 + 轮间不相交切片 + 每配置冷热裁决，
+     `比值<5x` 且 `边际<2μs` 即 `>>> VOID` 并退出码 3）。它**当场拦下两次假读数**
+     （真实数据其实全在 page cache；io_uring 路径一页没读却"很快"）。
+   - **数字**：Store-I V4.1（48 行散读）@8t **604 μs（121%，超预算）**，@32t **220 μs（44%）**；
+     Store-P（1 次折叠读）@512 tokens **14.28 μs（t=8）/ 7.69（t=32）** ⇒ **折叠增益 41.5×**。
+     介质倍率 **2.4×**（NVMe vs Mac+USB），**不是** §30.6.1 曾称的 40×（已撤回）。
+   - **代码**：新增 `DEFAULT_GATHER_THREADS = 32` 取代 10 处硬编码 `8`（旧值让 V4.1 超预算）；
+     PyO3 `Store::new` 增加可选 `threads`；`read_records` 串行阈值 32→4（实测 16 条净损 2.6×）；
+     新增门禁 `crates/engramdb-bench/src/bin/{nvme_gate,view_gate,uring_gate}.rs` 与 `scripts/nvme_raw_probe.c`。
+   - **在真实 Linux 上跑测试抓到真实缺陷**：`uring_roundtrip_and_semantics` 在 io_uring 不可用时
+     **硬 panic**（Docker 默认 seccomp 下必然红），已修为环境不支持时 SKIP。
+   - 验证：`cargo fmt --check` 干净、`clippy --workspace --all-targets` **0 warn / 0 err**、
+     `cargo test --workspace` **27 passed / 0 failed**。完整见 `docs/roadmap.md` §31–§32。
+
+   **Session 42 续（常驻线程池 + 共享机器测量纪律）**：
+   - 新增 `crates/engramdb-io/src/pool.rs`：常驻 fork-join 池取代 `gather_pp` /
+     `read_records_parallel` 的每次调用 `std::thread::scope`。实测单次 spawn **30–35 μs**，
+     t=32 时每次调用 ~22 个 ⇒ ~0.7 ms。换池后 batch=1 冷读 **1008 → 515 μs（1.9×）**。
+     开关：`ENGRAMDB_NO_POOL=1`（退回旧行为）、`ENGRAMDB_POOL_WORKERS=n`（A/B）。
+   - **坑（已记入 roadmap §33）**：池子大小**不能**用 `available_parallelism()` ——
+     它遵守 cgroup CPU 配额，本机返回 **16**（`nproc`=128），会把 IO 并发度腰斩
+     （冷读边际 4.5 → 8.0 μs/行）。现取 `max(available_parallelism(), 32)`，
+     且 `scope_run` 在任务数 > worker 数时主动回退。
+     `ViewReader::read_records` 的默认线程数同样从 `available_parallelism()` 改为 32。
+   - **纪律增补（§33.6）**：① 共享机器上的 A/B 必须**配对交替**并在同一次脚本内完成 ——
+     顺序扫描里"先跑"的那组会吸收上一轮余波，本轮因此**两次**把 1.9× 的收益读成 1.7× 的损失；
+     ② 每个基准必须**自报实际走的代码路径**（`nvme_gate` 现在打印 `pool_workers=/pool_disabled=`），
+     否则"A/B 无差异"可能只是两组跑的同一条路径。
+   - 新增 `crates/engramdb-bench/src/bin/call_cost.rs`（调用开销分解探针）。
+   - 验证：fmt 干净、clippy **0 finding**、`cargo test --workspace` **32 passed / 0 failed**。
+
+   **Session 42 续（拆开 Python 后端与 C 嵌入面，roadmap §34）**：
+   - **删除 Python 的 ctypes 回退**（`python/engramdb/__init__.py` 418 → 216 行）。
+     它只对「源码树 + 未构建扩展」可达、**CI 从未覆盖**、会**静默降级**掩盖故障，
+     且已经与 PyO3 分叉（`threads=` 只有 PyO3 有）。现导入失败直接抛带修复指引的
+     `ImportError`（`cd python && maturin develop --release`）。
+   - **crate 改名 `engramdb-python` → `engramdb-cabi`**，重新定位为 **C/C++ 嵌入面**。
+     cdylib 名保持 `libengramdb_c`。⚠️ 它**只实现 `PLE_QWEN_V1`**，V4.1 规格未实现（V55 仍开着），
+     且**当前没有任何 C/C++ 消费者** —— 是一个「保留但未启用」的面。
+   - **顺带修掉三个「在 Linux 上假设 Linux 一切可用」的缺陷**：
+     ① `IoUringPageReader` 在容器里硬崩 → 新增 `uring_available()` 探测 + `pread` 退化
+     （短读/EOF 语义严格一致）+ `backend` 属性；`SGLangPageReader` 因此不再崩。
+     ② `scripts/build_pyo3.sh` 硬编码 `.dylib`，在 Linux 必然失败 → 按平台选择。
+     ③ `engramdb.__repr__()` 是死代码（模块级 `__repr__` 不覆盖 `repr(module)`）→ 已删，
+     改由 `python_wheel_smoke.py` 的 `test_native_backend_is_pyo3()` 守卫
+     （断言 `_USING_PYO3` + `abi_version` + **扩展实际加载路径**）。
+   - 验证（AutoDL 原生 Linux）：fmt 干净、clippy **0**、`cargo test --workspace` **32 passed**、
+     wheel smoke 全绿、`c_abi_smoke.py` 通过。

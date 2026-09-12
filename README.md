@@ -1,33 +1,43 @@
 # EngramDB
 
-> **消歧声明**：GitHub 上另有多个同名 "EngramDB" 项目，多为通用 Agent 记忆/语义检索产品。
-> 本项目与它们无关。
+> **消歧**：GitHub 上另有多个同名 "EngramDB" 项目，多为通用 Agent 记忆/语义检索产品。本项目与它们无关。
 >
 > **EngramDB = DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的磁盘优先存储引擎。**
-> 它不做向量检索、不做 ANN、不做通用 KV 数据库；它把“确定性哈希寻址的 n-gram 嵌入表”
-> 变成像 DuckDB 一样可嵌入、可构建、可预取、可服务的本地数据库。
+> 不做向量检索、不做 ANN、不做通用 KV 数据库。
+> 它把「确定性哈希寻址的 n-gram 嵌入表」变成像 DuckDB 一样可嵌入、可构建、可预取、可服务的本地数据库。
 
 ---
 
-## 1. 这个项目解决什么问题
+## 1. 解决什么问题
 
-Qwen3.8-Flash-Next 一类模型中的 **PLE / Engram 表**是：
+Qwen3.8-Flash-Next / DeepSeek-V4.1 一类模型里的 **PLE / Engram 表**有四个特点：
 
-- 超大、静态、只读的 n-gram 嵌入记忆表；
-- 由 token 序列通过确定性哈希得到 rowid，因此 **查询地址在推理/训练开始前就已知**；
-- 每个 token 需要读取固定 16~32 行、每个 payload 只有数 KB；
-- 原始表规模可达 48GiB（FP8）~ 95GiB（BF16），不适合简单整表加载到 RAM/显存。
+| 特点 | 含义 |
+|---|---|
+| **超大** | Qwen3.8 约 51.2 GB（FP8，128 shard × 2.5M 行 × 160 B）；V4.1 Engram 约 **202.8 GB** |
+| **静态只读** | 训练完就固定，推理期不写 |
+| **地址先验** | rowid 由 token 序列**确定性哈希**得到 ⇒ 要读哪些行在计算开始前就全部已知 |
+| **读得碎** | 每个 token 要 16（Qwen）~ 48（V4.1）行，每行只有 160 B ~ 数 KB |
 
-EngramDB 的目标是把这种表变成：
+「地址先验」是最关键的一条：**因为地址已知，所以预取、批合并、按访问序重排都能在 token 生成时就做好**，而不是等到了 PLE 层再同步读盘。
+
+EngramDB 要把它变成一条命令链：
 
 ```text
 build  →  index  →  warm  →  serve
 ```
 
-一条命令链即可使用的磁盘优先存储基础设施，同时服务：
+同时服务两条负载：
 
-- **负载 A：训练/语料预处理**——高吞吐批量 e_t 生成；
-- **负载 B：在线推理**——低延迟点查 + 与引擎计算重叠的预取。
+- **负载 A：训练 / 语料预处理** —— 高吞吐批量 e_t 生成；
+- **负载 B：在线推理** —— 低延迟点查 + 与引擎计算重叠的预取。
+
+### 1.1 位置：EngramDB 做什么，不做什么
+
+| | |
+|---|---|
+| **做** | 表的物理布局、定址、构建/校验工具、读路径、预取计划、Store-P 物化视图、Python/Rust/C ABI 三面 API、上游引擎（vLLM/SGLang/engram-peft）接入层 |
+| **不做** | ANN / 向量检索；通用 KV；**可写**的规范表（训练写路径归 DeepEP 与 3FS，见 `docs/roadmap.md` §29.10）；模型前向计算 |
 
 ---
 
@@ -35,184 +45,201 @@ build  →  index  →  warm  →  serve
 
 ### 2.1 两套存储视图
 
-| 视图 | 内容 | 适用场景 | 特点 |
-|---|---|---|---|
-| **Store-I** | 原始行表，按 badge/分片存储 | 与引擎原生 gather 路径兼容、位级审计 | 原始 16 头 scatter 读放大高 |
-| **Store-P** | 物化 e_t 视图，每个唯一 n-gram key 存一条 2560B 紧凑记录 | 推理点查、训练流主路径 | 16 次小读折叠为 1 次定长读 |
-
-Store-P 的关键结论（真表实测）：
-
-- 紧凑 2560B 槽（无 pad）是最终选型；
-- 相比原始 scatter，IOPS 从 16:1 降到 1:1；
-- 实际磁盘读放大可降到 **1.00×**；
-- 代价是需要额外一份约等于原表大小的磁盘。
-
-### 2.2 物理布局：badge
-
-```text
-rowid → badge_id = rowid / BPows
-badge  = 连续 BPows 行
-```
-
-- 行按 badge 聚簇；
-- badge 对齐到 4KB，并尽量对齐 2MB（Linux huge-page folio）；
-- 直接寻址，无 B-Tree、无扫描页结构；
-- 这是“布局即优化”的核心：把随机读变成可预测的页命中。
-
-### 2.3 三级缓存与预取
-
-```text
-T1 RAM 热集    → 频率优先 + LRU，用户可配 --ram-budget
-T2 OS 页缓存   → mmap / fadvise，主动批量预读
-T3 NVMe       → preadv 默认；io_uring 作为可插拔语义实现
-```
-
-核心原则：
-
-- **主动预取，不靠被动 page fault**；
-- 预取计划在 token 生成时就可以产生，因为 rowid 是确定性的；
-- 对 GPU 路径，预取起点应早于“到达 PLE 层”，而不是到了 PLE 层再同步读。
-
-### 2.4 当前 IO 后端结论
-
-| 后端 | 相对性能 | 结论 |
+| 视图 | 内容 | 特点 |
 |---|---|---|
-| `preadv`（默认） | 1.00× | 本地 NVMe/VHDX + 8 线程下已达到 IO 上限 |
-| `UringBackend`（逐提交） | 0.97× | 无性能收益 |
-| `UringBatchBackend`（批量） | 0.94× | 无性能收益 |
+| **Store-I** | 原始行表，按 `shard / badge` 分片存放 | 与上游引擎原生 gather 兼容、可位级审计；**N 行 = N 次独立 4 KiB 页读** |
+| **Store-P** | 物化 e_t 视图：每个唯一 n-gram key 一条定长紧凑记录 | **N 次散读折叠为 1 次定长读** |
 
-**结论：默认 preadv；保留 io_uring 语义实现，供网络盘 / cgroup 受限等未来环境激活。**
+**这是本项目收益最大的一个设计决策。** 在 V4.1 几何（48 行/token）下、原生 NVMe 冷读实测：
+
+| 形态 | @512 tokens, 32 线程 | 占 500 μs/token 预算 |
+|---|---|---|
+| Store-I（48 次散读） | 220 μs | 44% |
+| **Store-P（1 次折叠读）** | **7.69 μs** | **1.5%** |
+| **折叠增益** | **28.6×** | 页流量 196,608 B → 12,672 B（**15.5×**） |
+
+代价是需要额外一份约等于原表的磁盘。**如果磁盘受限，应做部分物化或 FP8 视图，而不是默认全量。**
+
+### 2.2 物理布局：直接寻址 + 页去重
+
+```text
+rowid → shard = rowid / rows_per_shard
+        badge = (rowid % rows_per_shard) / badge_rows      // badge_rows = 4096 / row_bytes
+```
+
+- **直接寻址**：没有 B-Tree、没有扫描页结构，`rowid` 直接算出字节偏移；
+- **badge 聚簇**：一个 badge 约 4 KiB 行数据（160 B 行 ⇒ 25 行/badge）；
+- **页对齐读**（`BadgeGather::gather_pp`）：按 shard 分组 → shard 内按键升序 → 读 **4 KiB 对齐页**并在同页内去重。布局本身不保证页命中，页命中来自「把地址排序后再读」。
+
+> ⚠️ 一个必须说清楚的事实：在真实 PLE 负载下 rowid 是哈希散开的，
+> **实测 8192 个 key 命中 8192 个不同的 4 KiB 页 —— 恰好 1 行 1 页，零页共享。**
+> 所以 Store-I 的成本就是「独立随机页读 × 行数」，没有「顺带命中」可捡。
+
+### 2.3 读路径：并发度是主要杠杆
+
+`pread` 路径的**队列深度 = 线程数**。原生 NVMe 上单线程 4 KiB 随机读延迟约 **77 μs**（QD1 由盘内流水线决定），
+并发买到的是吞吐而不是单次延迟：
+
+| 线程 | 1 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|
+| μs/行（Qwen 16 行/token，冷） | 85.7 | 22.9 | 12.8 | 7.5 | **4.7** |
+
+两条随之而来的工程决策：
+
+1. **默认线程数 = 32**（`engramdb_io::batch::DEFAULT_GATHER_THREADS`）。
+   此前硬编码的 8 会让 V4.1 超预算（119–131%），32 把它压回 42–56%。
+2. **常驻线程池**（`engramdb_io::pool`）取代每次调用 `std::thread::scope`。
+   本机单次 `spawn` 实测 **30–35 μs**，t=32 时每次调用要起约 22 个线程 ⇒ **约 0.7 ms/次调用**。
+   换池后小 batch 冷读 **1008 → 515 μs（1.9×）**。`ENGRAMDB_NO_POOL=1` 可退回旧行为。
+
+> ⚠️ 池子大小**不要**用 `available_parallelism()`：它遵守 cgroup CPU 配额
+> （实测在 128 核宿主上返回 **16**），会把 IO 并发度卡死。现取下界
+> `max(available_parallelism(), 32)`，且任务数 > worker 数时自动回退到 `thread::scope`。
+
+### 2.4 三级缓存与预取
+
+```text
+T1 RAM 热集   → 频率优先 + LRU，--ram-budget 可配
+T2 OS 页缓存  → mmap / fadvise，主动批量预读
+T3 块设备     → preadv（默认）；io_uring 为可插拔语义实现
+```
+
+- **主动预取，不靠被动 page fault**；rowid 确定性 ⇒ 预取计划可在 token 生成时产生；
+- GPU 路径上预取起点应早于「到达 PLE 层」；
+- 全表**顺序流**可达 930 MB/s，而随机序只有 88.7 MB/s —— **顺序化是最大的未兑现杠杆**（按访问序重排视图槽位）。
 
 ---
 
-## 3. 当前实测性能
+## 3. 实测性能
 
-> 口径：真表 320M 行 × 160B FP8；外接 USB SSD 或桌面 NVMe/WSL；见 `docs/probes` 与 `probes/`。
+### 3.1 先读口径：本项目最容易出错的地方
 
-### 3.1 关键数字
+这个项目在性能测量上踩过**同一类错误的四次**（三次是自己的），所以口径必须前置：
 
-| 路径 | 环境 | 性能 | 备注 |
-|---|---|---|---|
-| A. 原始 16 行 scatter | USB SSD，8 线程，warm | 1.05M 行/s | 字节放大 20×，页命中极差 |
-| B. Store-P 紧凑槽 | 200K 热态，8 线程 | 4.50M 行/s | 放大 1.00× |
-| B. Store-P 全表冷随机 | USB 外盘 | 554K 行/s | 外盘 IOPS 上限 |
-| B. Store-P 全表半冷随机 | WSL/NVMe，8 线程 | 19.2M 行/s | 桌面 NVMe 目标介质 |
-| B. 全表顺序流 | NVMe | 930MB/s | 顺序化是最大未兑现杠杆 |
-| 单记录延迟（warm） | 1 线程 | p50≈0.75–0.88μs，p99≈1.4–12μs | 比 10ms/token 低 3 个数量级 |
-| 单记录延迟（Linux SSD 真冷） | 1 线程 | p50≈3.7μs，p99≈6.7μs | 冷热差仅约 1.85× |
+1. **冷读的合法性不能靠「表比内存大」论证。** 在 120 GiB cgroup 上限、表只有 25 GB 的机器上，
+   一份被读过的数据会**永久**留在 page cache 里。
+2. **`drop_caches` 在容器里通常不可用**（无 `cap_sys_admin`）。替代方案是**按文件 `fadvise(DONTNEED)`**。
+3. 每个门禁都强制**冷热自校验**：同一批 key 立刻重读，**比值 ≥5× 或边际 ≥2 μs** 才算冷；
+   否则打印 `>>> VOID` 并以退出码 3 终止，**数字不得引用**。
+4. **共享机器上的 A/B 必须配对交替**（`A B B A`）并在同一次脚本内完成 ——
+   顺序扫描里「先跑」的那组会吸收上一轮余波，本项目因此**两次**把 1.9× 的收益读成 1.7× 的损失。
+5. 每个基准**自报实际走的代码路径**，否则「A/B 无差异」可能只是「两组跑的是同一条路径」。
 
-### 3.2 验收目标
+**参考介质（除非另行标注）**：原生 NVMe，XFS on RAID1（2× Samsung PM9A3 7.68 TB，PCIe 4.0 x4），
+真实 Qwen3.8 PLE 行，`fadvise` 冷读。
+工具：`crates/engramdb-bench/src/bin/{nvme_gate,view_gate,call_cost}.rs`、`scripts/nvme_raw_probe.c`。
 
-| 指标 | 目标 | 状态 |
+> 设备交叉验证：裸 C 探针 `O_DIRECT` 与 buffered-全新偏移给出**几乎相同**的数字
+> （77.28 vs 78.35 μs/4 KiB 页），两条原理不同的路径互证冷读成立。
+
+### 3.2 每 token 预算（核心指标）
+
+预算为 **500 μs/token**（= 100 tok/s 下 5% 的每 token 时间，推导见 `docs/design.md` §7.3）。
+
+**V4.1 Engram 几何（48 行/token，冷读，中位数）：**
+
+| 形态 | 线程 | 16 tokens/次 | 64 | 512 | 4096 |
+|---|---|---|---|---|---|
+| Store-I | 8（旧默认） | 655 μs（131%） | 612（122%） | 593（119%） | 592（118%） |
+| Store-I | **32（现默认）** | **282（56%）** | **239（48%）** | **220（44%）** | **212（42%）** |
+| Store-P | 32 | 49.6（9.9%） | 24.6（4.9%） | **7.7（1.5%）** | **5.5（1.1%）** |
+
+**Qwen PLE 几何（16 行/token，冷读）：** 8 线程 204 μs（41%）；**32 线程 76 μs（15%）**。
+
+**单线程下 Store-I 与行数线性**（85 μs/行 × 行数）：V4.1 就是 4.1 ms/token（816%）。
+⇒ **Store-I 必须靠并发 + 足够大的 batch；Store-P 在任意 batch 下都进预算**（batch=1 也只要 81 μs = 16%）。
+
+### 3.3 介质对比（8 线程冷读 μs/行）
+
+| 介质 | μs/行 | 比原生 NVMe 慢 |
 |---|---|---|
-| 视图路径吞吐 | ≥4M 等效行/s | ✅ 已达到 |
-| 视图字节放大 | ≤2× | ✅ 1.00× |
-| 端到端 CPU 小模型 decode | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待实机 |
-| GPU 端 vLLM/SGLang A/B 差距 | ≤5% | ⏳ 未做 |
-| 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
+| **原生 NVMe（RAID1 PM9A3）** | **12.6** | — |
+| Mac + USB 外盘 | 30.0 | **2.4×** |
+| WSL2 + VHDX | 55.9–57.9 | 4.4–4.6× |
 
-### 3.3 v0.2.12 新增实测（DiskSlotIndex v3 / Serving A/B）
+- **真实倍率是 2.4×，不是 40×。** 早期文档曾宣称 NVMe 比 USB 快约 40×，那个数字来自
+  复用同一批偏移的 warm 读数，**已撤回**。
+- **WSL2/VHDX 不是生产介质的有效代理**：它的虚拟化存储栈引入的延迟超过了介质差异本身
+  （比 Mac 的外接 USB 还慢约 2×）。
+- 冷热比 **7.1–8.1×**，真冷单页延迟 **≈77 μs**。**缓存态与介质类别同等重要，前者不能被后者掩盖。**
+- 同一 seed 复跑偏差 **≤2.4%**（宿主有其他租户，load ≈11–13，不影响 4 KiB 随机读延迟）。
 
-| 路径 | 环境/规模 | 性能 | 备注 |
-|---|---|---|---|
-| DiskSlotIndex v3 build | 本机，10M grams | 135.2s | `data.bin` 1.36GB，16384 buckets |
-| DiskSlotIndex v3 verify | 本机，10M grams | 87.0s | `--cache 1024` |
-| DiskSlotIndex Python lookup | 本机，10M index，100k samples | 164.7 μs/lookup | LRU 全桶热态 |
-| 真表 Store.fetch | 真实 128-shard，1024 tokens | 23.1K–45.8K tok/s | 原始路径 |
-| 真表 PleMemory | 真实 128-shard，1024–4096 tokens | 51.9K–62.5K tok/s | 语义封装路径 |
-| 真表 PleMemoryAdapter | 真实 Store，torch 路径 | 约 1.6K–2.0K tok/s | 当前 Python 热路径仍待优化 |
-| 合成 PleMemoryAdapter | 合成 Store，torch 路径 | 约 20.6K tok/s | 无真实 rowid 生成开销 |
+### 3.4 引擎自身开销
 
-这些数据已由 `probes/disk_slot_index_10m_v3.json` 与 `scripts/real_perf_gate.py` 固化；
-真表 serving 门槛当前为 `ple_memory >= 5,000 tok/s`、`store_fetch >= 5,000 tok/s`。
+冷读边际稳定在 **3.9–4.5 μs/行**（32 线程），与裸设备 QD32 的 2.74 μs/页一致（+43%，含排序/拷贝）；
+单线程时引擎比裸设备只多 **11%**。**开销几乎全在介质上，引擎不是瓶颈。**
+
+warm（页缓存命中）口径下的纯代码路径成本 —— 这些数字**只能说明代码路径便宜，不能作为预算结论**：
+
+| 路径 | 批量 | μs/token |
+|---|---|---|
+| `Store.fetch` | 4096 tokens/次调用 | 9.5–10.9 |
+| `PleMemory.fetch_raw` | 4096 | 11.8–13.2 |
+| `PleMemoryAdapter`（torch） | 4096 | 20.4–21.0 |
+
+> 早期把上面这组数字当作「有 24× 余量」是错的 —— 它们是 warm 口径。**已撤回。**
+
+### 3.5 其它已固化指标
+
+| 路径 | 环境 | 结果 |
+|---|---|---|
+| Store-P 紧凑槽吞吐 | Mac+USB，200K 热态，8 线程 | 4.50M 行/s，字节放大 **1.00×** |
+| Store-P 全表顺序流 | 顺序序 | **930 MB/s** ⚠️ warm 口径，冷态复测见 §4.3 |
+| Store-P 全表随机序 | 随机序 | 88.7 MB/s |
+| DiskSlotIndex v3 build / verify | 本机，10M grams | 135.2 s / 87.0 s |
+| 单记录延迟（warm） | 1 线程 | p50≈0.75–0.88 μs，p99≈1.4–12 μs |
+
+数据固化在 `probes/*.json|csv`，门禁在 `scripts/{real_perf_gate,overhead_budget_check,decode_baseline_check}.py`。
 
 ---
 
-## 4. 优化策略：哪些有用，哪些没用
+## 4. 哪些有用，哪些没用
 
-### 4.1 已经被证明有用的
+### 4.1 已被证明有用
 
-1. **Store-P 物化视图（2560B 紧凑槽）**
-   - 16 路 scatter → 1 次定长读；
-   - 相对原始 scatter 约 5× 以上吞吐，且磁盘读放大从 20× 降到 1×。
-2. **并行 IO**
-   - 8 线程才能兑现桌面 NVMe 带宽；
-   - 单线程会被 IOPS 上限压住在 ~11K IOPS / 数十万行每秒。
-3. **主动预取 + 访问序调度（方向）**
-   - 全表随机序 88.7MB/s vs 顺序序 930MB/s；
-   - 下一步应按实际访问序重排视图槽位，或按窗口顺序化读取。
-4. **badge / 页对齐布局**
-   - 保证页命中率，避免 llama.cpp 式“4.75M 次 gather 零同页”的反面路径。
-5. **把“冷/热”交给现代 SSD**
-   - NVMe 上真冷与热差异只有约 1.85×；
-   - 真正影响性能的是介质类别（USB/HDD vs NVMe），不是页缓存态。
+1. **Store-P 物化视图** —— N 路 scatter → 1 次定长读；V4.1 几何下 **28.6–41.5×**，磁盘读放大 20× → 1.00×；
+   也是唯一让 V4.1 在 batch=1 也进预算的路径。
+2. **并发度 + 常驻线程池** —— 1→32 线程 **18.1×**；线程池再在小 batch 上拿 **1.9×**。
+3. **页对齐读 + 同页去重**（`gather_pp`）—— 避免 llama.cpp 式「4.75M 次 gather 零同页」的反面路径；
+   在顺序访问下有效，在哈希散列负载下收益为零（已实测）。
+4. **主动预取 + 按访问序重排**（方向）—— 顺序序 930 MB/s vs 随机序 88.7 MB/s。
+5. **紧凑定长槽（无 pad）** —— 相对 4 KiB 对齐槽放大 1.00× vs 1.60×（见 §4.2 第 1 条）。
 
-### 4.2 已经被证明没用/不值得投入的
+### 4.2 已被证明没用 / 不值得投入
 
-1. **io_uring 追求性能**
-   - 本地 NVMe/VHDX + 8t 下，逐提交 0.97×、批量 0.94×，均不如 preadv；
-   - 已定案：不继续在 io_uring 性能上花时间。
-2. **为大语料训练做热集 / 频率索引**
-   - 30M token 真实语料中 top-1000 覆盖率 <6%，Zipf 假设不成立；
-   - 频率索引只对 agent 型负载有效（top-100 覆盖 99%）。
-3. **4KB pad 视图槽**
-   - 初版 4KB 对齐槽放大 1.60×、吞吐 0.97M；
-   - 紧凑 2560B 槽放大 1.00×、吞吐 4.50M，明显更优。
-4. **USB/HDD/SD 介质上的性能采样**
-   - 外盘性能是介质上限，不是引擎设计问题；
-   - 树莓派 SD 性能采样已放弃，只做功能门禁。
-5. **盲目“全量物化”**
-   - 视图需要额外一份磁盘；如果磁盘受限，应做部分物化/FP8 视图，而不是默认全量。
+1. **4 KiB pad 视图槽** —— 初版对齐槽放大 1.60×、吞吐 0.97M；紧凑槽放大 1.00×、吞吐 4.50M。
+2. **为大语料训练做热集 / 频率索引** —— 30M token 真实语料中 top-1000 覆盖率 **<6%**，Zipf 假设不成立。
+   频率索引只对 agent 型负载有效（top-100 覆盖 99%）。
+3. **在 USB / HDD / SD 上做性能采样** —— 那是介质上限，不是引擎设计问题。树莓派 SD 只做功能门禁。
+4. **盲目「全量物化」** —— 视图需要额外一份等大磁盘，磁盘受限时应做部分物化。
+
+### 4.3 未验证（不要当成已验证，也不要当成已否证）
+
+1. **io_uring 的性能收益。** 早期结论（逐提交 0.97×、批量 0.94×）**测于 WSL/VHDX**，
+   而 WSL 已判定不是有效介质代理 ⇒ **证据失效，结论回到「未验证」**。
+   在原生 NVMe 上**无法验证**：Docker 默认 seccomp 让 `io_uring_setup` 返回 **`EPERM`**（已独立确证）。
+   `crates/engramdb-bench/src/bin/uring_gate.rs` 保留，供有权限的机器一次跑出答案。
+   **但队列深度问题是真实的**（8→32 线程快 2.7×），所以这条路值得在有 io_uring 权限时重开。
+2. **端到端 GPU / 真机 decode**（vLLM/SGLang 的 tok/s 验收）—— 待硬件。
+3. **训练流有效吞吐 ≥100K tok/s**。
+4. **顺序化视图的大表冷态复测**（930 MB/s 是 warm 顺序流）。
 
 ---
 
 ## 5. 安装与使用
 
-### 5.1 Python 包（推荐入口）
+### 5.1 Python 包
 
-已发布到 PyPI：`engramdb-python`，import 名仍是 `engramdb`。
+已发布到 PyPI：`engramdb-python`（import 名是 `engramdb`），要求 Python ≥ 3.10，
+提供 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel。
 
 ```bash
-# pip
 python3 -m pip install --upgrade engramdb-python
-
-# uv
+# 或
 uv add engramdb-python
 ```
 
-当前发布线（v0.2.12）包含 Linux x86_64/aarch64、macOS x86_64/arm64、Windows x86_64 wheel，要求 Python >= 3.10。
-
-v0.2.12 新增：
-
-- `DiskSlotIndex` v3 单文件 / offset table：`data.bin` + `offsets.bin`，Rust/Python 双端兼容
-- 原生 CLI `slot-index build --single-file`
-- 可选 Serving 层：
-  - `PleMemory` / `PleSequence` / `PleSequenceStore`
-  - `BundleManifest`
-  - `TargetReaderRegistry` / `ReaderSpec`
-  - `PleMemoryAdapter` / `TargetReaderHook` / `install_target_reader_hook`
-  - `install_vllm_target_reader` / `install_sglang_target_reader`
-- 真表验证与基准脚本：
-  - `gen_view_keys.py`：精确复现 `view build` keys 流
-  - `bench_disk_slot_index.py --single-file`
-  - `bench_serving_ab.py`
-  - `real_arrow_smoke.py`
-  - `real_perf_gate.py`
-- `release_gate.sh` 集成真表 Arrow IPC 与 serving 性能阈值门禁
-
-v0.2.11 新增：
-
-- `SlotIndex`：rowid-tuple → Store-P 物理 slot 的通用语义索引（纯 Python，可选依赖 numpy）
-- qwen35-ple 的 access-order Store-P 语义视图与自动访问序调度
-- 视图构建器自动写 `*.slot_index.npz` 并更新 manifest
-
-v0.2.10 新增：
-
-- `StorePool` / `ThreadLocalStore`：线程安全的 Store 连接池
-- `Database.fetch` 默认走 StorePool，适合多线程服务
-- 本仓库与 qwen35 懒加载 / Store-P WSL A/B 基准数据已沉淀进 README / docs
-
-#### 5.1.1 核心存储与视图
+#### 核心存储与视图
 
 ```python
 import engramdb
@@ -220,9 +247,10 @@ import engramdb
 # Store-I：打开原始行表
 store = engramdb.Store(
     "/path/to/rows",
-    shards=...,
-    rows_per_shard=...,
-    width=...,
+    shards=128,
+    rows_per_shard=2_500_012,
+    width=160,
+    # threads=32,   # 可选；默认 = engramdb_io::batch::DEFAULT_GATHER_THREADS（32）
 )
 data = store.fetch([rowid1, rowid2, rowid3])
 store.close()
@@ -235,31 +263,64 @@ rec = view.read_record(0)
 reader = engramdb.PageReader(page_size=4096)
 pages = reader.read_pages([fd0, fd1], [offset0, offset1])
 
-# 如果是 Linux，还有 io_uring 版
+# Linux 上还有 io_uring 版（注意：容器默认 seccomp 下不可用）
 if hasattr(engramdb, "IoUringPageReader"):
     io_reader = engramdb.IoUringPageReader(page_size=4096)
     pages = io_reader.read_pages([fd0, fd1], [offset0, offset1])
 ```
 
-#### 5.1.2 PLE rowid 与自动发现
+线程安全句柄管理：
 
 ```python
-from engramdb import rowids_for_seq, discover_ple, load_ple_weight_scale, load_ple_multipliers
+from engramdb import StorePool, ThreadLocalStore
 
-# Qwen PLE / Engram 确定性 rowid，返回 [T, 16]
-rows = rowids_for_seq([248044, 1000, 99999, 42])
-print(len(rows), len(rows[0]))
+pool = StorePool("/path/to/rows", shards=128, rows_per_shard=2_500_012, width=160, pool_size=4)
+with pool as store:                       # 借出，用完自动归还
+    data = store.fetch(rowids)
 
-# 从真实 Qwen checkpoint 自动读取元数据、FP8 weight_scale 与 rowid multipliers
-info = discover_ple("/path/to/Qwen3.8-Flash-Next")
-scale = load_ple_weight_scale("/path/to/Qwen3.8-Flash-Next")
-mult = load_ple_multipliers("/path/to/Qwen3.8-Flash-Next")
-
-# 也可直接用 discovery 返回的 info（自动包含 weight_scale 和 multipliers）
-rows = rowids_for_seq([248044, 1000, 99999, 42], info=info)
+tls = ThreadLocalStore(pool)              # 每线程一个句柄（多 worker / 服务线程）
+handle = tls.get()
+try:
+    data = handle.fetch(rowids)
+finally:
+    tls.release_current()
 ```
 
-#### 5.1.3 多表 / Arrow / 最小服务
+#### PLE rowid 与自动发现
+
+```python
+from engramdb import rowids_for_seq, rowids_for_seq_with_history
+from engramdb import discover_ple, load_ple_weight_scale, load_ple_multipliers
+
+rows = rowids_for_seq([248044, 1000, 99999, 42])          # -> [T, 16]
+rows = rowids_for_seq_with_history([eos, eos], [10, 11, 12])
+
+info  = discover_ple("/path/to/Qwen3.8-Flash-Next")        # 自动读元数据 + FP8 scale + multipliers
+scale = load_ple_weight_scale("/path/to/Qwen3.8-Flash-Next")
+mult  = load_ple_multipliers("/path/to/Qwen3.8-Flash-Next")
+rows  = rowids_for_seq([248044, 1000, 99999, 42], info=info)
+```
+
+#### 快速 e_t tensor 读取
+
+训练/预计算不要用 Python 逐行拼 bytes，直接一次 `Store.fetch` + `torch.frombuffer`：
+
+```python
+import torch
+from engramdb import Store, fetch_e_t_tensor
+
+store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
+e_t = fetch_e_t_tensor(
+    store,
+    flat_rowids,                                # [T * 16] 扁平行列表
+    scale=0.00019931793212890625,
+    num_heads=16, head_dim=160,
+    dtype=torch.float8_e4m3fn, out_dtype=torch.float32,
+)
+# e_t.shape == (T, 16, 160)
+```
+
+#### 多表 / Arrow / 最小服务
 
 ```python
 from engramdb import Database
@@ -270,206 +331,117 @@ print(db.list_tables())
 raw = db.fetch("alpha", [1, 3], shards=1, rows_per_shard=100, width=256)
 ```
 
-服务端与客户端见 `python/README.md` 或 `docs/`。
+服务端与客户端详见 `python/README.md`。
 
-可选 Serving 层（按需加载，不阻塞核心导入）：
+#### Serving 层（按需加载，不阻塞核心导入）
 
 ```python
-from engramdb import PleMemory, PleSequence, PleSequenceStore, BundleManifest, TargetReaderRegistry
+from engramdb import PleMemory, PleSequence, PleSequenceStore
+from engramdb import BundleManifest, TargetReaderRegistry
+from engramdb import PleMemoryAdapter, install_target_reader_hook
 
-# 单请求 / continuous batching
-mem = PleMemory(store=store, head_dim=160, num_heads=16)
-seq = mem.new_sequence()
-seq.feed([10, 11])
-states = PleSequenceStore(mem, max_sequences=4096)
+mem   = PleMemory(store=store, head_dim=160, num_heads=16)
+seq   = mem.new_sequence(); seq.feed([10, 11])
+states = PleSequenceStore(mem, max_sequences=4096)     # continuous batching
 states.feed("req-1", [10, 11])
 
-# bundle + 通用 reader 注册协议
-bundle = BundleManifest.load("bundle.json")
-registry = TargetReaderRegistry()
+bundle   = BundleManifest.load("bundle.json")
+registry = TargetReaderRegistry()                      # 通用 reader 注册协议
 
-# 通用 Engine Adapter / target-reader hook
-from engramdb import PleMemoryAdapter, install_target_reader_hook
 adapter = PleMemoryAdapter(mem)
 e_t = adapter(input_ids, seq_ids=[0, 1])
 hook = install_target_reader_hook(model, reader, mode="post")
 ```
 
-线程安全 Store 连接池：
+### 5.2 vLLM / SGLang：不修改源码，启动前 patch
 
 ```python
-from engramdb import StorePool, ThreadLocalStore
-
-pool = StorePool("/path/to/rows", shards=128, rows_per_shard=2_500_012, width=160, pool_size=4)
-
-# 上下文管理：借出一个句柄，使用后自动归还
-with pool as store:
-    data = store.fetch(rowids)
-
-# 每线程一个句柄（适合多 worker / 服务线程）
-tls = ThreadLocalStore(pool)
-handle = tls.get()
-try:
-    data = handle.fetch(rowids)
-finally:
-    tls.release_current()
-```
-
-#### 5.1.4 快速 e_t tensor 读取与预取统计（v0.2.9+，v0.2.10 继续支持）
-
-训练/预计算不要用 Python 逐行 bytes 拼接，直接用一次 `Store.fetch` + `torch.frombuffer`：
-
-```python
-from engramdb import Store, fetch_e_t_tensor
-
-store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
-e_t = fetch_e_t_tensor(
-    store,
-    flat_rowids,          # [T * 16] 扁平行列表
-    scale=0.00019931793212890625,
-    num_heads=16,
-    head_dim=160,
-    dtype=torch.float8_e4m3fn,
-    out_dtype=torch.float32,
-)
-# e_t.shape == (T, 16, 160)
-```
-
-`PleDiskGather.fetch` 也已改为直接返回 `Store.fetch` 的连续缓冲区，不再做 Python per-row 切片/join。
-
-`DiskPleEmbedding` 支持后台预取、超时、共享 executor、错误回退和统计：
-
-```python
-from engramdb.vllm_plugin import DiskPleEmbedding
-
-emb = DiskPleEmbedding(
-    store,
-    num_embeddings=...,
-    embedding_dim=160,
-    dtype=torch.float8_e4m3fn,
-    cache_size=4096,
-    prefetch_timeout=0.5,
-)
-emb.prefetch([rowid1, rowid2, ...])
-out = emb(torch.tensor([...]))
-stats = emb.get_stats()
-wait_dist = emb.get_wait_distribution()   # p50/p90/p99/max
-emb.close()
-```
-
-流式/带 n-gram history 的 rowid 可使用：
-
-```python
-from engramdb import rowids_for_seq_with_history
-rows = rowids_for_seq_with_history([eos, eos], [10, 11, 12])
-```
-
-
-### 5.2 vLLM：不修改源码，启动前 patch PLE 表
-
-```python
+# ---- vLLM ----
 from engramdb import Store
 from engramdb.vllm_plugin import install_vllm_ple
 
 store = Store("/path/to/engram-rows", shards=..., rows_per_shard=..., width=...)
-
 install_vllm_ple(
-    Qwen3_8FlashNextNGramEmbedding,   # 你实际跑的 vLLM 模型类
+    Qwen3_8FlashNextNGramEmbedding,      # 你实际跑的 vLLM 模型类
     store=store,
     attr_name="embed_tokens_per_layer",
     embedding_dim=hidden_size_per_layer_input,
 )
-
 from vllm import LLM
 llm = LLM(model="...", ...)
 ```
 
-### 5.3 SGLang：不修改源码，启动前 patch PLE 表
-
 ```python
-from engramdb.sglang import install_sglang_ple
+# ---- SGLang ----
+from engramdb.sglang import install_sglang_ple, install_sglang_io_uring_reader
 
-install_sglang_ple(
-    Gemma4Model,                     # 你实际跑的 SGLang 模型类
-    store=store,
-    attr_name="embed_tokens_per_layer",
-    embedding_dim=hidden_size_per_layer_input,
-)
+install_sglang_ple(Gemma4Model, store=store,
+                   attr_name="embed_tokens_per_layer",
+                   embedding_dim=hidden_size_per_layer_input)
 
-# 然后正常启动 SGLang
+install_sglang_io_uring_reader()          # 或者只替换低层 reader
 ```
 
-也可以只替换低层 reader：
+面向 serving 的更通用方式是 `PleMemoryAdapter` + `TargetReaderHook`：
 
 ```python
-from engramdb.sglang import install_sglang_io_uring_reader
-install_sglang_io_uring_reader()
+from engramdb import PleMemoryAdapter, install_vllm_target_reader, install_sglang_target_reader
+
+adapter = PleMemoryAdapter(memory)
+hook = install_vllm_target_reader(model, reader, mode="post")     # 或 install_sglang_target_reader
 ```
 
-> v0.2.12 起，面向 serving 的更通用集成方式是：
-> `PleMemoryAdapter` + `TargetReaderHook`，或用 `install_vllm_target_reader` /
-> `install_sglang_target_reader` 薄别名。旧的 `install_vllm_ple` /
-> `install_sglang_ple` 仍用于“只替换 PLE embedding 表”的兼容路径。
->
-> ```python
-> from engramdb import PleMemoryAdapter, install_vllm_target_reader
->
-> adapter = PleMemoryAdapter(memory)
-> hook = install_vllm_target_reader(model, reader, mode="post")
-> ```
+> 旧的 `install_vllm_ple` / `install_sglang_ple` 仍保留，用于「只替换 PLE embedding 表」的兼容路径。
 
-### 5.4 真实 PLE 磁盘 Adapter
+`DiskPleEmbedding` 支持后台预取、超时、共享 executor、错误回退与统计：
 
-不加载完整的大 PLE 表，直接用 EngramDB 磁盘 Store 替换真实 PLE n-gram embedding：
+```python
+from engramdb.vllm_plugin import DiskPleEmbedding
+
+emb = DiskPleEmbedding(store, num_embeddings=..., embedding_dim=160,
+                       dtype=torch.float8_e4m3fn, cache_size=4096, prefetch_timeout=0.5)
+emb.prefetch([rowid1, rowid2, ...])
+out   = emb(torch.tensor([...]))
+stats = emb.get_stats()
+wait  = emb.get_wait_distribution()       # p50/p90/p99/max
+emb.close()
+```
+
+### 5.3 真实 PLE 磁盘 Adapter
+
+不加载完整的大 PLE 表，直接用磁盘 Store 替换真实 PLE n-gram embedding：
 
 ```python
 from engramdb import discover_ple, Store
 from engramdb.ple_adapter import disk_ple_from_discovery, DiskPleNGramEmbedding
 
-info = discover_ple("/path/to/Qwen3.8-Flash-Next")
+info  = discover_ple("/path/to/Qwen3.8-Flash-Next")
 store = Store("/path/to/real-ple-rows", shards=128, rows_per_shard=2_500_012, width=160)
 
-# 自动使用 checkpoint 的 weight_scale 做 FP8 反量化
-ple = disk_ple_from_discovery(store, info)
-
-# 或者显式构造
+ple = disk_ple_from_discovery(store, info)        # 自动用 checkpoint 的 weight_scale 做 FP8 反量化
 ple = DiskPleNGramEmbedding(store, embedding_dim=2560, num_heads=16, scale=info["weight_scale"])
 ```
 
-### 5.5 engram-peft
+### 5.4 engram-peft
 
 ```python
 from engramdb.integrations import install_disk_multi_head_embedding
-
-# 普通 float32 磁盘 MultiHeadEmbedding
-install_disk_multi_head_embedding(store)
-
-# 真实 Qwen PLE FP8 注入：自动从 checkpoint 读取 weight_scale
 from engramdb.integrations import install_real_qwen_ple_embedding
-install_real_qwen_ple_embedding(store, model_dir="/path/to/Qwen3.8-Flash-Next")
+
+install_disk_multi_head_embedding(store)                                     # float32 磁盘 MultiHeadEmbedding
+install_real_qwen_ple_embedding(store, model_dir="/path/to/Qwen3.8-Flash-Next")   # 真实 FP8 注入
 ```
 
-### 5.6 Rust / CLI 安装与使用
+### 5.5 Rust / CLI
 
-crates.io 已发布：
-
-- `engramdb` —— 主库 + CLI
-- `engramdb-core` —— 布局 / 直接寻址 / manifest
-- `engramdb-io` —— 视图 / gather / IO 后端
-- `engramdb-keygen` —— PLE / Engram 确定性 rowid 生成
+crates.io 已发布：`engramdb`（主库 + CLI）、`engramdb-core`（布局/定址/manifest）、
+`engramdb-io`（视图/gather/IO 后端/线程池）、`engramdb-keygen`（确定性 rowid）。
 
 ```bash
-# 作为库依赖
 cargo add engramdb engramdb-core engramdb-io engramdb-keygen
-
-# 安装 CLI
 cargo install engramdb
-
-# 直接跑
 engramdb --help
 ```
-
-Rust 示例：
 
 ```rust
 use engramdb_keygen::PleSpec;
@@ -479,46 +451,54 @@ let rows = spec.rowids_for_seq(&[248044, 1000, 99999, 42]);
 println!("{} rows, first = {:?}", rows.len(), rows[0]);
 ```
 
-CLI 常用命令：
+CLI 子命令：`build` / `index` / `gather` / `verify` / `bench-real` / `warm` / `view` /
+`slot-index` / `prep` / `tables` / `serve` / `check`。
 
 ```bash
-cargo run --release -p engramdb -- tables <root>
-cargo run --release -p engramdb -- check <root>
-cargo run --release -p engramdb -- view build data/real-rows 2000 /tmp/view.bin /tmp/keys.txt --slot 2560
-cargo run --release -p engramdb -- view build data/real-rows 0 /tmp/full.view /tmp/full.keys.txt --keys-stream /tmp/all-keys.txt --slot 2560 --slot-index /tmp/slot-idx
-cargo run --release -p engramdb -- view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
-cargo run --release -p engramdb -- view lat /tmp/view.bin --warm
-cargo run --release -p engramdb -- slot-index build /tmp/keys.txt /tmp/slot-idx --buckets 16384
-cargo run --release -p engramdb -- slot-index build /tmp/keys.txt /tmp/slot-idx-single --buckets 16384 --single-file
-cargo run --release -p engramdb -- slot-index verify /tmp/keys.txt /tmp/slot-idx
-cargo run --release -p engramdb -- slot-index verify /tmp/keys.txt /tmp/slot-idx-single --cache 1024
-cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
+engramdb tables <root>
+engramdb check <root>
+engramdb view build data/real-rows 2000 /tmp/view.bin /tmp/keys.txt --slot 2560
+engramdb view build data/real-rows 0 /tmp/full.view /tmp/full.keys.txt \
+    --keys-stream /tmp/all-keys.txt --slot 2560 --slot-index /tmp/slot-idx
+engramdb view bench data/real-rows /tmp/view.bin --keys /tmp/keys.txt --sub 2000
+engramdb view lat /tmp/view.bin --warm
+engramdb slot-index build  /tmp/keys.txt /tmp/slot-idx        --buckets 16384
+engramdb slot-index build  /tmp/keys.txt /tmp/slot-idx-single --buckets 16384 --single-file
+engramdb slot-index verify /tmp/keys.txt /tmp/slot-idx-single --cache 1024
+engramdb serve <root> --port 8765 [--binary]
 ```
 
 ---
 
-## 6. 本项目当前状态
+## 6. 当前状态
 
 | 项目 | 状态 |
 |---|---|
-| 最新版本 | v0.2.12 |
-| crates.io | `engramdb` / `engramdb-core` / `engramdb-io` / `engramdb-keygen` 已发布 |
-| PyPI | `engramdb-python` 多平台 wheel 已发布 |
-| Python 桥 | **PyO3 为主路径**（wheel 必含）；C ABI ctypes 仅作 C/C++ 外部调用与源码开发回退，不承担 Python 分发 |
+| 版本 | **v0.2.12**（crates.io + PyPI 均已发布） |
+| Python 桥 | **PyO3 是唯一后端** —— 扩展随 wheel 分发，**无纯 Python 回退**，导入失败即抛出带修复指引的 `ImportError`（roadmap §34） |
+| C ABI | `crates/engramdb-cabi`（`libengramdb_c`）—— 面向 **C/C++ 的嵌入面**，Python 包不再加载它。⚠️ 只实现 `PLE_QWEN_V1`，V4.1/DeepSeek 规格未实现（技术债 V55） |
 | PLE rowid | Python / C ABI / PyO3 / Rust 四路径一致，golden 对拍 |
 | 真实 PLE | `discover_ple` + `load_ple_weight_scale` + `DiskPleNGramEmbedding` + FP8 磁盘适配 |
-| CI | cargo fmt / clippy / test + Python wheel smoke + C ABI smoke + 基线门禁；v0.2.12 全绿 |
-| SGLang 适配 | 低层 reader + 模型类 patch hook |
-| vLLM 适配 | `PleDiskGather` + 模型类 patch hook |
-| 快速 e_t 读取 | `fetch_e_t_tensor` / `PleDiskGather.fetch_tensor`，直接 `Store.fetch` + torch |
-| 语义索引 | `SlotIndex`（内存/可选 numpy）与 `DiskSlotIndex`（磁盘分桶；v1/v2 多文件，v3 单文件 + offset table）；`view build --slot-index` / `slot-index build|verify` 原生生成/校验 |
-| Serving 层 | `PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry`，按需导入 |
-| Engine Adapter | `PleMemoryAdapter` / `TargetReaderHook` / `install_target_reader_hook`，vLLM/SGLang 注入别名 |
-| 真表验证 | `real_arrow_smoke.py` + `real_perf_gate.py` + release gate 集成 |
-| Prefetch 生产化 | 错误回退、超时、共享 executor、wait 分布统计 |
+| 语义索引 | `SlotIndex` + `DiskSlotIndex`（v1/v2 多文件，v3 单文件 + offset table），原生 CLI 构建/校验 |
+| Serving 层 | `PleMemory` / `PleSequence` / `PleSequenceStore` / `BundleManifest` / `TargetReaderRegistry` / `PleMemoryAdapter` |
+| 引擎接入 | vLLM `PleDiskGather` + SGLang 低层 reader，均为类级 patch hook，不改上游源码 |
 | 多表 / 服务 | `Database` + JSON / 二进制 Arrow IPC 最小服务 |
-| 连接池 | `StorePool` / `ThreadLocalStore` 线程安全句柄管理 |
-| 性能契约 | 存储面已闭环，端到端待实机 |
+| CI | `cargo fmt` / `clippy -D warnings` / `test --workspace`（**32 passed**）+ Python wheel smoke + C ABI smoke + 基线门禁 |
+
+### 6.1 验收目标
+
+| 指标 | 目标 | 状态 |
+|---|---|---|
+| 视图字节放大 | ≤2× | ✅ **1.00×** |
+| 视图路径吞吐 | ≥4M 等效行/s | ✅ 4.50M（200K 热态，8 线程） |
+| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **条件成立**：Store-I 需 batch ≥16 且 32 线程（V4.1 282 μs，56%）；**Store-P 任意 batch 都成立**（1.5–10%）。见 §3.2 |
+| CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
+| CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
+| GPU 端 vLLM/SGLang A/B 差距 | ≤5% | ⏳ 待硬件 |
+| 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
+
+> 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
+> 在此之前，每 token 开销门禁是**可本地复现的替代证据**：它不测模型端到端，但 5% 预算在算术上由它保证。
 
 ---
 
@@ -528,70 +508,57 @@ cargo run --release -p engramdb -- serve <root> --port 8765 [--binary]
 EngramDB/
 ├─ crates/
 │  ├─ engramdb-core/      布局、badge、直接寻址、频率索引、manifest
-│  ├─ engramdb-io/        View/ IO backend / 批量 gather / 预取计划
-│  ├─ engramdb-keygen/    DeepSeek / Qwen PLE hash 与 rowid 生成
-│  ├─ engramdb/           主 CLI
-│  ├─ engramdb-bench/     探针
-│  ├─ engramdb-python/    C ABI ctypes fallback
-│  └─ engramdb-pyo3/      PyO3 原生扩展
-├─ python/engramdb/       Python 包：Store/View/PageReader/PLE discovery/adapter/服务/引擎适配
-├─ docs/                  设计、路线图、session-log、接入调研
-├─ scripts/              构建、发布、探针、门禁、C ABI smoke
-└─ probes/               实测数据与复现说明
+│  ├─ engramdb-io/        Store-I/Store-P 读路径、批量 gather、IO 后端、常驻线程池
+│  ├─ engramdb-keygen/    DeepSeek Engram / Qwen PLE 确定性 rowid
+│  ├─ engramdb/           主 CLI + 最小服务
+│  ├─ engramdb-bench/     探针与门禁（nvme_gate / view_gate / uring_gate / call_cost）
+│  ├─ engramdb-cabi/      C ABI（C/C++ 嵌入面；**不是** Python 后端）
+│  └─ engramdb-pyo3/      PyO3 原生扩展（Python 唯一后端）
+├─ python/engramdb/       Python 包：Store/View/PageReader/PLE discovery/adapter/serving/引擎适配
+├─ docs/                  设计、路线图、交接、规格、许可
+├─ scripts/               构建、发布、探针、门禁
+└─ probes/                实测数据（JSON/CSV/txt）
 ```
 
 ---
 
 ## 8. 文档导航
 
-- `python/README.md` —— Python 包安装、引擎适配、多表 / Arrow / 服务客户端
-- `docs/handoff.md` —— 空白上下文 agent 交接，最新状态/资产/环境/待办
-- `docs/design.md` —— 技术架构、负载、性能基线、风险
-- `docs/roadmap.md` —— 终极目标、技术债、借鉴矩阵、阶段计划
-- `docs/engram-specs.md` —— Engram/PLE 结构规格与证据链
-- `docs/engine-integration.md` —— vLLM / SGLang / llama.cpp 接入调研
-- `docs/upstream-patches.md` —— SGLang/vLLM 不改源码的接入补丁草图
-- `docs/session-log.md` —— 分 session 复盘
-- `docs/session-summary.md` —— 本 session 综合整理（尝试/坑/完成/问题/计划）
-- `docs/licenses.md` —— 许可与合规边界
-- `scripts/gate.sh` —— 本地门禁
-- `scripts/linux_verify.sh` —— Linux/WSL/树莓派 wheel 实机冒烟
-- `scripts/vllm_ple_smoke.py` —— 真实 vLLM 模型类 `install_vllm_ple` 验证
-- `scripts/sglang_ple_smoke.py` —— 真实 SGLang 模型类 `install_sglang_ple` 验证
-- `scripts/vllm_embedding_ab.py` —— vLLM 真实类内存/磁盘 embedding A/B
-- `scripts/wsl_cold_view_bench.py` —— 冷缓存顺序/随机视图 A/B
-- `scripts/service_smoke.py` —— 多表 + Arrow IPC + JSON/二进制最小服务 smoke
-- `scripts/cpu_tiny_decode_ab.py` —— CPU 小模型 memory / disk raw / disk LRU 端到端 decode A/B
-- `scripts/qwen35_cpu_decode_ab.py` —— 真实 Qwen3.5 CPU decode A/B
-- `scripts/real_ple_bit_exact.py` —— 真实 PLE 128-shard Store 位级验证
-- `scripts/ple_layer_bit_exact.py` —— 真实 PLE 层前向 bit-exact
-- `scripts/sibling_contract_smoke.py` —— qwen35-ple / engram-peft 契约冒烟
-- `scripts/c_abi_smoke.py` —— 纯 stdlib C ABI / golden rowids 对拍（CI）
-- `scripts/bench_disk_slot_index.py` —— DiskSlotIndex 全表构建/校验/查找基准，支持 `--single-file`
-- `scripts/gen_view_keys.py` —— 精确复现 `view build` 的 Store-P keys 流
-- `scripts/bench_serving_ab.py` —— Store / PleMemory / PleMemoryAdapter serving A/B
-- `scripts/real_arrow_smoke.py` —— 真表 Store-I → Arrow IPC 真实验证
-- `scripts/real_perf_gate.py` —— 真表 serving 性能阈值门禁
+**先读这两个：**
+
+- `docs/handoff.md` —— 空白上下文 agent 的交接：最新状态 / 资产 / 环境 / 待办
+- `docs/design.md` —— 技术架构、负载模型、预算推导（§7.3）
+
+**按需查：**
+
+| 文档 | 内容 |
+|---|---|
+| `docs/roadmap.md` | 终极目标、技术债、借鉴矩阵、阶段计划、**每轮实测的完整记录与撤回声明** |
+| `docs/engram-specs.md` | Engram / PLE 结构规格与证据链 |
+| `docs/v41-engram-analysis.md` | DeepSeek-V4.1-Flash Engram 技术报告解读与规格闭合 |
+| `docs/engine-integration.md` | vLLM / SGLang / llama.cpp 接入调研 |
+| `docs/upstream-patches.md` | 不改上游源码的接入补丁草图 |
+| `docs/licenses.md` | 许可与合规边界 |
+| `python/README.md` | Python 包安装、引擎适配、多表 / Arrow / 服务客户端 |
+
+**自己跑一遍：**
+
+```bash
+bash scripts/gate.sh          # cargo fmt / clippy -D warnings / test + 基线门禁
+bash scripts/linux_verify.sh  # Linux 实机 wheel 冒烟
+bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving 阈值）
+```
 
 ---
 
-## 9. 路线图一句话
+## 9. 一句话路线图
 
-先证明 **存储面**（已基本完成），再证明 **端到端**（CPU/GPU 小模型 + PLE 的真实 tok/s），
+先证 **存储面**（已基本完成），再证 **端到端**（CPU/GPU 小模型 + PLE 的真实 tok/s），
 最后把 **服务化 / 多表 / Arrow IPC** 与 **真实上游引擎接入** 做成稳定产品面。
 
-当前最重要缺口：
+当前三个缺口，按优先级：
 
-1. 完成真实 vLLM/SGLang serving 中的 PLE 端到端 tok/s 验收（功能 hook 已在真实模型类上验证）；
-2. 完成顺序化视图的大表冷态复测与多线程冷读调度（核心收益已验证：WSL 冷顺序 786MB/s vs 冷随机 86MB/s，约 9.1×）；
-3. 服务化与多表形态。
-
-> 已闭环：
-> - 树莓派 aarch64 + WSL2 Ubuntu x86_64 均通过 wheel 完整冒烟。
-> - vLLM 0.28.0 与 SGLang 0.5.9 的真实 `Qwen3ForCausalLM` 均通过 `install_vllm_ple` / `install_sglang_ple` 类级 patch 及 `DiskPleEmbedding` 前向验证（Session 9）。
-> - 访问序视图 `view build --keys` + 校验 + 冷盘顺序/随机 A/B 已在 WSL 跑通（Session 10/11），冷顺序 786MB/s vs 冷随机 86MB/s。
-> - vLLM 真实模型类 embedding A/B 已测（Session 12/13）：raw disk 235-268μs/call，加入 LRU 后降到 14-23μs/call。
-> - 多表 `Database`、Arrow helpers、JSON + 二进制 Arrow IPC 服务（含 `fetch_raw` / `fetch_arrow`）已跑通（Session 14/15）。
-> - 真实 Qwen PLE 数据面闭环（Session 20-22）：128-shard Store bit-exact、真实 PLE 层 forward bit-exact、C ABI rowids、`DiskMultiHeadEmbedding` FP8 反量化。
-> - v0.2.7 CI 失败已修复，Phase A EngramDB 侧补齐（Session 23）：自动读取 `weight_scale`、Python `rowids_for_seq`、PyO3 native rowids、C ABI smoke 进 CI；随后发布 v0.2.8。
-> - v0.2.12 已发布，S3/B2/S4 落地：Serving 层（PleMemory/PleSequence/Store/Bundle/TargetReader/Engine Adapter）、DiskSlotIndex v3 单文件、真表 Arrow IPC + serving 阈值门禁。
+1. **V4.1 支持落地**：keygen v2（4-gram、压缩 token map、DEAD mask）、存储参数化、
+   V4.1 几何下的 Store-P 折叠 —— 输入已冻结，纯本地可做；
+2. **顺序化视图的大表冷态复测**（930 MB/s 目前是 warm 顺序流）与按访问序重排；
+3. **端到端真机验收**（vLLM/SGLang 的 PLE tok/s）—— 待硬件。

@@ -10,7 +10,7 @@
 |---|---|---|
 | Python wheel | `engramdb-python`（PyO3 为发布主路径）+ `engramdb.integrations` / `engramdb.adapter` | engram-peft、vLLM Python 插件 |
 | Rust crate | `engramdb-io` / `engramdb-core` | SGLang Rust reader、自研后端 |
-| C ABI | `crates/engramdb-python` | llama.cpp / C/C++ 插件、跨语言绑定（Python 分发不依赖它） |
+| C ABI | `crates/engramdb-cabi` | llama.cpp / C/C++ 插件、跨语言绑定（Python 分发不依赖它） |
 | 磁盘格式 | Store-I 分片、Store-P 视图、manifest | 任何能按文件格式读取的引擎 |
 
 ## 2. vLLM
