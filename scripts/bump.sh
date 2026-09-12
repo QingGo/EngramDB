@@ -32,22 +32,35 @@ fi
 
 python3 - "$OLD" "$V" <<'PY'
 import sys
+from pathlib import Path
 old, new = sys.argv[1], sys.argv[2]
 crates = [
     "engramdb-keygen", "engramdb-core", "engramdb-io", "engramdb",
-    "engramdb-bench", "engramdb-python", "engramdb-pyo3",
+    "engramdb-bench", "engramdb-cabi", "engramdb-pyo3",
 ]
 paths = ["Cargo.toml"] + [f"crates/{c}/Cargo.toml" for c in crates] + [
     "python/pyproject.toml",
     "python/engramdb/__init__.py",
 ]
+# 先整体校验路径存在：crate 改名时这里漏改过一次，脚本以一条
+# FileNotFoundError traceback 崩掉，很难看出是"名单过期"而不是真的文件丢失。
+missing = [p for p in paths if not Path(p).is_file()]
+if missing:
+    sys.exit(
+        "bump.sh: 版本文件清单里有不存在的路径（多半是 crate 改名后忘了同步本脚本）：\n  "
+        + "\n  ".join(missing)
+    )
+touched = 0
 for p in paths:
-    s = open(p).read()
+    s = Path(p).read_text()
     s2 = s.replace(f'version = "{old}"', f'version = "{new}"')
     s2 = s2.replace(f'__version__ = "{old}"', f'__version__ = "{new}"')
     if s2 != s:
-        open(p, "w").write(s2)
+        Path(p).write_text(s2)
+        touched += 1
         print(f"  {p}: {old} -> {new}")
+if touched == 0:
+    sys.exit(f"bump.sh: 没有任何文件包含版本 {old} —— 拒绝打 tag")
 PY
 
 git add -A

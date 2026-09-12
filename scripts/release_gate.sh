@@ -44,6 +44,18 @@ echo
 echo "== [release-gate] cargo test --workspace =="
 cargo test --workspace
 
+# ⚠️ 构建原生扩展必须排在**任何 `import engramdb` 之前**。
+# 曾经顺序是反的（先跑 real_arrow_smoke / real_perf_gate，后 build_pyo3），
+# 于是本门禁**只在已经构建过的脏树上能过**、在干净检出上必然失败 ——
+# 而"干净检出能不能过"正是发布门禁唯一该回答的问题。
+echo
+echo "== [release-gate] build PyO3 native extension =="
+bash scripts/build_pyo3.sh
+
+echo
+echo "== [release-gate] build C ABI cdylib =="
+cargo build --release -p engramdb-cabi
+
 if [[ "${SKIP_BENCH:-0}" != "1" && -d data/real-rows && -f probes/view-keys-20k.txt ]]; then
   echo
   echo "== [release-gate] bench gate (real rows available) =="
@@ -66,14 +78,6 @@ if [[ -d data/real-rows ]]; then
   echo "== [release-gate] real serving perf thresholds =="
   PYTHONPATH=python "$PYTHON" scripts/real_perf_gate.py
 fi
-
-echo
-echo "== [release-gate] build PyO3 native extension =="
-bash scripts/build_pyo3.sh
-
-echo
-echo "== [release-gate] build C ABI cdylib =="
-cargo build --release -p engramdb-python
 
 echo
 echo "== [release-gate] python wheel smoke =="
