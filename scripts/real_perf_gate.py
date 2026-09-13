@@ -42,6 +42,20 @@ MIN_STORE_FETCH_RPS = 5_000.0
 # Phase 1 target from docs/roadmap.md section 29.4: adapter <= 50 us/token.
 MIN_ADAPTER_RPS = 20_000.0
 # Derived 5% budget (docs/roadmap.md section 29.1.1).
+#
+# NOTE (Session 43, roadmap section 36.1): this 500 us figure is a DERIVATION,
+# not a measurement -- it assumes a 100 tok/s denominator (10 ms/token) that has
+# never been measured.  CUDA-graph mode was measured in Session 42 to change
+# that denominator by 7.3-7.8x, which is larger than every storage optimisation
+# we have made.  The judge has therefore been restated as a schedulability
+# condition, ``t_read <= tau(L_ple)``, which collapses to
+# ``L* = ceil(t_read / per_layer_time)`` -- see roadmap section 36.2 and
+# ``scripts/lead_layer_budget.py``.
+#
+# This threshold is kept as-is because it is still a valid *lower bound* on the
+# engine-independent work, and moving a CI gate is a deliberate change that
+# should not ride along with a re-framing.  Do not read a PASS here as
+# "within 5% of a decode step".
 MAX_US_PER_TOKEN = 500.0
 
 

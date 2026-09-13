@@ -510,7 +510,7 @@ engramdb serve <root> --port 8765 [--binary]
 |---|---|---|
 | 视图字节放大 | ≤2× | ✅ **1.00×** |
 | 视图路径吞吐 | ≥4M 等效行/s | ✅ 4.50M（200K 热态，8 线程） |
-| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **必须连分母一起说**：500 µs 是「5% of 100 tok/s」的旧表述。**实测冷读 16 行 × 160 B = 195.9 µs/token**——占 eager 单步 **0.92%**（达标），占 **CUDA graph 单步 6.7–8.6%**（**超标**）。见 §6.1.1 与 `probes/engine_floor_session42.md` |
+| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **这个阈值本身是「带假设的推导」，不是测量**：它假设 100 tok/s 的分母。**实测冷读 195.9 µs/token**（16 行 × 160 B）——占 eager 单步 **0.92%**，占 **CUDA graph 单步 6.7–8.6%**（**超标**）——CUDA graph 把分母改变了 **7.3–7.8×**，比任何存储优化都大。**裁判已改**：见 §9 与 roadmap §36 —— `L* = ⌈t_read ÷ 单层时间⌉`，Qwen **差一层**、V4.1 **余量 3.5×** |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
 | **rowid 与引擎一致** | 与引擎自己的 PLE 代码**逐位相同** | ✅ **IDENTICAL** —— 37 用例 / 18,048 个 rowid，`probes/ple_rowid_exactness_session42.md` |
@@ -657,7 +657,10 @@ EngramDB/
 
 | 文档 | 内容 |
 |---|---|
-| `docs/roadmap.md` | 终极目标、技术债、借鉴矩阵、阶段计划、**每轮实测的完整记录与撤回声明** |
+| `docs/roadmap.md` | 终极目标、技术债、借鉴矩阵、阶段计划、**每轮实测的完整记录与撤回声明**。**§36 是当前的裁判与优先级**（`L* = ⌈t_read ÷ 单层时间⌉`） |
+| `docs/measurement-protocol.md` | **测量协议 checklist** —— 读任何数字之前先读它。含编译 / CUDA graph 类实验的 5 条 |
+| `docs/cuda-graph-injection.md` | **把宿主侧磁盘读放进 CUDA graph 化 decode 步**：两引擎的真实开关、API 契约、重叠语义、三个会伪装成「跑通」的陷阱 |
+| `docs/prefetch-lead-time.md` | `τ(L)` 提前量模型 —— §36.2 的 `L*` 规则由它化简而来 |
 | `docs/engram-specs.md` | Engram / PLE 结构规格与证据链 |
 | `docs/v41-engram-analysis.md` | DeepSeek-V4.1-Flash Engram 技术报告解读与规格闭合 |
 | `docs/engine-integration.md` | vLLM / SGLang / llama.cpp 接入调研 |
@@ -680,9 +683,27 @@ bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving �
 先证 **存储面**（已基本完成），再证 **端到端**（CPU/GPU 小模型 + PLE 的真实 tok/s），
 最后把 **服务化 / 多表 / Arrow IPC** 与 **真实上游引擎接入** 做成稳定产品面。
 
-当前三个缺口，按优先级：
+**裁判已经不是「读 ≤ 500 µs」，而是「读 ≤ τ(L_ple)」。** 化简后是一条没有多余参数的规则：
 
-1. **V4.1 支持落地**：keygen v2（4-gram、压缩 token map、DEAD mask）、存储参数化、
-   V4.1 几何下的 Store-P 折叠 —— 输入已冻结，纯本地可做；
-2. **顺序化视图的大表冷态复测**（930 MB/s 目前是 warm 顺序流）与按访问序重排；
-3. **端到端真机验收**（vLLM/SGLang 的 PLE tok/s）—— 待硬件。
+> ### `L* = ⌈ t_read ÷ 单层前向时间 ⌉`
+>
+> **所需层号 = 读耗时 ÷ 单层 GPU 时间。**（推导与复跑见 roadmap §36.2、
+> `scripts/lead_layer_budget.py`）
+
+它当场给出三个判决：
+
+| 几何 | 需要 | 实际 | 结论 |
+|---|---|---|---|
+| Qwen PLE（24 层，第 2 层） | `L* = 3` | 2 | ❌ **差一层** —— 正是实测 +6.7 µs 超出的原因 |
+| V4.1 Engram（48 层，第 14 层） | `L* = 4` | 14 | ✅ **余量 3.5×** |
+| V4.1 **无线程池** | `L* = 26` | 14 | ❌ **装不下** ⇒ **并发度是可行性的前提，不是吞吐优化** |
+
+当前优先级（细节见 roadmap §36.5）：
+
+1. **锚定分母** —— 500 µs 的反推分母（100 tok/s）**从未被测量**；
+   CUDA graph 实测把它改变了 7.3–7.8×，**比任何存储优化都大**；
+2. **闭合子条件 4**（CUDA graph 路径）—— 关键路径上唯一一项。
+   **不是「存储不够快」（早已 11–31× 富余），而是「还没证明这个读不在关键路径上」**。
+   配方与探针已备：`docs/cuda-graph-injection.md`、`scripts/sglang_bcg_probe.py`；
+3. **把 `L*` 落到本机** —— 找出让净增落到噪声地板以下的层位置；
+4. 之后才谈广度（V4.1 落地、多表、Arrow IPC、engram-peft、C ABI 补齐）—— **建议冻结**。
