@@ -69,6 +69,12 @@ def run_arm(args) -> dict:
     os.environ["ENGRAMDB_SC4_ROWS"] = str(args.rows)
     os.environ["ENGRAMDB_SC4_STORE"] = args.store
     os.environ["ENGRAMDB_SC4_COUNTERS"] = counters_path
+    # Controlled host work inside the break.  Sweeping this measures tau(L) --
+    # how much host time one layer's worth of GPU compute can hide -- instead of
+    # inferring it from step_time / num_layers, which charges every fixed
+    # per-step cost to the layers and therefore understates the window.
+    os.environ["ENGRAMDB_SC4_DELAY_US"] = str(args.delay_us)
+    os.environ["ENGRAMDB_SC4_READER"] = args.reader
 
     import sglang
 
@@ -85,7 +91,9 @@ def run_arm(args) -> dict:
     )
     devnull = open(os.devnull, "w")
     old_stdout = sys.stdout
-    print(f"[{arm}] sglang {sglang.__version__} launching engine ...", flush=True)
+    print(f"[{arm}] sglang {sglang.__version__} reader={args.reader} "
+          f"delay_us={args.delay_us} "
+          f"launching engine ...", flush=True)
     t0 = time.perf_counter()
     try:
         sys.stdout = devnull                      # engine start is very chatty
@@ -194,6 +202,12 @@ def main() -> int:
                     choices=("disabled", "full", "breakable", "tc_piecewise"),
                     help="decode is always breakable; prefill defaults to eager"
                          " so the engine starts fast and decode counts stay clean")
+    ap.add_argument("--reader", default="native", choices=("native", "python"),
+                    help="native = engramdb.Store.fetch (~277us/16 rows) vs the "
+                         "hand-rolled Python pread pool (~555us).  Default native "
+                         "because the Python path was charging 2x the real cost")
+    ap.add_argument("--delay-us", type=float, default=0.0,
+                    help="spin this long inside the break; sweep it to measure tau(L)")
     ap.add_argument("--keep-warm", action="store_true")
     ap.add_argument("--tmp", default="/tmp")
     ap.add_argument("--json-out", default=None)
@@ -210,6 +224,8 @@ def main() -> int:
                    "--max-tokens", str(args.max_tokens), "--batch", str(args.batch),
                    "--mem-fraction-static", str(args.mem_fraction_static),
                    "--prefill-backend", args.prefill_backend,
+                   "--delay-us", str(args.delay_us),
+                   "--reader", args.reader,
                    "--tmp", args.tmp]
             if args.keep_warm:
                 cmd.append("--keep-warm")
@@ -241,6 +257,10 @@ def main() -> int:
               f"backend_replay={c['backend_replay_calls']} "
               f"bcg_replay={c['bcg_replay_calls']} "
               f"rows={c['rows_read']}")
+        ph = c.get("phase") or {}
+        if ph:
+            print(f"[{args.arm}] phases(median us) = " + "  ".join(
+                f"{k}={v['median']}" for k, v in sorted(ph.items())))
         print(f"[{args.arm}] read_us_median={c.get('read_us_median')} "
               f"break_us_median={c.get('break_us_median')} "
               f"process={(c.get('process') or '')[:110]}")

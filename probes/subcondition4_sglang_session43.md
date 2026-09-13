@@ -6,6 +6,26 @@
 > `probes/sc4_sglang_session43.json`、`probes/sc4_sglang_d2h_isolation.json`。
 > vLLM 那边的 8 次失败留档仍在 `probes/subcondition4_cuda_graph_session42.md`。
 
+> ## ⚠️ Session 44 更正（先读）
+>
+> **本文件 §6 的成本归因已被推翻。** §6 用**臂间差值**分解成本，从 ±0.2 ms 的噪声里
+> 读出了「磁盘 0.68 / D2H 0.39 / rowid 0.24」，并据此排了 stage 2 的顺序。那是错的。
+>
+> 建起**成本分解仪器**之后（`probes/sc4_phase_decomposition_session44.md`）：
+>
+> | Session 43 说 | 实测 |
+> |---|---|
+> | `read_us` ≈ 445–468 µs（当存储代价用） | 那是**手写 Python reader** 的账；原生 `Store.fetch` 在引擎内是 **101 µs** |
+> | D2H ≈ 387 µs | 差值的产物。真实值：闲 **11.5 µs** / 忙 **2428 µs** —— 它等的是整段在途流水线 |
+> | rowid ≈ 240 µs | 差值的产物。真实值：**~50 µs 固定成本**，128 token 才 68.6 µs |
+> | 「持久线程池 + 跨 token 批量化」排 stage 2 第一 | **实测推翻**：Python 池在 **3.3×** 饱和，批量化无用。真正的解法是**换实现** |
+> | Qwen PLE 差两层 | **被 Python reader 的产物驱动的判决**。`t_read=101 µs ≪ τ(1)≈325 µs` ⇒ **装得下** |
+>
+> **§1–§5 的机制证据（子条件 4 闭合）不受影响** —— 那部分测的是「读是否在 replay 期间执行」，
+> 与 reader 快慢无关。本文件保留，因为**失败留档是它的主要价值**。
+>
+> 教训（已写进 `§36.5`）：**差值法不能用来归因。**
+
 ## 0. 结论先说
 
 **子条件 4 闭合。** 上一轮唯一未达成的那一项 —— 「`enforce_eager=False` 时 op 在 replay 中执行」

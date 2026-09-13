@@ -1,0 +1,56 @@
+{
+  "store": "/root/autodl-tmp/qwen35-ple/qwen38-rows",
+  "cold": true,
+  "rows": 30,
+  "readers": [
+    {
+      "name": "python_pread_pool1",
+      "n": 30,
+      "min": 1728.0,
+      "median": 1800.1,
+      "p90": 1830.0
+    },
+    {
+      "name": "python_pread_pool4",
+      "n": 30,
+      "min": 554.6,
+      "median": 629.4,
+      "p90": 659.8
+    },
+    {
+      "name": "python_pread_pool16",
+      "n": 30,
+      "min": 516.5,
+      "median": 554.6,
+      "p90": 588.0
+    },
+    {
+      "name": "python_pread_pool64",
+      "n": 30,
+      "min": 509.6,
+      "median": 581.7,
+      "p90": 627.6
+    },
+    {
+      "name": "native_store_fetch16",
+      "n": 30,
+      "min": 181.9,
+      "median": 276.7,
+      "p90": 300.2
+    },
+    {
+      "name": "native_store_fetch_one16",
+      "n": 30,
+      "min": 1995.2,
+      "median": 2116.2,
+      "p90": 2182.1
+    },
+    {
+      "name": "native_storepool4_fetch16",
+      "n": 30,
+      "min": 2336.0,
+      "median": 2454.0,
+      "p90": 2551.8
+    }
+  ]
+}

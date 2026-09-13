@@ -566,7 +566,7 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 | 2 | **完整分片** | ✅ **128/128，47.68 GiB**。`padded_vocab == 磁盘行数 == 320,001,536` ⇒ rowid 取模是**空操作**（已验，见 `probes/ple_rowid_exactness_session42.md` §F） |
 | 3 | **冷态**且自证驱逐生效 | ✅ **每次迭代自证**：全表冷态跑 10 次抽检全部 `verdict=cold`，ratio **58.3–115.9×**，marginal 83.2–103.5 µs/read（`probes/serve_ple_ab_fulltable_session42.md`） |
 | 4 | **CUDA graph** 路径，或显式标注 eager | ✅ **已闭合（session 43，SGLang 侧）**。断点在 **replay 期间执行**已证：`break_calls_in_replay = 552/512`，同一次运行 `backend_replay = 553/512`（图**真的**被 replay，不是静默退回 eager —— 这正是 vLLM 那条路的假通过陷阱），capture/replay 精确分账 `578 = 552 + 26`，且功能性自证成立（`break`/`read` 两臂输出**互异于** baseline，三个互异 sha1）。**为什么换引擎**：vLLM 的 `FULL_AND_PIECEWISE` 让 decode 取 `FULL`，`splitting_ops` 切分点被绕过，replay 不跑任何 Python；SGLang 的 breakable graph 在**段间**执行真 host Python（`eager_on_graph` + `BreakableCUDAGraph.replay`），I/O 就放在那里。**最硬的旁证**：`forward_calls = 26` 而 `backend_replay = 553` —— replay 时模型的 Python `forward` 一次都没被调用，**唯一会跑的 Python 就是断点函数**。见 `probes/subcondition4_sglang_session43.md`、roadmap §35.1d/§36.8、`docs/cuda-graph-injection.md` |
-| 4′ | graph 模式下的**存储代价**数字 | ✅ **首次产出单次测量**：`none 418.9 / break 393.5 / read 264.1 tok/s` ⇒ `read − break = +1.245 ms`、`read − none = +1.399 ms`。⚠️ **但这不是存储代价**：它是**首次尝试、完全串行**的代价，且是很松的上界 —— 本轮 `read_us_median = 464.6 µs` 而调优过的冷读是 **195.9 µs**（差在每 token 一次线程池唤醒、无跨 token 批量化、无 pinned 暂存）；`break` 臂**完全没有磁盘**也有 `break_us_median = 504.5 µs`。正面证据：`break` 臂 504 µs host 工作只让整步慢 **154 µs**（≈70% 被前段 GPU kernel 掩盖）⇒ **重叠机制确实在工作，真正打断它的是 D2H 同步**。stage 2 的目标因此被精确定量。**已做判决实验**（`read_static` 臂：行号预置、断点内零 D2H）：`readstatic − break = +0.675 ms`（磁盘）、`read − read_static = +0.629 ms`（D2H + rowid）⇒ **1.30 ms 约一半一半，磁盘与 D2H 都得治**，且磁盘**完全暴露**（`read_us_median` 461 µs 却让整步慢 675 µs）。**但拆分项在 ±0.2 ms 内随噪声乱跳，只有总量稳定**（`read − break` 三次复跑 1.245/1.304/1.297），所以「一半一半」不是结论。站得住的只有直测值：**磁盘读 445–468 µs / host 侧残余 ≈ 0.85 ms**，且磁盘是 **100% 暴露**的（`read_static − break ≈ read_us_median`）。另：`chunksize` 并行度假设已被实测推翻（461→445 µs，只降 3.5%）。 |
+| 4′ | graph 模式下的**存储代价**数字 | ✅ **首次产出单次测量**：`none 418.9 / break 393.5 / read 264.1 tok/s` ⇒ `read − break = +1.245 ms`、`read − none = +1.399 ms`。⚠️ **但这不是存储代价**：它是**首次尝试、完全串行**的代价，且是很松的上界 —— 本轮 `read_us_median = 464.6 µs` 而调优过的冷读是 **195.9 µs**（差在每 token 一次线程池唤醒、无跨 token 批量化、无 pinned 暂存）；`break` 臂**完全没有磁盘**也有 `break_us_median = 504.5 µs`。正面证据：`break` 臂 504 µs host 工作只让整步慢 **154 µs**（≈70% 被前段 GPU kernel 掩盖）⇒ **重叠机制确实在工作，真正打断它的是 D2H 同步**。stage 2 的目标因此被精确定量。**已做判决实验**（`read_static` 臂：行号预置、断点内零 D2H）：`readstatic − break = +0.675 ms`（磁盘）、`read − read_static = +0.629 ms`（D2H + rowid）⇒ **1.30 ms 约一半一半，磁盘与 D2H 都得治**，且磁盘**完全暴露**（`read_us_median` 461 µs 却让整步慢 675 µs）。**⚠️ 该行的归因已被 Session 44 推翻**：445–468 µs 是**手写 Python reader** 的账，原生 `Store.fetch` 在引擎内是 **101–108 µs**；`read − break` 随之从 1.30 ms 降到 **0.261 ms**，`read − none` 从 58.6% 降到 **17.9%**，且 `read_static − break` 变成 **−0.127 ms**（无 D2H 时磁盘读被完整藏住）。见 `probes/sc4_phase_decomposition_session44.md` |
 | 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ counterbalance 已做（首尾各一段 `none`），因此**测出了漂移 +2.6%**；`engram-i` 臂内散布 45.3–47.3 仍**跨越** `none` 的 46.4–47.1 ⇒ 它的 tok/s 栏判 VOID。**但 `mmap` 冷态 −17.7% 高于地板、可引用。** 直接测量栏才是主证据：**195.9 µs/token（16 行 = 2,560 B，冷 NVMe）= 500 µs 预算的 39%** |
 | 6 | **多引擎**（vLLM + SGLang） | ⚠️ **PLE 语义侧仍不可做，但机制侧已在 SGLang 上跑通**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。**SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容**（所以 session 43 的 SGLang 注入只能挂 decoder layer、用合成投影）。引擎地板与 **graph 模式下的磁盘臂**现在两件事都在 SGLang 上有了 |
 
@@ -665,6 +665,7 @@ EngramDB/
 | `docs/archive/` | 历史轮次长文摘要（含失败留档）。按 §29.4 Phase 4 归档；仍然有效的结论已提升进 roadmap 活账或本节 |
 | `docs/measurement-protocol.md` | **测量协议 checklist** —— 读任何数字之前先读它。含编译 / CUDA graph 类实验的 5 条 |
 | `docs/cuda-graph-injection.md` | **把宿主侧磁盘读放进 CUDA graph 化 decode 步**：两引擎的真实开关、API 契约、重叠语义、三个会伪装成「跑通」的陷阱 |
+| `probes/sc4_phase_decomposition_session44.md` | **相位分解**：把「存储代价」拆回真正的归属（reader / D2H / rowid / 窗口 τ(L)），并推翻 Session 43 的差值归因 |
 | `docs/prefetch-lead-time.md` | `τ(L)` 提前量模型 —— §36.2 的 `L*` 规则由它化简而来 |
 | `docs/engram-specs.md` | Engram / PLE 结构规格与证据链 |
 | `docs/v41-engram-analysis.md` | DeepSeek-V4.1-Flash Engram 技术报告解读与规格闭合 |
@@ -699,12 +700,22 @@ bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving �
 
 | 几何 | 需要 | 实际 | 结论 |
 |---|---|---|---|
-| Qwen PLE（**48 层，0-based 第 1 层**） | `L* = 3` | 1 | ❌ **差两层** —— 真实几何比初稿更紧 |
+| Qwen PLE（**48 层，0-based 第 1 层**） | `L* = 2` | 1 | ✅ **装得下**（Session 44 实测改写，见下） |
 | V4.1 Engram（48 层，第 14 层） | `L* = 4` | 14 | ✅ **余量 3.5×** |
 | V4.1 **无线程池** | `L* = 26` | 14 | ❌ **装不下** ⇒ **并发度是可行性的前提，不是吞吐优化** |
 
-> `L* = 3` 是**下界**：94.6 µs/层是整步平均（含与层数无关的固定开销），
-> 真实边际单层时间只会更小 ⇒ 需求只会更大。**上面三行都是乐观界。**
+> **Session 44 实测改写**：`94.6 µs/层`（整步平均）**不是窗口**。用可控延迟扫描直接测，
+> **τ(1) ≈ 300–350 µs**（±150 µs）—— 真实窗口是「层 0 的 compute + 步间空隙」，比平均值大 3 倍以上。
+> 而 `t_read` 也换成了原生 reader 的实测值。两者一起把判决改写：
+>
+> | `t_read` 来源 | 值 | `L*`（÷94.6） | 落进 τ(1)? |
+> |---|---|---|---|
+> | 手写 Python reader（旧） | 445–468 µs | 5 | ❌ |
+> | **原生 `Store.fetch`（引擎内）** | **101–108 µs** | **2** | ✅ |
+> | 原生（独立脚本，强制狠冷） | 276.7 µs | 3 | ✅ |
+>
+> **旧判决「差两层」是被 Python reader 的产物驱动的，不是被存储驱动的。**
+> 详见 `probes/sc4_phase_decomposition_session44.md`。
 
 当前优先级（细节见 roadmap §36.5）：
 

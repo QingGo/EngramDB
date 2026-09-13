@@ -90,6 +90,7 @@ import atexit
 import json
 import os
 import signal
+import statistics
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -107,6 +108,7 @@ _STATE: dict = {
     "rows": 16,
     "store": None,
     "counters": None,
+    "delay_us": 0,
 }
 _C: dict = {
     "break_calls": 0,
@@ -120,10 +122,15 @@ _C: dict = {
     "bytes_read": 0,
     "read_us": [],
     "break_us": [],
+    # per-phase, measured in place.  Session 43 had none of these and tried to
+    # attribute cost by differencing arms; the differences were within noise
+    # (+/-0.2 ms) and produced a confident, wrong answer.
+    "phase": {},
     "tok_samples": [],
     "errors": [],
     "skipped": [],
     "wrapped_classes": [],
+    "reader": None,
 }
 _KEEP = 4000          # bound the in-memory sample lists
 _lock = threading.Lock()
@@ -132,6 +139,8 @@ _IN_REPLAY = False
 _FDS: list[int] = []
 _POOL: ThreadPoolExecutor | None = None
 _HOSTBUF = None
+_NATIVE = None        # engramdb.Store, when available
+_READER = "python"    # which reader the read arm actually used
 
 
 # ---------------------------------------------------------------------------
@@ -221,13 +230,24 @@ def _delta_from_tokens(toks, rows, host: "np.ndarray"):
 
 
 def _delta_from_disk(toks, rowids, host: "np.ndarray"):
-    """arm='read': the real 16-row read for every token in the batch."""
+    """arm='read': the real 16-row read for every token in the batch.
+
+    Native first.  ``engramdb.Store.fetch`` does the identical 16 cold random
+    rows in ~277 us where a hand-rolled Python thread pool needs ~555 us
+    (``scripts/sc4_reader_compare.py``), so the Python path here is a fallback,
+    not the default -- the first version of this probe used it and charged 2x
+    the real storage cost to the engine.
+    """
     import numpy as np
 
     n = len(toks)
     raw = np.zeros((n, _STATE["rows"] * ROW_BYTES), dtype=np.uint8)
     t0 = time.perf_counter()
-    _read_rows(rowids, raw)
+    if _NATIVE is not None:
+        flat = np.asarray(rowids, dtype=np.int64).reshape(-1).tolist()
+        raw = np.frombuffer(_NATIVE.fetch(flat), dtype=np.uint8).reshape(n, -1)
+    else:
+        _read_rows(rowids, raw)
     dt = time.perf_counter() - t0
     with _lock:
         _C["rows_read"] += n * _STATE["rows"]
@@ -271,10 +291,26 @@ def install() -> bool:
     _STATE["rows"] = int(os.environ.get("ENGRAMDB_SC4_ROWS", "16"))
     _STATE["store"] = os.environ.get("ENGRAMDB_SC4_STORE")
     _STATE["counters"] = os.environ.get("ENGRAMDB_SC4_COUNTERS")
+    _STATE["delay_us"] = float(os.environ.get("ENGRAMDB_SC4_DELAY_US", "0") or 0)
     if arm in ("read", "read_static"):
         if not _STATE["store"]:
             raise RuntimeError(f"arm={arm} needs ENGRAMDB_SC4_STORE")
-        _open_store(_STATE["store"])
+        global _NATIVE, _READER
+        want = os.environ.get("ENGRAMDB_SC4_READER", "native")
+        if want == "native":
+            try:
+                import engramdb as _e
+
+                _NATIVE = _e.Store(_STATE["store"], N_SHARDS, ROWS_PER_SHARD,
+                                   ROW_BYTES)
+                _READER = "native"
+            except Exception as exc:
+                _C["errors"].append(f"native reader unavailable: {exc}")
+        # The Python pool is only built when it will actually be used: opening
+        # 128 fds and spawning threads is not free, and on the native path it
+        # would be pure overhead charged to the arm.
+        if _NATIVE is None:
+            _open_store(_STATE["store"])
 
     _HOSTBUF = np.zeros((4096, 4096), dtype=np.uint8)  # reused, host-only
 
@@ -324,26 +360,48 @@ def install() -> bool:
         """
         global _IN_REPLAY
         t0 = time.perf_counter()
+        ph = _P
         try:
             n = hidden_states.shape[0]
+            h = hidden_states.shape[-1]
             if _STATE["arm"] == "read_static":
                 # No D2H: rowids were resolved at install time.
                 toks = _STATE["static_toks"][:n]
-                _delta_from_disk(toks, _STATE["static_rowids"][:n],
-                                 _HOSTBUF[:n, :hidden_states.shape[-1]])
+                _t(ph, "rowid", 0.0)
+                _delta_from_disk(toks, _STATE["static_rowids"][:n], _HOSTBUF[:n, :h])
             elif _STATE["arm"] == "read":
+                _t0 = time.perf_counter()
                 toks = input_ids[:n].tolist()      # D2H: serial, and declared --
+                _t(ph, "d2h", time.perf_counter() - _t0)
+                _t0 = time.perf_counter()
                 rowids = _rowids(toks)             # stage 1 is deliberately the
+                _t(ph, "rowid", time.perf_counter() - _t0)
                 _delta_from_disk(toks, rowids,     # non-overlapped variant.
-                                 _HOSTBUF[:n, :hidden_states.shape[-1]])
+                                 _HOSTBUF[:n, :h])
             else:
+                _t0 = time.perf_counter()
                 toks = input_ids[:n].tolist()
-                _delta_from_tokens(toks, _STATE["rows"],
-                                   _HOSTBUF[:n, :hidden_states.shape[-1]])
-            delta = torch.from_numpy(
-                _HOSTBUF[:n, :hidden_states.shape[-1]].copy()
-            ).to(device=hidden_states.device, dtype=hidden_states.dtype)
+                _t(ph, "d2h", time.perf_counter() - _t0)
+                _delta_from_tokens(toks, _STATE["rows"], _HOSTBUF[:n, :h])
+
+            _t0 = time.perf_counter()
+            delta = torch.from_numpy(_HOSTBUF[:n, :h].copy()).to(
+                device=hidden_states.device, dtype=hidden_states.dtype)
+            _t(ph, "h2d", time.perf_counter() - _t0)
+
+            # Controlled host work.  Sweeping this measures how much host time a
+            # single layer's worth of GPU compute can hide -- i.e. tau(L) itself,
+            # which L* divides by.  Until now tau was only ever inferred from
+            # step_time / num_layers, which credits every fixed per-step cost to
+            # the layers and therefore understates the window.
+            if _STATE["delay_us"]:
+                _deadline = time.perf_counter() + _STATE["delay_us"] / 1e6
+                while time.perf_counter() < _deadline:
+                    pass
+
+            _t0 = time.perf_counter()
             hidden_states.add_(delta)
+            _t(ph, "add", time.perf_counter() - _t0)
             with _lock:
                 _C["break_calls"] += 1
                 if _IN_REPLAY:
@@ -407,7 +465,7 @@ def install() -> bool:
     _INSTALLED = True
     print(
         f"[engramdb-sc4] arm={arm} layer={target} rows={_STATE['rows']} "
-        f"store={_STATE['store']}"
+        f"delay_us={_STATE['delay_us']} store={_STATE['store']}"
     )
     return True
 
@@ -436,6 +494,16 @@ def _rowids(toks):
 # counters out
 # ---------------------------------------------------------------------------
 
+_P: dict = {}
+
+
+def _t(bucket: dict, key: str, seconds: float) -> None:
+    """Record one phase sample.  Lists are capped; medians are what matter."""
+    v = bucket.setdefault(key, [])
+    if len(v) < _KEEP:
+        v.append(seconds * 1e6)
+
+
 def _dump(*_a) -> None:
     """Write this process's counters to ``<base>.<pid>.json``.
 
@@ -452,6 +520,16 @@ def _dump(*_a) -> None:
     path = f"{path}.{os.getpid()}.json"
     with _lock:
         snap = dict(_C)
+    ph = snap.pop("phase", {}) or {}
+    snap["phase"] = {}
+    for k, v in ph.items():
+        sv = sorted(v)
+        snap["phase"][k] = {
+            "n": len(v),
+            "median": round(statistics.median(v), 1) if v else None,
+            "p90": round(sv[int(0.9 * (len(sv) - 1))], 1) if v else None,
+            "min": round(sv[0], 1) if v else None,
+        }
     for k in ("read_us", "break_us"):
         v = snap.get(k) or []
         snap[k + "_n"] = len(v)
@@ -459,6 +537,7 @@ def _dump(*_a) -> None:
         snap[k + "_mean"] = (sum(v) / len(v)) if v else None
         snap[k] = v[:40]
     snap["arm"] = _STATE["arm"]
+    snap["reader"] = _READER
     snap["layer"] = _STATE["layer"]
     snap["rows"] = _STATE["rows"]
     snap["pid"] = os.getpid()
