@@ -5273,3 +5273,102 @@ access 方式决定要不要 breakable graph，那是部署属性。这条也顺
 > 读得够快（warm 87 µs/16 行），但**发得太晚** ——
 > 断点函数的第一件事就是把前一段 GPU 工作等完，所以「提前一层」买不到任何东西。
 > **下一步不是更快的 reader，是让行号在步开始前就落在 host 上。**
+
+---
+
+## §40 Session 46：我们的库在 SGLang `main` 的真实缝上跑通（真实表 / 真实 config / 真实行号）
+
+`probes/ple_sglang_main_engramdb_session46.md` · `integrations/sglang-main/0002-*`
+
+### 40.1 这一轮把 §39 剩下的替身全换掉了
+
+Session 45 证明了**缝**是目标，但表是 256 MiB 的合成替身、config 是手挑的小值。
+这一轮：
+
+| | §39（Session 45） | §40（本轮） |
+|---|---|---|
+| PLE config | 手挑小值 | **checkpoint 自己的 `text_config`** |
+| 词表 | 1,679,360 行 | **320,001,536 行** = 引擎 `padded_vocab` 恰好相等 |
+| 表 | 256 MiB 合成 | **51,200,245,760 B**，128 片 × 2,500,012 行 × 160 B |
+| 行源 | 上游稀疏文件 mmap | **`engramdb.Store`** |
+| 行号 | 随机 | **引擎自己的 `_hash_contexts`** |
+
+仍然标为替身的：模型体（模块建在 **meta** device 上）、"前一层"（一个 512×512 matmul）、
+τ(1)（沿用 Session 44）。另有一处刻意偏离并记录在案：checkpoint 是通过
+`quantization_config` 到达 fp8 的，探针改用 `ple_embedding_dtype="float8_e4m3fn"`
+（`_ple_table_is_fp8` 两条路都收），并且**把行宽与 store 对齐做了断言**。
+
+### 40.2 交付物：补丁 0002
+
+`integrations/sglang-main/0002-ple-offload-engramdb-store.patch` —— 新增
+`--ple-offload-backend engramdb`：从既有的 EngramDB store 目录读 PLE 行，不再自己分配表。
+
+理由：另外三个后端都要求表是**一个东西**。`pinned` 要它常驻；`file`/`file-staged` 要它是
+一个 `padded_vocab × 160` B 的稀疏文件 —— 51.2 GB，而**装不下这张表的机器通常也铺不开这个文件**。
+store 是 128 个已经在磁盘上的分片，而且它有自己的并发 reader。
+
+`open_ple_engramdb_store` 从 `manifest.json` 取 `num_shards` 与 `expected_shard_bytes`
+（退化时 glob `shard_*.bin`），推出 `rows_per_shard = shard_bytes / row_bytes`，
+并**把 store 的形状与引擎的几何对齐检查**（`width` vs `head_dim × dtype size`；
+`total_rows` vs 引擎 padded vocab）—— 否则错的表会被**静默地当成对的**读出来。
+`engramdb` 惰性导入，另外三个后端不装它也能用。
+
+### 40.3 正确性：三条互相独立的证据
+
+| 检查 | 结果 |
+|---|---|
+| 引擎 `_hash_contexts` vs `engramdb.rowids_for_seq`，同 token，真 config | **逐位相同**，512×16 ids，0 处不符，`max_abs_diff = 0` |
+| `Store.fetch` vs 独立 `os.pread` 同一批 `shard_NNN.bin` | **字节相等**（512 行，512 互异，`zero_frac` 0.0） |
+| 每次 replay 的输出 vs 同一 pread oracle，4 个 batch | **每格 5/5**，`mismatch_elems: []` |
+
+第二条才是「这是不是**我们的**数据」：oracle 自己打开原始分片，自己算
+`shard = rowid // 2,500,012`、`offset = (rowid % 2,500,012) × 160`，loop 里没有一行 engramdb 代码。
+
+而且引擎的 `layer_multipliers` 算出来是
+`[23703573157769, 20109073645365, 8052911324071]` —— **正是原生 rowid 路径硬编码的那三个常数**。
+这个对齐不是我们安排的，是 checkpoint 的。
+
+### 40.4 代价与那一处真正做对的优化
+
+graph 单步（median of 25，4090，真实 51.2 GB 表）：
+
+| tokens | rows | warm | warm min | cold | cold min |
+|---|---|---|---|---|---|
+| 1 | 16 | **196.5** | 178.7 | 406.5 | 304.8 |
+| 8 | 128 | **263.9** | 249.2 | 1247.5 | 1091.8 |
+| 32 | 512 | **560.3** | 529.0 | 3536.0 | 2985.9 |
+| 128 | 2048 | **1094.9** | 1008.5 | 10603.8 | 9418.2 |
+
+归因（2048 行，同进程同 buffer 就地测）：`d2h 2.0 + read_rows 792.5 + publish 38.6 = 833`，
+eager 实测 919 → **graph 机制只占 ~36 µs**。
+
+**publish 是意外**：
+
+| publish（2048 行） | µs |
+|---|---|
+| 一次跨设备**且跨 dtype** 的 `copy_` | **456.5** |
+| bf16 slab + 同 dtype 拷贝（cast 先在 CPU 做：272.3） | 41.6 |
+| **两次同 dtype 拷贝 + cast 留在设备** | **38.6** |
+
+cast 本身在 GPU 上只有 18 µs，**贵的是让 `copy_` 顺便做它**。整步因此 1613 → 1094.9 µs。
+反面留档：把 cast 移出 CPU 但仍留在跨设备拷贝里，**比不优化还差**（1468 vs 1265）。
+
+### 40.5 没用的三件事（留档，省下一轮）
+
+- **裸 fp8 staging**（cast 移出 CPU 但仍在跨设备拷贝里）：pessimization。
+- **`Store` 线程数**：16 行时 4–8 线程比 32 快 ~4 µs；2048 行时 32 快 8%。不值得拉。
+- **`Store.fetch` 接受 numpy**（不比 list 快）但**拒绝 `torch.Tensor`**
+  （`TypeError: 'Tensor' object cannot be converted to 'Sequence'`）；
+  `.tolist()` 2048 个 id 只要 34 µs，不是看上去的那个瓶颈。
+- 另：`cProfile` 在这里**不可用** —— 它报 `Store.fetch` 4.3 ms，而 wall clock 是 0.59 ms，
+  **7× 膨胀**，因为 store 的 worker 线程与 tracer 抢 GIL。
+
+### 40.6 仍未解决
+
+**整步依旧完全暴露**：断点函数的第一件事是 D2H，2048 行那 919 µs 全在关键路径上。
+本轮没有任何改动触及这一点，**更快的 reader 也不会**。下一步不变，且可行性已证：
+**把行号提前搬到 host**（§39.3⑤ 已证 host/device hash 逐位一致）。
+
+更便宜的两条，按序：①`Store.fetch` 在 16 行时要 ~94 µs，几乎全是固定开销，而 decode 一步就是 16 行；
+②`fetch_into(rowids, buffer)` —— 写进调用方持有的 pinned `bytearray`，可以省掉
+`bytes` 分配以及 `torch.frombuffer` 对只读输入强加的那次 `bytearray` 拷贝。

@@ -1,0 +1,85 @@
+{
+  "argv": [
+    "--sections",
+    "geometry,graph",
+    "--tokens",
+    "128",
+    "--iters",
+    "25",
+    "--correct-iters",
+    "5",
+    "--staging",
+    "devfp8",
+    "--out",
+    "/root/engramdb_probe/ab/dev_128.json"
+  ],
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "geometry": {
+    "ple_embed_dim": 2560,
+    "ngram_size": 3,
+    "heads_per_ngram": 8,
+    "ngram_vocab_size_base": 20000000,
+    "vocab_size": 248320,
+    "eos_token_id": 248044,
+    "ple_layer_ids": [
+      2
+    ],
+    "shards": 128,
+    "rows_per_shard": 2500012,
+    "width": 160,
+    "store_rows": 320001536,
+    "store_width": 160,
+    "padded_vocab_size": 320001536,
+    "num_embeddings_per_partition": 320001536,
+    "head_dim_per_ngram": 160,
+    "ngram_heads": 16,
+    "padded_vocab_equals_store_rows": true,
+    "width_equals_head_dim": true,
+    "table_dtype": "torch.float8_e4m3fn",
+    "engine_row_bytes": 160,
+    "row_bytes_equals_store_width": true,
+    "engine_layer_multipliers": [
+      23703573157769,
+      20109073645365,
+      8052911324071
+    ],
+    "native_rowids_match_engine_multipliers": true,
+    "head_vocab_total": 320001446,
+    "ngram_heads_vocab_sizes_head": [
+      20000003,
+      20000023,
+      20000033,
+      20000047
+    ],
+    "ngram_heads_offsets_head": [
+      0,
+      20000003,
+      40000026,
+      60000059
+    ]
+  },
+  "graph": {
+    "segments": 2,
+    "break_fns": 1,
+    "tokens": 128,
+    "rows_per_step": 2048,
+    "replay_reads_fresh_rows": 5,
+    "replays_checked": 5,
+    "mismatch_elems": [],
+    "parts_us": {
+      "d2h_ids": 2.0042061805725098,
+      "read_rows": 792.473554611206,
+      "publish_only": 38.62753510475159,
+      "publish_legacy": 456.5492272377014,
+      "gather_all": 918.954610824585
+    },
+    "eager_us_median": 982.0163249969482,
+    "eager_us_min": 876.3410151004791,
+    "warm_us_median": 1094.873994588852,
+    "warm_us_min": 1008.4621608257294,
+    "warm_us_max": 82005.19159436226,
+    "cold_us_median": 10603.789240121841,
+    "cold_us_min": 9418.223053216934,
+    "cold_us_max": 78724.07138347626
+  }
+}

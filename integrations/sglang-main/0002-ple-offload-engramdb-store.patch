@@ -1,0 +1,363 @@
+diff --git a/python/sglang/srt/models/qwen4_exp_ple_table.py b/python/sglang/srt/models/qwen4_exp_ple_table.py
+--- a/python/sglang/srt/models/qwen4_exp_ple_table.py
++++ b/python/sglang/srt/models/qwen4_exp_ple_table.py
+@@ -43,6 +43,8 @@
+ 
+ import ctypes
+ import ctypes.util
++import glob
++import json
+ import logging
+ import os
+ import re
+@@ -60,11 +62,13 @@
+ _SMAPS_HEADER = re.compile(r"^([0-9a-f]+)-([0-9a-f]+) ")
+ _SMAPS_RSS = re.compile(r"^Rss:\s+(\d+) kB")
+ 
+-PLE_OFFLOAD_BACKENDS = ("pinned", "file", "file-staged")
++PLE_OFFLOAD_BACKENDS = ("pinned", "file", "file-staged", "engramdb")
+ 
+-# Storage and access are separate decisions: "pinned" and the two file backends
++# Storage and access are separate decisions: "pinned" and the file backends
+ # differ only in where the table lives, and "file"/"file-staged" share the file
+-# and differ only in which side dereferences it.
++# and differ only in which side dereferences it. "engramdb" is a different
++# storage again -- an existing store directory rather than a table this process
++# allocates -- read the same way "file-staged" reads a mapping.
+ PLE_FILE_BACKENDS = ("file", "file-staged")
+ 
+ # cudaDeviceAttr enum values (cuda_runtime_api.h).
+@@ -358,7 +362,71 @@
+             "parts such as GB10). This device reports it does not; use "
+             "--ple-offload-backend file-staged to have the host read the same "
+             "file instead, or --ple-offload-backend pinned."
++        )
++
++
++def open_ple_engramdb_store(
++    store_root: str,
++    *,
++    width: int,
++    rows: int,
++    threads: Optional[int] = None,
++):
++    """Open an EngramDB store directory as a PLE row source.
++
++    ``engramdb`` is an optional dependency: it is imported here rather than at
++    module scope so the other backends stay usable without it. The store's
++    geometry is checked against the engine's, because a mismatch would be served
++    silently as the wrong rows.
++    """
++    try:
++        import engramdb  # type: ignore
++    except ImportError as exc:  # pragma: no cover - depends on the deployment
++        raise RuntimeError(
++            "--ple-offload-backend engramdb needs the engramdb package: "
++            "pip install engramdb"
++        ) from exc
++
++    store_root = os.path.expanduser(store_root)
++    manifest_path = os.path.join(store_root, "manifest.json")
++    if os.path.exists(manifest_path):
++        with open(manifest_path) as handle:
++            manifest = json.load(handle)
++        shards = int(manifest["num_shards"])
++        rows_per_shard = int(manifest["expected_shard_bytes"]) // int(width)
++    else:
++        shard_names = sorted(glob.glob(os.path.join(store_root, "shard_*.bin")))
++        if not shard_names:
++            raise ValueError(
++                f"no PLE store in {store_root}: expected manifest.json or shard_*.bin"
++            )
++        shards = len(shard_names)
++        rows_per_shard = os.path.getsize(shard_names[0]) // int(width)
++
++    kwargs = {"threads": int(threads)} if threads else {}
++    store = engramdb.Store(
++        store_root,
++        shards=shards,
++        rows_per_shard=rows_per_shard,
++        width=int(width),
++        **kwargs,
++    )
++    if int(store.width) != int(width):
++        raise ValueError(
++            f"PLE store row width is {store.width} B, engine needs {width} B"
+         )
++    if int(store.total_rows) != int(rows):
++        raise ValueError(
++            f"PLE store holds {store.total_rows} rows, engine vocabulary is {rows}"
++        )
++    logger.info(
++        "PLE table: engramdb store %s (%d shards x %d rows x %d B)",
++        store_root,
++        shards,
++        rows_per_shard,
++        width,
++    )
++    return store
+ 
+ 
+ def ple_file_access_mode(device_index: int = 0) -> str:
+@@ -394,6 +462,10 @@
+                 f"host memory, which is unavailable here: {exc}"
+             ) from exc
+         return
++    if backend == "engramdb":
++        # No device property to probe: the store is read on the host, and
++        # `open_ple_engramdb_store` fails loudly on a shape mismatch.
++        return
+     if backend != "pinned":
+         raise ValueError(
+             f"unknown PLE offload backend {backend!r}; choose from "
+diff --git a/python/sglang/srt/models/qwen4_exp.py b/python/sglang/srt/models/qwen4_exp.py
+--- a/python/sglang/srt/models/qwen4_exp.py
++++ b/python/sglang/srt/models/qwen4_exp.py
+@@ -70,6 +70,7 @@
+     allocate_ple_host_table,
+     make_ple_file_prefetcher,
+     make_ple_file_rss_trimmer,
++    open_ple_engramdb_store,
+ )
+ from sglang.srt.runtime_context import get_parallel
+ from sglang.srt.utils import logger
+@@ -794,14 +795,13 @@
+         "num_added_embeddings_per_partition",
+     )
+ 
+-    def __init__(
+-        self,
+-        embedding: VocabParallelEmbedding,
+-        *,
+-        backend: str = "pinned",
+-        table_dir: Optional[str] = None,
+-    ) -> None:
+-        nn.Module.__init__(self)
++    def _adopt_embedding(self, embedding: VocabParallelEmbedding) -> None:
++        """Validate the table and take over its vocabulary geometry.
++
++        Split out of ``__init__`` so a backend that does not allocate a host
++        table of its own -- one that reads an existing store instead -- can share
++        the same validation and the same attribute set.
++        """
+         if not isinstance(embedding.quant_method, UnquantizedEmbeddingMethod):
+             raise NotImplementedError(
+                 "PLE embedding offload requires an unquantized embedding table"
+@@ -821,6 +821,16 @@
+         # table so the generic loader does not stage it back to GPU unnecessarily.
+         self.quant_method = None
+ 
++    def __init__(
++        self,
++        embedding: VocabParallelEmbedding,
++        *,
++        backend: str = "pinned",
++        table_dir: Optional[str] = None,
++    ) -> None:
++        nn.Module.__init__(self)
++        self._adopt_embedding(embedding)
++
+         source_weight = embedding.weight
+         host_table = allocate_ple_host_table(
+             shape=source_weight.shape,
+@@ -1020,6 +1030,125 @@
+         return output
+ 
+ 
++class Qwen4ExpEngramDbEmbedding(Qwen4ExpStagedFileEmbedding):
++    """File-backed PLE table served by an EngramDB store directory.
++
++    Same graph break and same staging contract as ``file-staged``, but the rows
++    come from an `engramdb.Store` (``--ple-offload-dir`` points at it) instead of
++    a single mapping, so the table never has to exist as one 51.2 GiB file and
++    the read goes through the store's own concurrent reader. The store's shape is
++    checked against the engine's vocabulary geometry before anything is served.
++
++    The staging slab stays in the table's dtype and the cast to bf16 happens on
++    the device. A cross-device copy that also casts is far more expensive than
++    the cast itself -- 456 us against 39 for 2048 rows -- so the publish is two
++    plain copies with a device cast in between.
++    """
++
++    def __init__(
++        self,
++        embedding: VocabParallelEmbedding,
++        *,
++        store_root: str,
++        threads: Optional[int] = None,
++    ) -> None:
++        nn.Module.__init__(self)
++        self._adopt_embedding(embedding)
++        self._table_dtype = embedding.weight.dtype
++        row_bytes = self.embedding_dim * torch.empty(
++            0, dtype=self._table_dtype
++        ).element_size()
++        self._store = open_ple_engramdb_store(
++            store_root,
++            width=row_bytes,
++            rows=self.num_embeddings_per_partition,
++            threads=threads,
++        )
++        # Nothing to prefetch or trim: the store owns its own fds and the kernel
++        # page cache is not the residency this backend depends on.
++        self._file_prefetcher = None
++        self._staging = None
++        self._staging_rows = 0
++        self._dev_stage = None
++        self.register_buffer(
++            "weight_scale", embedding.weight_scale, persistent=True
++        )
++        del embedding.weight
++
++    def _staging_slab(self, rows: int) -> torch.Tensor:
++        if self._staging_rows < rows:
++            self._staging_rows = max(rows, self._STAGING_ROWS_FLOOR)
++            self._staging = torch.empty(
++                (self._staging_rows, self.embedding_dim),
++                dtype=self._table_dtype,
++                pin_memory=True,
++            )
++        return self._staging[:rows]
++
++    def _rows_from_bytes(self, raw: bytes, rows: int) -> torch.Tensor:
++        row_bytes = self.embedding_dim * torch.empty(
++            0, dtype=self._table_dtype
++        ).element_size()
++        if len(raw) != rows * row_bytes:
++            raise RuntimeError(
++                f"PLE store returned {len(raw)} B for {rows} rows of {row_bytes} B"
++            )
++        return (
++            torch.frombuffer(bytearray(raw), dtype=torch.uint8)
++            .view(self._table_dtype)
++            .view(-1, self.embedding_dim)
++        )
++
++    def _read_rows(self, host_ids: torch.Tensor) -> torch.Tensor:
++        """Rows of ``host_ids`` (host, long) as a pinned slab of the table dtype.
++
++        Other ranks' ids read as zero, as in the mapping backends.
++        """
++        start = int(self.shard_indices.org_vocab_start_index)
++        end = int(self.shard_indices.org_vocab_end_index)
++        rows = host_ids.numel()
++        staged = self._staging_slab(rows)
++        in_shard = (host_ids >= start) & (host_ids < end)
++        if bool(in_shard.all()):
++            # One store for the whole vocabulary: no masking, no zeroing.
++            staged.copy_(
++                self._rows_from_bytes(
++                    self._store.fetch((host_ids - start).tolist()), rows
++                )
++            )
++        else:
++            staged.zero_()
++            if bool(in_shard.any()):
++                keep = in_shard.nonzero(as_tuple=True)[0]
++                local = (host_ids[keep] - start).tolist()
++                staged[keep] = self._rows_from_bytes(
++                    self._store.fetch(local), len(local)
++                )
++        return staged
++
++    def _publish(self, staged: torch.Tensor, output: torch.Tensor) -> None:
++        rows = staged.shape[0]
++        if self._dev_stage is None or self._dev_stage.shape[0] < rows:
++            self._dev_stage = torch.empty(
++                (max(rows, self._STAGING_ROWS_FLOOR), self.embedding_dim),
++                dtype=self._table_dtype,
++                device=output.device,
++            )
++        self._dev_stage[:rows].copy_(staged, non_blocking=False)
++        output.view(-1, self.embedding_dim).copy_(self._dev_stage[:rows])
++
++    @eager_on_graph(True, capture_stub=_ple_staged_capture_stub)
++    def gather(
++        self, input_ids: torch.Tensor, out: Optional[torch.Tensor] = None
++    ) -> torch.Tensor:
++        output = self._resolve_gather_output(input_ids, out)
++
++        flat_ids = input_ids.reshape(-1).long()
++        if flat_ids.numel():
++            self._publish(self._read_rows(flat_ids.detach().cpu()), output)
++        return output
++
++
+ class Qwen4ExpPLELayer(nn.Module):
+     def __init__(
+         self,
+@@ -1048,16 +1177,26 @@
+             # same sparse file as "file" with the dereference moved to the host,
+             # which is what a device without host page tables can do.
+             backend = getattr(config, "ple_offload_backend", "pinned")
+-            offloaded_cls = (
+-                Qwen4ExpStagedFileEmbedding
+-                if backend == "file-staged"
+-                else Qwen4ExpPinnedHostEmbedding
+-            )
+-            self.ple_embedding.ngram_embedding = offloaded_cls(
+-                self.ple_embedding.ngram_embedding,
+-                backend=backend,
+-                table_dir=getattr(config, "ple_offload_dir", None),
+-            )
++            offloaded = self.ple_embedding.ngram_embedding
++            table_dir = getattr(config, "ple_offload_dir", None)
++            if backend == "engramdb":
++                if not table_dir:
++                    raise ValueError(
++                        "--ple-offload-backend engramdb needs --ple-offload-dir "
++                        "to point at the store root"
++                    )
++                self.ple_embedding.ngram_embedding = Qwen4ExpEngramDbEmbedding(
++                    offloaded, store_root=table_dir
++                )
++            else:
++                offloaded_cls = (
++                    Qwen4ExpStagedFileEmbedding
++                    if backend == "file-staged"
++                    else Qwen4ExpPinnedHostEmbedding
++                )
++                self.ple_embedding.ngram_embedding = offloaded_cls(
++                    offloaded, backend=backend, table_dir=table_dir
++                )
+         self.short_conv_dilation = self.ple_embedding.ngram_size
+         self.short_conv_state_len = (
+             self.conv_kernel_size - 1
+diff --git a/python/sglang/srt/arg_groups/fields/exec_.py b/python/sglang/srt/arg_groups/fields/exec_.py
+--- a/python/sglang/srt/arg_groups/fields/exec_.py
++++ b/python/sglang/srt/arg_groups/fields/exec_.py
+@@ -892,15 +892,19 @@
+             "maps the same file but has the host read each gather's rows into "
+             "pinned staging and copy them over, so it also runs on discrete "
+             "GPUs; it costs a host round trip per gather and needs a breakable "
+-            "CUDA graph (--cuda-graph-backend-decode/prefill breakable).",
+-            choices=["pinned", "file", "file-staged"],
++            "CUDA graph (--cuda-graph-backend-decode/prefill breakable). "
++            "'engramdb' reads the same rows out of an existing EngramDB store "
++            "directory (--ple-offload-dir) instead of allocating a table, so "
++            "the table never has to exist as one file; same break requirement.",
++            choices=["pinned", "file", "file-staged", "engramdb"],
+         ),
+     ] = "pinned"
+     ple_offload_dir: A[
+         Optional[str],
+         Arg(
+             help="Directory for the file-backed PLE table when "
+-            "--ple-offload-backend is 'file' or 'file-staged'. Defaults to "
++            "--ple-offload-backend is 'file', 'file-staged' or 'engramdb' "
++            "(for 'engramdb' it is the store root and is required). Defaults to "
+             "$SGLANG_CACHE_DIR/ple/<model path>, one directory per checkpoint. "
+             "The file is sparse and reused across restarts; put it on fast "
+             "local storage (NVMe).",
+diff --git a/python/sglang/srt/arg_groups/memory_hook.py b/python/sglang/srt/arg_groups/memory_hook.py
+--- a/python/sglang/srt/arg_groups/memory_hook.py
++++ b/python/sglang/srt/arg_groups/memory_hook.py
+@@ -39,7 +39,7 @@
+ 
+     # Kept as a literal rather than importing qwen4_exp_ple_table: this module is
+     # resolved during argument parsing, before the model package is importable.
+-    if cfg.ple_offload_backend in ("file", "file-staged") and (
++    if cfg.ple_offload_backend in ("file", "file-staged", "engramdb") and (
+         cfg.ple_offload_embedding is False
+     ):
+         raise ValueError(

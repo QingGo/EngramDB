@@ -1,0 +1,123 @@
+{
+  "argv": [
+    "--sections",
+    "geometry,phases",
+    "--iters",
+    "30",
+    "--out",
+    "/root/engramdb_probe/eg_phases2.json"
+  ],
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "geometry": {
+    "ple_embed_dim": 2560,
+    "ngram_size": 3,
+    "heads_per_ngram": 8,
+    "ngram_vocab_size_base": 20000000,
+    "vocab_size": 248320,
+    "eos_token_id": 248044,
+    "ple_layer_ids": [
+      2
+    ],
+    "shards": 128,
+    "rows_per_shard": 2500012,
+    "width": 160,
+    "store_rows": 320001536,
+    "store_width": 160,
+    "padded_vocab_size": 320001536,
+    "num_embeddings_per_partition": 320001536,
+    "head_dim_per_ngram": 160,
+    "ngram_heads": 16,
+    "padded_vocab_equals_store_rows": true,
+    "width_equals_head_dim": true,
+    "table_dtype": "torch.float8_e4m3fn",
+    "engine_row_bytes": 160,
+    "row_bytes_equals_store_width": true,
+    "engine_layer_multipliers": [
+      23703573157769,
+      20109073645365,
+      8052911324071
+    ],
+    "native_rowids_match_engine_multipliers": true,
+    "head_vocab_total": 320001446,
+    "ngram_heads_vocab_sizes_head": [
+      20000003,
+      20000023,
+      20000033,
+      20000047
+    ],
+    "ngram_heads_offsets_head": [
+      0,
+      20000003,
+      40000026,
+      60000059
+    ]
+  },
+  "phases": {
+    "rows": {
+      "tokens=1": {
+        "d2h_ids": 20.058825612068176,
+        "fetch": 93.33156049251556,
+        "bytes_to_fp8": 3.6694109439849854,
+        "numpy_view_fp8": 4.302710294723511,
+        "cpu_fp8_to_bf16": 24.011358618736267,
+        "h2d_fp8": 9.514391422271729,
+        "h2d_bf16_pinned": 9.903684258460999,
+        "gpu_fp8_to_bf16": 16.534700989723206,
+        "publish_h2d": 9.933486580848694
+      },
+      "tokens=8": {
+        "d2h_ids": 10.447576642036438,
+        "fetch": 146.14872634410858,
+        "bytes_to_fp8": 4.306435585021973,
+        "numpy_view_fp8": 4.192814230918884,
+        "cpu_fp8_to_bf16": 164.50881958007812,
+        "h2d_fp8": 14.010816812515259,
+        "h2d_bf16_pinned": 11.397525668144226,
+        "gpu_fp8_to_bf16": 16.588717699050903,
+        "publish_h2d": 11.429190635681152
+      },
+      "tokens=32": {
+        "d2h_ids": 11.079013347625732,
+        "fetch": 277.6365727186203,
+        "bytes_to_fp8": 6.5676867961883545,
+        "numpy_view_fp8": 4.323199391365051,
+        "cpu_fp8_to_bf16": 228.53724658489227,
+        "h2d_fp8": 20.64742147922516,
+        "h2d_bf16_pinned": 18.442049622535706,
+        "gpu_fp8_to_bf16": 21.480023860931396,
+        "publish_h2d": 18.402934074401855
+      },
+      "tokens=128": {
+        "d2h_ids": 25.646761059761047,
+        "fetch": 672.9289889335632,
+        "bytes_to_fp8": 12.315809726715088,
+        "numpy_view_fp8": 3.390014171600342,
+        "cpu_fp8_to_bf16": 272.31499552726746,
+        "h2d_fp8": 42.62849688529968,
+        "h2d_bf16_pinned": 36.543235182762146,
+        "gpu_fp8_to_bf16": 18.04344356060028,
+        "publish_h2d": 36.51715815067291
+      }
+    },
+    "threads": {
+      "t=1,tok=1": 115.86025357246399,
+      "t=1,tok=8": 464.2568528652191,
+      "t=1,tok=128": 4338.258877396584,
+      "t=2,tok=1": 69.18981671333313,
+      "t=2,tok=8": 306.82235956192017,
+      "t=2,tok=128": 3016.192466020584,
+      "t=4,tok=1": 57.35829472541809,
+      "t=4,tok=8": 202.2925764322281,
+      "t=4,tok=128": 1751.2831836938858,
+      "t=8,tok=1": 56.61137402057648,
+      "t=8,tok=8": 152.12967991828918,
+      "t=8,tok=128": 807.8552782535553,
+      "t=16,tok=1": 66.42378866672516,
+      "t=16,tok=8": 250.68596005439758,
+      "t=16,tok=128": 1000.8513927459717,
+      "t=32,tok=1": 59.431418776512146,
+      "t=32,tok=8": 148.63163232803345,
+      "t=32,tok=128": 748.0084896087646
+    }
+  }
+}

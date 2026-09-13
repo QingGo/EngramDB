@@ -97,3 +97,58 @@ on the host *before* the step's device work — which means computing the n-gram
 hash host-side from the scheduler's token history instead of from the device
 pool. That is the next patch, not this one; `probes/ple_sglang_main_session45.md`
 records the measurement that motivates it.
+
+---
+
+# 0002 — the `engramdb` backend
+
+`0002-ple-offload-engramdb-store.patch` (applies on top of 0001) adds a fourth
+value, `--ple-offload-backend engramdb`, which reads PLE rows out of an existing
+EngramDB store directory (`--ple-offload-dir`) instead of allocating a table of
+its own.
+
+It exists because the other three backends all need the table to be *one thing*:
+`pinned` needs it resident, `file`/`file-staged` need it as one sparse file of
+`padded_vocab × 160` B — 51.2 GB, which is exactly what a machine that cannot
+hold the table also usually cannot stage to disk. A store is 128 shards that are
+already there, and its own reader is concurrent.
+
+```
+                    Qwen4ExpPinnedHostEmbedding (device-side gather)
+                              |
+        Qwen4ExpStagedFileEmbedding (host gather + graph break)
+                              |
+        Qwen4ExpEngramDbEmbedding (host gather + graph break, rows from a store)
+                              |
+                    engramdb.Store.fetch(rowids) -> bytes
+```
+
+`open_ple_engramdb_store` reads `manifest.json` for `num_shards` and
+`expected_shard_bytes` (falling back to globbing `shard_*.bin`), derives
+`rows_per_shard = shard_bytes / row_bytes`, and **checks the store's shape
+against the engine's** — `width` against `head_dim_per_ngram × dtype size`, and
+`total_rows` against the engine's padded vocabulary — because a mismatch would
+otherwise be served silently as the wrong rows. `engramdb` is imported lazily, so
+the other three backends keep working without it installed.
+
+## The one non-obvious part: where the fp8→bf16 cast happens
+
+The staging slab is kept in the **table's** dtype and the cast happens on the
+device, so the publish is two plain same-dtype copies rather than one that also
+casts:
+
+| publish, 2048 rows | µs |
+|---|---|
+| one cross-device copy that also casts | 456.5 |
+| bf16 slab, same-dtype copy (CPU cast first: 272.3) | 41.6 |
+| **two same-dtype copies, device cast** | **38.6** |
+
+The cast itself is ~18 µs on the GPU. Making `copy_` do it is what costs. Getting
+this backwards — moving the cast off the CPU but leaving it inside the
+cross-device copy — is measurably *worse* than not optimizing at all
+(1468 µs vs 1265 at 2048 rows).
+
+Measured end to end on a 4090 against the real Qwen3.8-Flash-Next geometry and
+the real 51.2 GB store: warm **196.5 / 263.9 / 560.3 / 1094.9 µs** for
+1 / 8 / 32 / 128 tokens, all replay-correct against an independent `pread` of the
+raw shards. See `probes/ple_sglang_main_engramdb_session46.md`.

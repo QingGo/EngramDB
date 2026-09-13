@@ -2249,3 +2249,46 @@ checkpoint 常量，host/device 逐位相同可证）。**在它之前，更快�
 见 roadmap §39.4 与 §36.5：**P2 已改写为「把 n-gram 行号提前搬到 host」**；
 P2.5（给上游的 issue）证据已齐 —— 核心不是「WILLNEED 不好」，
 而是「**在消费时刻发 WILLNEED 没有用**」。
+
+---
+
+## Session 46（第三十一轮：我们的库接进 SGLang main 的真实 PLE 缝）
+
+### 1. 做了什么
+把 §39 剩下的替身全换掉，让**我们的库**在 SGLang `main` 的真实缝上跑通并保证正确性，然后优化。
+
+- 补丁 `integrations/sglang-main/0002-ple-offload-engramdb-store.patch`：新增
+  `--ple-offload-backend engramdb` —— 行源是既有的 EngramDB store 目录，表不再是「一个 51.2 GB 文件」。
+- 探针 `scripts/sc_main_engramdb_probe.py`（`geometry` / `ids` / `store` / `phases` / `graph` 五段，
+  `--real-layer` 走树自己的选择路径）、`scripts/engramdb_store_api_probe.py`。
+
+### 2. 关键事实
+- **表是真的**：`/root/autodl-tmp/qwen35-ple/qwen38-rows`，128 片 × 2,500,012 行 × 160 B = 51.2 GB。
+- **config 是真的**：checkpoint 自己的 `text_config`；引擎 `padded_vocab = 320,001,536 = store 行数`。
+- **行号是引擎算的**，且与 `engramdb.rowids_for_seq` **逐位相同**（512×16，max_abs_diff=0）；
+  引擎的 `layer_multipliers` 就是原生路径硬编码的那三个常数。
+- **三段独立正确性**：hash 一致 / `Store.fetch` 与独立 `pread` 字节相等 / 每次 replay 与 oracle 5/5。
+
+### 3. 结果
+```text
+graph 单步 (median/25, 4090, 真实 51.2 GB 表):
+  warm  196.5 / 263.9 / 560.3 / 1094.9 us   (1/8/32/128 token)
+  cold  406.5 / 1247.5 / 3536.0 / 10603.8
+归因 (2048 行): d2h 2.0 + read_rows 792.5 + publish 38.6 ≈ 833；eager 919 ⇒ graph 只占 ~36
+优化: 跨设备+跨 dtype 的 copy_ 456.5 → 两次同 dtype 拷贝 + 设备 cast 38.6 (11.8×), 整步 1613 → 1095
+```
+
+### 4. 坑
+- **`make()` 返回的是 class 而不是绑定好参数的工厂** ⇒ 选项根本没进 `__init__`，
+  于是「fp8 vs bf16」那一轮 A/B **比较的是同一份代码**，看到的 ~70 µs 是噪声。已修并重跑。
+- **整表 `fadvise(DONTNEED)` 会与读竞争**（内核还在走 51.2 GB，读就开始了）⇒ 冷态中位数一度是
+  假的 42 ms。改成**只丢这一步要读的那 4 KiB 页**，数字才干净。
+- `cProfile` 在这里有 **7× 膨胀**（worker 线程抢 GIL），绝对时间不可用。
+- 建模块要放 `torch.device("meta")`，否则真实 vocab 会分配 51.2 GB 显存；但 meta 也会把
+  hash buffer 变成 meta，要用模块自己的 `_build_*` 重新合成，`weight_scale` 单独给。
+- clone 的 index 是空的 ⇒ `git diff` 失明（Session 45 已记）；补丁仍靠 `git cat-file` + 本地 `diff -u`。
+
+### 5. 下一步
+整步**仍然完全暴露**（断点第一件事是 D2H）—— 更快的 reader 不解决它。
+**把行号提前搬到 host**（可行性已证），或先做两件便宜的：16 行时 `fetch` 的 ~94 µs 固定开销、
+以及 `fetch_into(rowids, buffer)` 省掉 `bytes`/`bytearray` 两次拷贝。

@@ -1,0 +1,85 @@
+{
+  "argv": [
+    "--sections",
+    "geometry,graph",
+    "--tokens",
+    "32",
+    "--iters",
+    "25",
+    "--correct-iters",
+    "5",
+    "--staging",
+    "devfp8",
+    "--out",
+    "/root/engramdb_probe/ab/dev_32.json"
+  ],
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "geometry": {
+    "ple_embed_dim": 2560,
+    "ngram_size": 3,
+    "heads_per_ngram": 8,
+    "ngram_vocab_size_base": 20000000,
+    "vocab_size": 248320,
+    "eos_token_id": 248044,
+    "ple_layer_ids": [
+      2
+    ],
+    "shards": 128,
+    "rows_per_shard": 2500012,
+    "width": 160,
+    "store_rows": 320001536,
+    "store_width": 160,
+    "padded_vocab_size": 320001536,
+    "num_embeddings_per_partition": 320001536,
+    "head_dim_per_ngram": 160,
+    "ngram_heads": 16,
+    "padded_vocab_equals_store_rows": true,
+    "width_equals_head_dim": true,
+    "table_dtype": "torch.float8_e4m3fn",
+    "engine_row_bytes": 160,
+    "row_bytes_equals_store_width": true,
+    "engine_layer_multipliers": [
+      23703573157769,
+      20109073645365,
+      8052911324071
+    ],
+    "native_rowids_match_engine_multipliers": true,
+    "head_vocab_total": 320001446,
+    "ngram_heads_vocab_sizes_head": [
+      20000003,
+      20000023,
+      20000033,
+      20000047
+    ],
+    "ngram_heads_offsets_head": [
+      0,
+      20000003,
+      40000026,
+      60000059
+    ]
+  },
+  "graph": {
+    "segments": 2,
+    "break_fns": 1,
+    "tokens": 32,
+    "rows_per_step": 512,
+    "replay_reads_fresh_rows": 5,
+    "replays_checked": 5,
+    "mismatch_elems": [],
+    "parts_us": {
+      "d2h_ids": 3.4943222999572754,
+      "read_rows": 429.43283915519714,
+      "publish_only": 35.6920063495636,
+      "publish_legacy": 282.9432487487793,
+      "gather_all": 527.8810858726501
+    },
+    "eager_us_median": 499.1106688976288,
+    "eager_us_min": 463.8843238353729,
+    "warm_us_median": 560.2613091468811,
+    "warm_us_min": 529.0322005748749,
+    "warm_us_max": 1107.0407927036285,
+    "cold_us_median": 3536.0492765903473,
+    "cold_us_min": 2985.9058558940887,
+    "cold_us_max": 83314.84720110893
+  }
+}

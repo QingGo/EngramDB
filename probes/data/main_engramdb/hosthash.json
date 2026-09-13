@@ -1,0 +1,12 @@
+{
+  "ngram_size": 3,
+  "heads": 16,
+  "tokens": 512,
+  "A_cpu_vs_cuda_equal": true,
+  "A_id_min": 2,
+  "A_id_max": 66690,
+  "A_repeatable": true,
+  "B_can_fuse": true,
+  "B_fused_vs_reference_equal": true,
+  "B_module_fused_equal": true
+}

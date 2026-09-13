@@ -58,6 +58,29 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 
 ### 3.0 最新状态（Session 44）—— 先读这一小节，它覆盖下面较旧的记述
 
+> #### ⚠️ Session 46（最新）—— 我们的库已经在 SGLang main 的真实缝上跑通
+>
+> **补丁 0002**：`integrations/sglang-main/0002-ple-offload-engramdb-store.patch`
+> 新增 `--ple-offload-backend engramdb` —— 行源换成真实的 EngramDB store
+> （`--ple-offload-dir` 指向 store 根目录），表不再需要作为**一个** 51.2 GB 文件存在。
+> 缝没变（`Qwen4ExpPLELayer` → `gather` → `BreakableCUDAGraph`），但**表是真的、config 是真的、
+> 行号是引擎自己算的**：表 = 128 片 × 2,500,012 行 × 160 B = 51.2 GB（`/root/autodl-tmp/qwen35-ple/qwen38-rows`），
+> config = checkpoint 自己的 `text_config`，引擎 `padded_vocab` = 320,001,536 = store 行数。
+>
+> **正确性三条独立证据**：①引擎 `_hash_contexts` 与 `engramdb.rowids_for_seq` 逐位相同
+> （512×16 ids，max_abs_diff = 0；引擎的 `layer_multipliers` 就是原生路径硬编码的那三个常数）；
+> ②`Store.fetch` 与独立 `os.pread` 原始分片字节相等；③每个 replay 的输出与同一 oracle 比对，
+> 4 个 batch 全部 5/5。
+>
+> **graph 单步**（median/25，4090）：warm **196.5 / 263.9 / 560.3 / 1094.9 µs**（1/8/32/128 token），
+> cold 406.5 / 1247.5 / 3536.0 / 10603.8。**唯一的优化做对了**：跨设备+跨 dtype 的 `copy_` 要 456 µs，
+> 拆成两次同 dtype 拷贝、把 cast 留在设备上只要 **38.6 µs（11.8×）**，整步 1613 → 1095。
+> 反面：把 cast 移出 CPU 但仍留在跨设备拷贝里，**比不优化还差**（1468 vs 1265）。
+>
+> **仍未解决**：整步依旧**完全暴露**（断点第一件事是 D2H）。下一步不变 ——
+> **把行号提前搬到 host**，可行性已证（host/device hash 逐位一致）。
+> 细节 `probes/ple_sglang_main_engramdb_session46.md`、roadmap §40。
+
 > #### ⚠️ Session 45 覆盖本节以下全部内容，先读这一段
 >
 > **「上游没有 PLE」是错的。** SGLang `main@14b647c` **有** `qwen4_exp.py` +
