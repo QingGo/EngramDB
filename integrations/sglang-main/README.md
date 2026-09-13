@@ -152,3 +152,94 @@ Measured end to end on a 4090 against the real Qwen3.8-Flash-Next geometry and
 the real 51.2 GB store: warm **196.5 / 263.9 / 560.3 / 1094.9 µs** for
 1 / 8 / 32 / 128 tokens, all replay-correct against an independent `pread` of the
 raw shards. See `probes/ple_sglang_main_engramdb_session46.md`.
+
+---
+
+# Using this: who should, and how
+
+## First — most people should not use `engramdb`
+
+| your machine | backend | why |
+|---|---|---|
+| ≥48 GiB of mlock-able host RAM | **`pinned`** (upstream default) | fastest by far: **~50 µs/step and flat in batch size** (30.1 / 67.4 / 48.1 / 51.7 µs at 1/8/32/128 tokens). Nothing here beats it. |
+| GB10 / DGX Spark class (HMM) | **`file`** (upstream) | kernel walks host page tables, no host round trip |
+| neither of the above, and the table must come off the device | **`engramdb`** (0002) or **`file-staged`** (0001) | the only options that work, and they cost a host round trip per gather |
+
+The order matters: `engramdb` exists for machines where the table cannot be
+resident *and* the GPU cannot dereference pageable host memory. If that is not
+your machine, it is strictly slower than what you already have.
+
+## The pipeline
+
+1. **Get the checkpoint** — `Qwen3.8-Flash-Next-FP8` (the PLE table lives in
+   `model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_{0..127}.weight`).
+   Only those shards are needed for the store, but the model itself has to run
+   somewhere.
+
+2. **Extract the rows into a store** (~51.2 GB, sequential read+write, ~10 min):
+
+   ```sh
+   python scripts/extract_ple_rows.py <checkpoint_dir> <store_dir>
+   # -> <store_dir>/shard_000.bin .. shard_127.bin, 400001920 B each
+   ```
+
+   Plus a `manifest.json` describing `num_shards` / `expected_shard_bytes`; the
+   backend reads it to derive `rows_per_shard`, and falls back to globbing
+   `shard_*.bin` if it is absent.
+
+3. **Apply the patches to a source checkout of SGLang `main`** (`14b647c`):
+
+   ```sh
+   git clone --depth 1 https://github.com/sgl-project/sglang
+   cd sglang && git checkout 14b647cf27d7f2c1a3764841f7d3770ff9f9e7d6
+   patch -p1 < 0001-ple-offload-file-staged.patch
+   patch -p1 < 0002-ple-offload-engramdb-store.patch
+   ```
+
+   No rebuild: nothing here is a kernel.
+
+4. **Run** (needs `pip install engramdb`, v0.3.0 or later):
+
+   ```sh
+   PYTHONPATH=$PWD/python python -m sglang.launch_server \
+     --model-path <checkpoint_dir> \
+     --ple-offload-embedding \
+     --ple-offload-backend engramdb \
+     --ple-offload-dir <store_dir> \
+     --cuda-graph-backend-decode breakable \
+     --cuda-graph-backend-prefill breakable
+   ```
+
+   The `breakable` flags are **required**, not tuning: `gather` is a host round
+   trip and capture fails outright without the break. Add `--disable-cuda-graph`
+   instead if you want eager — that also works, and it is what the class-level
+   hooks in the main README do.
+
+## What to expect
+
+Against τ(1) ≈ 325 µs (the lead time the model gives the PLE layer at index 1),
+warm 1- and 8-token steps fit; everything else does not, and the cost lands on
+the critical path in full:
+
+| tokens | rows | warm | cold |
+|---|---|---|---|
+| 1 | 16 | 196.5 | 406.5 |
+| 8 | 128 | 263.9 | 1247.5 |
+| 32 | 512 | 560.3 | 3536.0 |
+| 128 | 2048 | 1094.9 | 10603.8 |
+
+That is a **service ceiling, not a speedup**: a 128-sequence decode step pays
+1.095 ms, so PLE alone caps aggregate throughput near 117k tok/s; a single
+sequence warm is ~5.1k tok/s, cold ~2.5k tok/s. It is usable; it does not feel
+resident.
+
+## Not yet
+
+- **Nothing here is upstreamed.** Both patches are diffs against a checkout, and
+  the machine that runs this must build a 51.2 GB store first. There is no
+  released turnkey path today.
+- Without the patches, EngramDB still works with vLLM and SGLang through the
+  class-level hooks in the repository README (`DiskPleNGramEmbedding`,
+  `install_real_qwen_ple_embedding`) — but **in eager mode**. vLLM's graph mode
+  cannot execute a host-issued read at replay under `FULL_AND_PIECEWISE`, which
+  is why this work moved to SGLang.
