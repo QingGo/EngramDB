@@ -4636,6 +4636,18 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 `docs/cuda-graph-injection.md` 全部是源码阅读结论，文档里都标了 ⚠️，
 **但这要成为纪律而不是自觉** —— 上一轮正是因为把推论当结论，白跑了八次 GPU 运行。
 
+**第九条（Session 44 新增）：关于上游能力的断言，必须落到 main/目标 branch 的具体 path 上。**
+
+来源是一次真实的失败：本轮我**两次**断言「SGLang 没有 Engram/PLE」——
+对已安装的 0.5.19 为真，**对 `main` 为假**（`main` 已有 `config.ple_offload_backend="file"`
+的 file-backed PLE 表）。根因是**从 release + 一条关于 branch 的 bug 报告推理上游主线**。
+
+规则：① 用 `api.github.com` 而不是 `github.com`（HTML 取回来几乎全是导航框架）；
+② 断言必须带 **commit / tree 来源**；③ **「我装的版本里没有」不等于「上游没有」**；
+④ 动手建 apparatus 之前先确认目标缝在目标 branch 上存在。
+**同一类错误在同一 session 里出现了两次**（另一次是把 Python reader 的开销记到存储头上）——
+共同点都是**验证了替身，没验证目标**。
+
 **第八条：验收表上只保留有前置条件的项。** 「待硬件」不是状态，是**没有承诺**；
 把它和「未验证」并列，会让所有其他工作都可以自称在为它做准备（§29.2 第 3 条失速）。
 
@@ -4791,3 +4803,94 @@ python scripts/ledger_rate.py --max-open 4
 Session 43 的每一个归因数（D2H 387 µs、rowid 240 µs、磁盘占一半）都来自
 「两个噪声总量相减」；Session 44 每一个**直接测量**的数都推翻了一个差值结论。
 `§36.5` 把成本分解仪器列为前置是对的 —— **在它存在之前，任何归因都只是猜测。**
+
+---
+
+## 37. 上游图景（Session 44 外部调研）：我们不是第一个，而且主线的缝不需要我们的断点
+
+> 证据：`research/PLE_INTEGRATION_SURFACE.md`（每条带 URL，标 [C] 已读 / [U] 未确认）。
+> **本节的价值主要是负面的 —— 它缩小了我们以为自己拥有的空间。**
+
+### 37.1 已确认的上游事实
+
+| 引擎 | 状态 | 机制 | 要 graph break? |
+|---|---|---|---|
+| **SGLang `main`** | **已发布** `config.ple_offload_backend="file"` | file-backed PLE 表；`PleFilePrefetcher`（`posix_fadvise(WILLNEED)`）+ `PleFileRssTrimmer`（`MADV_DONTNEED`，8 GiB 预算）；门控在 `cudaDevAttrPageableMemoryAccessUsesHostPageTables`（GB10 / DGX-Spark HMM） | **否** |
+| SGLang #36567 | open，未合，栈在 #36497 | Rust **io_uring** + `O_DIRECT` + 队列深度 512；host 侧发起 | **是（硬依赖）** |
+| vLLM #54371 UVA | **已合并**（2026-09-09，`3116c5d`） | 整个本地分片 pin 在 RAM，GPU 经 UVA 直读 | 否 |
+| vLLM #54070 disk | draft，栈在 #53899 | 最大 parameter 换成 file-backed mmap + `MADV_RANDOM`；**gather 路径一字未改** | **否**（图内 `cuStreamWaitValue32`） |
+| vLLM #54129 mmap | open，**独立设计** | Model Runner V2 的 input-prep 阶段 gather | 否 |
+
+⚠️ **有两个磁盘 PR，不是一个。** #54371 的「Not a duplicate」比的是 **#54129**，不是 #54070。
+
+### 37.2 三条关键推论
+
+**① UVA 不取代磁盘 —— 缝隙是真的。**
+#54371 把**完整分片** pin 在 RAM。`csrc/libtorch_stable/cuda_view.cu` 走
+`cudaHostGetDevicePointer`，而**非 pinned 张量会被 `cudaHostAlloc` 出新的全尺寸 buffer
+并整表 memcpy** ⇒ 一个 pageable file mmap 会**悄悄付掉完整的 ~95 GB**。
+要让 UVA 看见它就得 `cudaHostRegister`（pin ⇒ 放弃分页）或 HMM/ATS。
+⇒ **「宿主内存 < 表」这一类部署，上游没有解。**
+
+**② 主线的缝不需要我们的断点 —— 这是本轮最贵的负面结论。**
+两个 offload 设计**按构造就是无断点的**：vLLM 用 fake-impl custom op 在图内做
+`cuStreamWaitValue32`（等待是**图节点**，不是 host 断点）；SGLang 的 `file` 后端直接在
+file-backed CPU 张量上 gather。
+⇒ **我们为「让 host Python 在 replay 期间执行」建的那整套 apparatus（断点函数、分层自证、
+`is_in_breakable_cuda_graph` 的判据陷阱），在主线集成里用不上。**
+另注：`@eager_break_during_capture` **默认是空操作** —— 不设
+`VLLM_USE_BREAKABLE_CUDAGRAPH` 时直接返回原函数，且在 `CUDAGraphMode.FULL` 下也返回原函数。
+
+**③ 但 #36567 正好需要它，而且它从未被验证过 —— 这是我们唯一确定对得上的缝。**
+#36567 是 host 侧发起（`.to("cpu").tolist()` + `ThreadPoolExecutor` + 阻塞 `future.result()`），
+硬依赖 breakable backend —— **而它自己的 speed test 是 eager 跑的**，diff 里没有任何
+breakable / `FULL_AND_PIECEWISE` 的 capture 验证。
+**我们独立证明了那个机制可行（`backend_replay` / `break_calls_in_replay` 分层自证），
+并量出了窗口 `τ(1) ≈ 325 µs`。这正是 #36567 缺的那块验证。**
+
+### 37.3 我们真正独有、上游没有的四件东西
+
+1. **成本模型**：页错误主导、每 token 16 页、原生 `Store.fetch` 101 µs vs Python 池 445 µs
+   （上游报的是端到端 tok/s 差，没有任何相位分解）。
+2. **可调度判据 `L*` 与实测窗口 `τ(L)`**：上游只报「disk −8% @c1 / −17% @c32」，
+   **不问「这个读要提前多久发出」**。
+3. **「读必须提前 ≥ ~325 µs 发出」这条约束** —— 而 PLE 在 layer 1 恰好只给这么多。
+   `PleFilePrefetcher` 用了 WILLNEED，但**前置量**没人量过。
+4. **确定性哈希感知的布局**（`Store-P` / `SlotIndex` / view 物化）——
+   上游只是把原始表 mmap 掉，没有布局层。**这是唯一一条上游完全没有的能力。**
+
+### 37.4 最小改动（已确认到函数级）
+
+- **vLLM（最便宜）**：在 `vllm/v1/ple_offload/worker.py` 的 `PleOffloadRunner.__init__`
+  权重发现循环里加一个 `_ple_disk_attach` 式钩子。契约 = `_gpu_output_buffer` + `_sem`
+  + 在 copy stream 上 signal `DONE_VALUE`。**无需 graph break**，#54070 已证明可行。
+- **SGLang**：`main` 已有 `backend="file"`。若要自己的 store，子类化
+  `Qwen4ExpPinnedHostEmbedding`（`srt/models/qwen4_exp.py:768`）覆写 `gather`（:861）——
+  其 `start_prefetch`(:1145) / `_consume_prefetched_embeddings`(:1183) /
+  `_graph_prefetch_buffers` 已经是 capture-aware。**可能什么都不用写。**
+- **DeepSeek-V4.1 Engram**：在 **`dsv4.1` branch**（**不在 main**）：
+  `srt/layers/engram.py` 的 `EngramHasher`；embedding gather 是 graph-safe 的
+  （`EngramEmbedding._owned_rows` → `engram_gather` Triton，纯设备侧），
+  hasher 才需要 `eager_on_graph`。
+
+### 37.5 对活账的影响（§36.5 重排）
+
+- **P1.5（stage 2）降级**：它优化的是**替身缝**。主线缝无断点，我们的断点优化不迁移。
+  **建议：冻结，除非走 #36567 那条线。**
+- **新增 P0.5（最高优先）：换目标。** 读 `Qwen4ExpNGramEmbedding` /
+  `Qwen4ExpPinnedHostEmbedding` / `qwen4_exp_ple_table.py`，把我们的存储接到**真实缝**上。
+  这是**读代码 + 改接口**，不是 GPU 工作。
+- **新增 P2.5：把成本模型与 `τ(L)` 交给上游。** 这是唯一上游没有、且对 #36567 直接有用的东西。
+- **差异化叙事必须改**：不能说「我们能在 graph 断点里藏一个磁盘读」，
+  要说「**表比宿主内存大时，我们不掉 17%**」，并拿 #54070 的 −8%/−17% 当基准。
+
+### 37.6 ⚠️ 纪律失败留档（第九条纪律的来源）
+
+我此前**两次**断言「SGLang 没有 Engram/PLE」：对 0.5.19 为真，**对 `main` 为假**。
+根因是**从已安装的 release + 一条关于 branch 的 bug 报告去推理上游主线**，而不是读 `main`。
+
+这与本 session 早些时候「把 Python reader 的开销记到存储头上」是**同一类错误：
+验证了替身，没验证目标。**
+
+⇒ **新增第九条纪律**：关于上游能力的断言，必须落到 **main / 目标 branch 的具体 path**，
+并注明 commit 或 tree 来源。**「我装的版本里没有」不等于「上游没有」。**

@@ -29,3 +29,7 @@ venv/
 !probes/*baseline*.csv
 # Local PyO3 build artifact (regenerate with cargo build -p engramdb-pyo3)
 python/engramdb/_engramdb.so
+
+# research/: 只入库人写的结论,原始 API payload 可重取(见 research/README.md)
+research/*.json
+research/d*/
