@@ -3901,13 +3901,195 @@ nopool 245.25 266.96 244.69 249.16   marg 4.43 4.90 4.44 4.51
 > 都必须让那个张量成为 `get_attr` 之外的东西** —— 即**算子的实参**。
 > 这就是 `mutates_args` 存在的理由。
 
-**下一个 session 从这里开始**（按可能性排序）：
-1. 启动后 dump `vllm_config.compilation_config.splitting_ops`，确认我们的项**真的在里面**
-   （`set_splitting_ops_for_v1()` 与 `compute_hash()` 的执行顺序可能吃掉它）；
-2. 读 `vllm/compilation/` 里消费 `splitting_ops` 的那段，确认匹配的是名字还是 **tag**
-   （`direct_register_custom_op` 有 `tags` 参数，引擎的 op 没传）；
-3. 检查 `use_inductor_graph_partition=False` 下的切分实现；
-4. 检查 `FULL_AND_PIECEWISE` 是否把整段 forward 当 full graph 捕获而绕过切分点。
+### 35.1d 子条件 4 的机制**在树上已经存在**，而且不是我们以为的那个（session 43 调研）
+
+> 这一节把 §35.1c 结尾的四条假设全部结掉，并推翻其中的方向。
+> 结论：**我们一直在错的那条路上找出口。** 出路不是让 `splitting_ops` 生效，
+> 而是换一个**不依赖 torch.compile** 的机制 —— 那个机制 vLLM 0.29.0 里已经有。
+
+#### 先结掉四条假设
+
+**假设 4（`FULL_AND_PIECEWISE` 绕过切分点）成立，而且是最直接的原因。**
+`vllm/config/compilation.py:53-63`：
+
+```python
+FULL_DECODE_ONLY = (FULL, NONE)
+FULL_AND_PIECEWISE = (FULL, PIECEWISE)
+def decode_mode(self): return CUDAGraphMode(self.value[0]) if self.separate_routine() else self
+```
+
+`value[0] == FULL` ⇒ **decode 阶段用 FULL**。而 `eager_break_during_capture`
+（见下）里有一句 `if mode == CUDAGraphMode.FULL: return fn(*args, **kwargs)` ——
+**FULL 下不打断**。我们的 op 因此在 capture 期被塞进一张 full graph，
+replay 时不再执行。这与实测的 `reader_calls = 0` 完全一致。
+
+**假设 1、2（`splitting_ops` 没传进去 / 匹配靠 tag）不需要再查。**
+`vllm/compilation/partition_rules.py:14-38` 的 `should_split` 是唯一的消费点，
+它按 `target._qualified_op_name` / `packet_name` 做**字符串相等**匹配，
+不涉及 `tags`；`inductor_partition_rule_context` 则把同一个列表赋给
+`torch._inductor.config.custom_should_partition_ops`。
+即 `"vllm::engramdb_ple_read"` **本来就匹配得上** —— 问题从来不在匹配。
+
+#### 真正的出路：`breakable_cudagraph`
+
+vLLM 0.29.0（机器上那个版本）里有 `vllm/compilation/breakable_cudagraph.py`，
+文件头第一句就是它的定位：
+
+> *"This is an alternative to `CUDAGraphWrapper` that replaces vLLM's
+> torch.compile-based FX graph splitting with **runtime stream-capture breaks**."*
+>
+> *"The idea (inspired by sgl-project/sglang#19102)"*
+
+开关是环境变量（`vllm/envs.py:756-759`，默认 `0`）：
+
+```
+VLLM_USE_BREAKABLE_CUDAGRAPH=1     # "Experimental: breakable cudagraph does not rely on torch.compile"
+```
+
+接线在 `vllm/v1/worker/gpu_model_runner.py:5513-5518`：
+
+```python
+if (is_breakable_cudagraph_enabled()
+        and cudagraph_mode != CUDAGraphMode.NONE
+        and not self.parallel_config.use_ubatching):
+    self.model = BreakableCUDAGraphWrapper(self.model, self.vllm_config)
+```
+
+对我们的意义，一句话：**W1–W4 全是 torch.compile / Inductor 的产物，而这条路径
+根本不经过 torch.compile。** 编译缓存（W2）、Inductor 折常量（W4）、
+trace 里禁止副作用（W3）在这一路径下**全部不适用**。
+
+#### 接入方式：一个装饰器，而且签名要求和我们**已经写好的** op 一致
+
+`breakable_cudagraph.py:59-91` 的 `eager_break_during_capture(fn)`：
+把一个自定义算子的 **Python kernel** 变成图的断点。捕获期调用它时，
+结束当前 segment → 在捕获流上 eager 执行 `fn` → 记录 `fn` 供 replay → 开新 segment。
+
+它对我们 op 的要求（第 70-72 行，原文）：
+
+> **"In-place output buffer required.** Decorated ops must write into a
+> caller-provided output tensor; a fresh tensor returned by `fn` would change
+> address each replay and break downstream graph segments."
+
+**我们的 `_read(output, tag)` + `mutates_args=["output"]` 正好就是这个形状。**
+所以改动量是：加一个装饰器 + 一个环境变量 + 把 `cudagraph_mode` 从
+`FULL_AND_PIECEWISE` 改成 `PIECEWISE`（因为 FULL 不打断，见上）。
+**`splitting_ops` 不需要了，`VLLM_DISABLE_COMPILE_CACHE=1` 也不再需要。**
+
+#### 引擎自己的模板：`prefetch_ops.py`
+
+更要紧的是，vLLM 树里已经有一个**和我们形状几乎相同**的现成实现，
+位于 `vllm/model_executor/offloader/prefetch_ops.py`（94 行）：
+
+```python
+direct_register_custom_op(op_name="wait_prefetch",  op_func=_wait_prefetch_impl,
+                          mutates_args=["input_tensor"],  fake_impl=_wait_prefetch_fake)
+direct_register_custom_op(op_name="start_prefetch", op_func=_start_prefetch_impl,
+                          mutates_args=["output_tensor"], fake_impl=_start_prefetch_fake)
+```
+
+文件头的注释就是 W3/W4 那条纪律的官方版本：
+
+> *"These ops use mutates_args to create data dependencies that prevent the
+> compiler from reordering prefetch/sync operations."*
+
+而 `vllm/model_executor/offloader/prefetch.py` 的注释写着
+*"Adapted from sglang/srt/utils/offloader.py"* —— **两个引擎在这里也是收敛的**。
+它的做法值得直接照抄（`prefetch.py:155-156, 250-288, 512-547`）：
+
+| 环节 | 做法 | 为什么对我们重要 |
+|---|---|---|
+| 独立 `copy_stream` | `torch.cuda.Stream()` | 取数与计算**真正并行** |
+| fork | `current_stream().record_event(e); copy_stream.wait_event(e)` | 「事件 fork」可被 CUDA graph 捕获 |
+| 完成信号 | `_copy_done_event.record(copy_stream)` | 等待变成**事件等待**，因此可进图 |
+| wait | capture 中 `wait_event`，eager 下退化为 `wait_stream` | 两种模式都能用 |
+| join | `join_after_forward()` 在最后一段闭合前 join | 否则 replay 报 unjoined stream |
+
+**⇒ 关键洞察：「取数」和「等待」是两个算子，而且两者都能进图**
+（fork 与 event-wait 都是可捕获的 CUDA 操作）。
+**只有「磁盘读」这一段是宿主侧的、必须留在图外。** 于是最小设计是：
+
+1. `start_ple_read(...)` —— eager 断点，提交 io_uring 后**立即返回**（不阻塞）；
+2. 内核在后台完成 I/O，GPU 同时算 layer 0…L-1；
+3. `wait_ple_read(...)` —— 取 pinned host buffer → **copy_stream 上的 async H2D**（进图）；
+4. 消费端 event-wait（进图）。
+
+#### 顺带解决「提前量」：断点天然给出重叠（有别于我们原先的假设）
+
+我们原先以为需要一个自己造的调度器来把读藏进前面的层。**不需要 —— 断点机制自带。**
+两个引擎的 replay 都是「launch 一段图 → 跑宿主函数 → launch 下一段」，**段间无同步**：
+
+```python
+# vLLM  vllm/compilation/breakable_cudagraph.py:212-214
+def replay(self) -> None:
+    for r in self.segments:
+        r()
+
+# SGLang python/sglang/srt/model_executor/runner_backend_utils/
+#        breakable_cuda_graph/breakable_cuda_graph.py:281-290
+def replay(self) -> None:
+    for i, seg in enumerate(self._segments):
+        seg.replay()                      # cudaGraphLaunch — 异步返回
+        if i < len(self._break_fns):
+            self._break_fns[i]()          # 宿主代码，与 GPU 并行
+```
+
+`cudaGraphLaunch` 立即返回，所以**断点函数在宿主上执行的同时，GPU 正在跑刚 launch 的那一段**。
+把读放在 layer L 的断点上，它就与 **layer 0…L-1 的 GPU 时间**并行：
+
+```
+每步净增延迟 ≈ max(0, 读耗时 − τ(L))
+```
+
+| 断点位置 | τ(L) | 冷读 195.9 µs | 净增 |
+|---|---|---|---|
+| layer 2 | 189.2 µs（SGLang graph 实测） | 195.9 µs | **+6.7 µs**（装不下） |
+| layer 14 | 2295 µs（V4.1 实测） | 195.9 µs | **0**（余量 ~11×） |
+
+⇒ 这与 §35.1.1 的提前量模型**完全同形**，而且解释了 V4.1 为什么把 PLE 放在 layer 14：
+**层深不是为了正确性，是为了让断点的重叠窗口盖住读延迟。**
+
+#### 版本边界（必须记，否则会踩空）
+
+| 引擎 | 版本 | 日期 | 有该机制 |
+|---|---|---|---|
+| SGLang | **v0.5.19** | 2026-09-05 | ✅（PR #19102，2026-04-11 merged） |
+| vLLM | **v0.29.0** | 2026-09-09 | ✅（PR #42304，2026-05-16 merged） |
+| vLLM | main（>0.29.0） | 2026-09-11 | ⚠️ PR #56312 把 breakable **限定为只接管 PIECEWISE**，FULL 交回标准 `CUDAGraphWrapper(FULL)` |
+
+⇒ 我们机器上两个引擎**都有**这个机制。但**必须以 `cudagraph_mode=PIECEWISE` 运行**，
+否则 decode 走 FULL、断点不生效 —— 这正是本轮实测到的失败。
+
+#### 新的验收判据（替代 §35.1c 的隐式标准）
+
+> `VLLM_USE_BREAKABLE_CUDAGRAPH=1` **且** `cudagraph_mode=PIECEWISE`
+> **且** `reader_calls > 0` **且** `tokens_identical_to_none == False`
+
+#### ⚠️ 一个会伪装成「跑通」的静默降级
+
+`vllm/config/compilation.py:1195-1217` 会在**注意力后端不支持 piecewise** 时
+不报错地改掉我们的模式：
+
+| 我们设的 | 静默变成 | 后果 |
+|---|---|---|
+| `PIECEWISE` | **`NONE`** | 变回 eager ⇒ 看着「有图」其实没有，`reader_calls` 会有值，**假阳性** |
+| `FULL_AND_PIECEWISE` | **`FULL`** | 断点失效 ⇒ 就是本轮实测到的失败 |
+
+`resolve_cudagraph_mode_and_sizes()`（同文件 1375-1435）还会按后端能力**自动挑**模式。
+⇒ **上机必须 dump 一次启动后的 `compilation_config.cudagraph_mode` 并断言等于 `PIECEWISE`**，
+不能假设传进去就是生效值。这与 §35.1c 的 W2（编译缓存复用旧产物）是同一类陷阱：
+**注入类实验必须自证「我确实在我想测的那个模式下」**，而不只是自证「我的读发生了」。
+
+#### SGLang 侧的对应物
+
+`@eager_on_graph(enable=True)` 装饰器 + `break_graph()` 辅助函数 +
+`SGLANG_USE_BREAKABLE_CUDA_GRAPH=1`（SGLang PR #19102 原文：
+*"when enable `SGLANG_USE_BREAKABLE_CUDA_GRAPH`, the decode graph is breakable.
+The overhead is minimal if no graph break inserted."* —— **明确覆盖 decode**）。
+文档：<https://docs.sglang.io/docs/advanced_features/breakable_cuda_graph.md>。
+
+> ⚠️ 本节全部为**源码阅读结论，尚未在 GPU 上验证**。上机第一件事是按上面的
+> 验收判据跑一次；在拿到 `reader_calls > 0` 之前，§6.1 的子条件 4 保持 ❌。
 
 ### 35.2 本轮技术债（V166–V177）
 
