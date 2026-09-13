@@ -5372,3 +5372,76 @@ cast 本身在 GPU 上只有 18 µs，**贵的是让 `copy_` 顺便做它**。�
 更便宜的两条，按序：①`Store.fetch` 在 16 行时要 ~94 µs，几乎全是固定开销，而 decode 一步就是 16 行；
 ②`fetch_into(rowids, buffer)` —— 写进调用方持有的 pinned `bytearray`，可以省掉
 `bytes` 分配以及 `torch.frombuffer` 对只读输入强加的那次 `bytearray` 拷贝。
+
+
+---
+
+## §41 Session 47：不改源码的接入面，与「让读被盖住」的设计（纯调研，无实机）
+
+`docs/no-rebuild-integration.md`
+
+### 41.1 用户不需要我们的补丁也能用上
+
+**SGLang 有官方的 out-of-tree 模型注册**，`models/registry.py` 结尾两行：
+
+```python
+ModelRegistry.register("sglang.srt.models")
+if external_pkg := envs.SGLANG_EXTERNAL_MODEL_PACKAGE.get():
+    ModelRegistry.register(external_pkg, overwrite=True)
+```
+
+`overwrite=True` ⇒ 外部包的 `EntryClass` **覆盖内建同名 arch**；注册键是**类名**，
+而 checkpoint 的 `architectures` 就是 `Qwen4ExpForConditionalGeneration`
+⇒ 我们的类**取同一个名字**，就**连 `config.json` 都不用改**。用户侧只有：
+
+```sh
+pip install engramdb-sglang
+export SGLANG_EXTERNAL_MODEL_PACKAGE=engramdb_sglang.ext
+export ENGRAMDB_PLE_STORE=/path/to/qwen38-rows
+python -m sglang.launch_server ... --ple-offload-embedding --ple-offload-backend file \
+  --cuda-graph-backend-decode breakable --cuda-graph-backend-prefill breakable
+```
+
+`install()` 只做运行期绑定替换（换 `Qwen4ExpPinnedHostEmbedding` 这个模块全局、
+把 `check_file_backend_supported` 置空、从 env 读 store 根），**不碰任何文件**。
+
+**这条改变了对补丁 0001/0002 的定位**：它们变成「送回上游」的产物，
+而不是用户获得功能的唯一途径。代价是 `engramdb-sglang` 包要自带约 120 行实现
+（不能 import 补丁里的 `Qwen4ExpStagedFileEmbedding` / `_adopt_embedding`），
+用**原版**的 `eager_on_graph`（原版 main 里就有）。
+
+vLLM 同一条路但机制不同：官方 Plugin System，`pyproject.toml` 里声明
+`[project.entry-points."vllm.general_plugins"]` 即可，我们已有 `vllm_plugin.py`，
+**只缺一个 entry point 声明**。但 **vLLM 只到 eager** —— graph 模式下 decode 取 `FULL`、
+replay 不跑 Python，路线 B 从未跑过。所以「不改源码 + graph」目前只有 SGLang 一侧。
+
+### 41.2 让读被盖住：拆断点，不需要新机制
+
+`BreakableCUDAGraph.replay()` 本来就是逐段 `seg.replay()` 后调 `_break_fns[i]()`，
+**一次 forward 支持多个断点**。于是把现在的一个断点拆成两个：
+
+- **break A**（`start_prefetch`/`gather`）：D2H 取行号（只等 seg0，很小）→
+  把 store 读 **submit 到线程池、不等待**
+- **seg1**：前一个 decoder layer 的 GPU 工作 = τ(1)
+- **break B**（`_consume_prefetched_embeddings`）：等 future → 发布 H2D
+
+⇒ `暴露 = max(0, read − τ(1)) + publish`。按已测分量推算（warm）：
+16 行 142.2 → **~25**（读被完整盖住）、2048 行 919.0 → ~506。
+单 token warm 单步 **196.5 → ~80 µs**。
+
+**为什么能与 capture 共存**：完全不用跨 stream 的 CUDA 机制。上游
+[PR #29166](https://github.com/sgl-project/sglang/pull/29166) 已经踩过这个坑 ——
+CPU 权重 offload 用 `alt_stream` 预取 + event，capture 期间
+`cudaErrorStreamCaptureIsolation`，上游的修法是**捕获时放弃重叠改 inline**。
+我们的读是纯 host I/O，H2D 是 replay stream 上的普通拷贝，没有图外 event/stream 参与。
+
+顺带：`posix_fadvise(WILLNEED)` 应当从消费时刻挪到 **break A** —— §39.3④ 量到它在消费时刻
+净亏 ~830 µs 且冷态零收益（「不是 WILLNEED 不好，是发得太晚」），拆点之后它才有 τ(1) 的提前量。
+
+更深一层仍是**把行号搬到 host**（§39.3⑤ 已证 hash 逐位一致），那样 break A 连同步都不需要。
+
+**未决**：①store 读必须释放 GIL，否则挡住 `seg1.replay()`（SC4 已在线程池里跑过原生 fetch，
+可行，需复测）；②两个断点必须拿到**同一个** `_graph_prefetch_buffers[lookup_tokens]`；
+③`_consume_prefetched_embeddings` 里的 `wait_stream(prefetch_stream)` 是 capture 期 Python，
+改断点时要确认它不会变成对图外 stream 的依赖。
+**本轮全部是设计，没有一行实机验证 —— 机器已关，预期数字是推算不是实测。**

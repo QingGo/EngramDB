@@ -666,6 +666,7 @@ EngramDB/
 | `docs/measurement-protocol.md` | **测量协议 checklist** —— 读任何数字之前先读它。含编译 / CUDA graph 类实验的 5 条 |
 | `docs/cuda-graph-injection.md` | **把宿主侧磁盘读放进 CUDA graph 化 decode 步**：两引擎的真实开关、API 契约、重叠语义、三个会伪装成「跑通」的陷阱 |
 | `probes/sc4_phase_decomposition_session44.md` | **相位分解**：把「存储代价」拆回真正的归属（reader / D2H / rowid / 窗口 τ(L)），并推翻 Session 43 的差值归因 |
+| `docs/no-rebuild-integration.md` | **不改源码、不重编的接入方式**（SGLang `SGLANG_EXTERNAL_MODEL_PACKAGE` / vLLM entry point 插件），以及**让磁盘读被 GPU 计算盖住**的设计 |
 | `integrations/sglang-main/` | **SGLang `main` 的 PLE 卸载补丁** —— `file-staged` 后端（让非 HMM 显卡也能用磁盘表）+ 缝地图 + 应用/运行方式 |
 | `probes/ple_sglang_main_session45.md` | **在 SGLang `main` 的真实缝上跑通并量代价**：`file-staged` 正确性、无断点即 capture 失败、上游 `file` 门禁挡的是真崩溃（`cudaErrorIllegalAddress`）、τ(1) 判决与相位分解 |
 | `docs/prefetch-lead-time.md` | `τ(L)` 提前量模型 —— §36.2 的 `L*` 规则由它化简而来 |
