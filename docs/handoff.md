@@ -11,6 +11,11 @@
   除非有新的可复现数据挑战它。
 - **不要**把数据/表/视图文件加进 git（git 只有代码/文档/probes；`data/*` 是符号链接）。
 - **不要**在未读取 `docs/session-log.md` 后复述"还没做过某实验"——本文件有全部状态。
+- **不要**用 `SGLANG_USE_BREAKABLE_CUDA_GRAPH` 当开关：它在 SGLang 0.5.19 里是**只写变量**
+  （全库只有定义 + 一处 `.set()`，**没有任何读取方**）。真正的开关是
+  `--cuda-graph-backend-decode=breakable`。`scripts/sglang_bcg_probe.py` 会把这条当成检查跑一遍。
+- **不要**把 roadmap 各代复盘里的复选框数当成债务指标：那是**复盘史**，
+  已由 §0 正式废止（原因见 roadmap §0）。活账只有 README §6.1 与 roadmap §36.5。
 
 ## 1. 项目是什么
 EngramDB = DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的**磁盘优先存储引擎**（Rust，
@@ -39,6 +44,61 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 ```
 
 ## 3. 当前完成度（截至最新 commit）
+
+### 3.0 最新状态（Session 44）—— 先读这一小节，它覆盖下面较旧的记述
+
+**裁判换了。** 旧口径「每 token Engram 开销 ≤ 500 µs」已标注为**带假设的推导、不是测量**：
+它假设 100 tok/s 的分母，而那个分母**从未被测过**，CUDA graph 实测把它改变了 7.3–7.8×。
+新裁判是 `L* = ⌈ t_read ÷ 单层前向时间 ⌉`（roadmap §36.1/§36.2）——
+**所需层号 = 读耗时 ÷ 单层 GPU 时间**，没有别的参数。
+
+**真实 PLE 几何已从「未验证」升到「索引级确证」**（来源是 checkpoint 自己的
+`model.safetensors.index.json`，152,089 条权重）：`Qwen3.8-Flash-Next-FP8`
+**48 层**、PLE 权重在 **`layers.1.ple.*`（0-based 第 1 层）**、`hidden_size=2560`、
+**16 个 id/token**（`ngram ∈ {2,3}` × `heads_per_ngram=8`，与 vLLM 的
+`compute_ngram_ids` 同构）、`ple_layer_ids=[2]` 是 **1-based**。
+表本体：**128 片 × 2,500,012 行 × 160 B(FP8_E4M3) = 320,001,536 行 = 51.2 GB(47.68 GiB)**，
+已用 zero_frac / 互异签名 / 熵 6.489 bits/byte 验证是**完整真实数据**。
+⚠️ 此前写的「24 层、第 2 层」是**替身模型 `Qwen3.5-0.8B` 的层数**被误当成 PLE 模型的几何。
+
+**三个判决**（全部是**乐观界**，因为 94.6 µs/层是整步平均、含与层数无关的固定开销）：
+
+| 几何 | 需要 | 实际 | 结论 |
+|---|---|---|---|
+| Qwen PLE（48 层，0-based 第 1 层） | `L*=3` | 1 | ❌ **差两层** |
+| V4.1 Engram（48 层，第 14 层） | `L*=4` | 14 | ✅ 余量 3.5× |
+| V4.1 **无线程池** | `L*=26` | 14 | ❌ **装不下** ⇒ **并发度是可行性前提，不是吞吐优化** |
+
+**子条件 4（CUDA graph）已闭合**（Session 43，SGLang 侧）。
+vLLM 0.29.0 做不成：`FULL_AND_PIECEWISE` 让 decode 取 `FULL`，`splitting_ops` 被绕过，
+replay 不跑任何 Python（8 次运行留档）。
+**换 SGLang 不是配置差异而是机制差异**：breakable graph 在**段间**执行真 host Python。
+最硬的旁证：**`forward_calls = 26` 而 `backend_replay = 553`** ——
+replay 时模型的 Python `forward` 一次都没被调用，**唯一会跑的 Python 就是断点函数**。
+数字：`none 419 / break 389 / read 258 tok/s`，`read − break = 1.30 ms`（三次复跑稳定）。
+**但那不是存储代价**：直测磁盘读 445–468 µs，与调优值 195.9 µs 差 2.3×；
+host 侧残余 ≈0.85 ms 才是大头，且磁盘**完全暴露**。
+细节与两个被推翻的假设见 `probes/subcondition4_sglang_session43.md`。
+
+**下一步**（活账 = roadmap §36.5）：**P0** 锚定分母（斜率法测边际单层时间）→
+**P1.5** stage 2 把 1.30 ms 摘出关键路径（前置：成本分解仪器）→
+**P2** 把 `L*` 落到本机（前置：rowid 访问分布、native gather/dequant 边界）→
+**P3** 产品广度**已冻结**。
+
+**⚠️ 账本已合并（roadmap §0）。** roadmap 里 217 未关 / 63 已关的复选框是**复盘史，不是活账**；
+那个「净关闭率」指标已正式废止（它衡量的是「有多少代死掉的计划还没删」，结构上只可能变负）。
+**唯一活账 = README §6.1 + roadmap §36.5**，仍然必需的工作必须出现在这两处之一。
+
+**⚠️ 机器现状**：AutoDL 盒子（`ssh -p 44855 root@connect.nmb1.seetacloud.com`）**已关机**，
+只能从 AutoDL 网页控制台启动。盒子上的 venv 补丁是**临时的**；权威实现在仓库里：
+`scripts/sglang_bcg_output_patch.py` + `scripts/qwen3_5_sc4_hook.py install`。
+
+**踩过的操作性坑（别重犯）**：① 以 `<venv>/bin/python -m ...` 启动但不 activate 时，
+子进程 PATH 缺 venv bin ⇒ 找不到 `ninja`，看起来像 SGLang 崩了；
+② `pgrep -f "sglang"` 会把**你自己的 ssh 远端 shell** 匹配上（命令行里含脚本名）并杀掉自己 ——
+用 `pkill -f "[s]glang.launch_server"`；③ `engine.shutdown()` 用 SIGKILL ⇒
+子进程侧计数器必须**后台线程周期落盘**，atexit 不会跑。
+
 - **P2 数据面全部闭环**：三域语料（fineweb/zh/agent）稀疏统计、真实分布修正
   （大语料热集失效 → I2 索引仅作缓存优先级+agent 负载）；agent 负载 top100 覆盖 99.2%。
 - **P4 存储面定案**（见 probes/p4_view_notes.md v2-v9）：
@@ -233,7 +293,7 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
 
   **Session 36（第二十二轮：Phase A + DiskSlotIndex + 全表工具）**：WSL 1M real/control/no-reader 3-seed 已核验并固化（real < control < no-reader，Go）；新增 `DiskSlotIndex`、`--keys-stream`、`build_full_store_p_batch.py`、合成 CI 门禁和 StorePool 遥测。新债 V140–V148（双路径复跑、全表索引实测、bucket 文件数、原生 CLI slot-index、fetch timing、golden、真表门禁、发布），完整思考见 `docs/roadmap.md` Section 26。
 
-  **Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构）**：EngramDB 新增原生 `slot-index build|verify`、`view build --slot-index` / `view verify --slot-index`；Python `DiskSlotIndex` 支持 v1/v2 并可直接生成 v2；新增 `scripts/bench_disk_slot_index.py`。完成 vLLM/SGLang/PleMemory/TargetReader/Bundle 架构可行性分析。新债 V149–V156（serving 层、engine adapter、per-sequence、bundle、Arrow、v0.2.12、真表门禁、依赖隔离）。完整版见 `docs/round-37-full-summary.md`。
+  **Session 37（第二十三轮：原生 SlotIndex CLI + serving 架构）**：EngramDB 新增原生 `slot-index build|verify`、`view build --slot-index` / `view verify --slot-index`；Python `DiskSlotIndex` 支持 v1/v2 并可直接生成 v2；新增 `scripts/bench_disk_slot_index.py`。完成 vLLM/SGLang/PleMemory/TargetReader/Bundle 架构可行性分析。新债 V149–V156（serving 层、engine adapter、per-sequence、bundle、Arrow、v0.2.12、真表门禁、依赖隔离）。完整版见 `docs/archive/round-37-full-summary.md`。
 
   **Session 38（第二十四轮：Serving 层基础落地）**：
   - 新增纯 Python `ple_math.py`：Qwen PLE rowid 零第三方依赖。
@@ -255,7 +315,7 @@ N4 crates.io OIDC / N6 PyPI 相似名 留 0.2 窗口。
    - 新增技术债 V157–V165：serving Python 热路径、DiskSlotIndex v3 cache/规模、重复 tuple 语义、PyO3/ctypes 收敛、发布纪律、真实引擎 A/B、真表 nightly、真实表 e2e。
    - 后续计划重排为 Phase R1–R5：生产收敛、索引产品化、真实 serving、真表门禁/发布纪律、生态 canonical。
    - 借鉴矩阵更新：DuckDB/SQLite、RocksDB/LMDB、Arrow/Parquet、vLLM/SGLang/llama.cpp、Transformers/engram-peft/qwen35-ple。
-   - 完整版见 `docs/round-40-full-summary.md` 与 Roadmap Section 28。
+   - 完整版见 `docs/archive/round-40-full-summary.md` 与 Roadmap Section 28。
 
    **Session 42（第二十八轮：Phase A 闭环 + 并发度/行折叠实测）**：
    - **Phase A 闭环**：在 AutoDL 容器（原生 NVMe，见 §4 机器表）用**真实 Qwen3.8 PLE 行**测出可信冷读数字。

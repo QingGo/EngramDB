@@ -1960,7 +1960,7 @@ V144 闭环
 - [ ] 通用 vLLM / SGLang target reader adapter
 - [ ] v0.2.12 发布
 
-> 完整版见 `docs/round-37-full-summary.md`。
+> 完整版见 `docs/archive/round-37-full-summary.md`。
 
 
 ## Session 38（第二十四轮：Serving 层基础落地）
@@ -2072,7 +2072,7 @@ DiskSlotIndex v3 Rust e2e 通过
   - 真实 vLLM/SGLang A/B、真表 nightly、真实表 e2e 仍未闭环。
 - 重排后续为 Phase R1–R5：生产路径收敛、磁盘索引产品化、真实引擎 serving、真表门禁与发布纪律、生态 canonical 化。
 - 更新借鉴矩阵：DuckDB/SQLite、RocksDB/LMDB、Arrow/Parquet、vLLM/SGLang/llama.cpp、Transformers/engram-peft/qwen35-ple 等。
-- 新增 `docs/round-40-full-summary.md` 与 Roadmap Section 28。
+- 新增 `docs/archive/round-40-full-summary.md` 与 Roadmap Section 28。
 
 ### 2. 核心结论
 
@@ -2085,7 +2085,95 @@ DiskSlotIndex v3 Rust e2e 通过
 
 ```text
 Roadmap Section 28 已新增
-round-40-full-summary.md 已新增
+docs/archive/round-40-full-summary.md 已新增
 V157–V165 已登记
 Phase R1–R5 已排布
+```
+
+---
+
+## Session 42（第二十七轮：真 serving + 引擎地板 + 子条件 4 首次实现）
+
+### 1. 做了什么
+- 在 RTX 4090 + vLLM 0.29.0 + 真实 128 分片 PLE 表（47.68 GiB）上跑通真 serving 的 eager A/B。
+- 测出两引擎地板：vLLM eager 47.0 tok/s / graph 342.0；SGLang eager 56.3 / graph 440.4。
+- rowid 与引擎自己的 `compute_ngram_ids` 对拍：37 用例 / 18,048 个 rowid **逐位相同**。
+- 子条件 4 首次实现（`scripts/serve_ple_ab_graph.py`），8 次运行全部留档。
+
+### 2. 踩坑/发现
+- **eager 全通、graph 全不通**，分界线干净。根因（Session 43 由源码确证）：
+  `FULL_AND_PIECEWISE` 的 decode 段取 `FULL`，`splitting_ops` 切分点被绕过。
+- 三个静默陷阱：实例级补丁晚于 trace；**`~/.cache/vllm/torch_compile_cache` 里 87 MB
+  未打补丁的产物被复用**（⇒ `VLLM_DISABLE_COMPILE_CACHE=1` 是必要条件）；
+  traced forward 里改计数器被 torch 直接拒绝（⇒ 自证只能是**功能性**的）。
+- 发现 `fadvise(DONTNEED)` 对 mmap 无效：`MmapReader` 跨迭代持有 `np.memmap`，
+  修正后 mmap 冷态是 **3801 µs/token、−17.7% tok/s**，我们快 19.4×。
+
+### 3. 结果
+```text
+子条件 4：未闭合，但失败点精确到一层（eager 全通 / graph 的 op 不执行）
+graph 模式下的存储代价：无。引用的 6.70%/8.63% 仍是「两次测量相除」的合成值
+500 µs 预算被证明建立在从未测过的分母上
+```
+
+---
+
+## Session 43（第二十八轮：breakable cudagraph 调研，纯源码）
+
+### 1. 做了什么
+- 调研 vLLM 0.29.0 与 SGLang 0.5.19 里 **breakable CUDA graph** 的机制与开关。
+- 产出 `docs/cuda-graph-injection.md`（625 行，可复用的接入参考）与
+  `scripts/sglang_bcg_probe.py`（24 项结构检查）。
+- **把判据化简为 `L* = ⌈t_read / 单层时间⌉`**（`scripts/lead_layer_budget.py`）。
+
+### 2. 踩坑/发现
+- vLLM：`VLLM_USE_BREAKABLE_CUDAGRAPH=1` + `@eager_break_during_capture`；
+  `DeepseekV4ForCausalLM` 在 `DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES` 里，
+  引擎会自动开；`mode=NONE` + `cudagraph_mode=PIECEWISE` 是被承认的组合。
+- **更正一条我先写错的**：`SGLANG_USE_BREAKABLE_CUDA_GRAPH` 是**只写变量**
+  （后面 Session 44 用全库扫描确证：只有定义 + 一处 `.set()`，零读取方）。
+  真正的开关是 `--cuda-graph-backend-decode=breakable`。
+- 两个引擎的 `replay()` 都是「逐段 `seg.replay()` 后调 host 断点函数、**段间无同步**」
+  ⇒ 重叠是固有的，净增延迟 ≈ `max(0, t_read − τ(L))`。
+
+### 3. 结果
+```text
+判据从 500 µs 换成 L*（可判定、单机可测、带安全裕度）
+三个判决：Qwen 差两层 / V4.1 余量 3.5× / 无线程池则 V4.1 装不下
+⇒ 并发度是可行性要求，不是吞吐优化
+本轮的「净关闭率」仍为负：新增 3 份文档、验收表关闭 0 项（Session 44 正式处置）
+```
+
+---
+
+## Session 44（第二十九轮：子条件 4 闭合 + 几何确证 + 账本合并）
+
+### 1. 做了什么
+- 在新 AutoDL 盒子上把**子条件 4 闭合**（SGLang breakable CUDA graph）：
+  断点在 **replay 期间执行**已证，四项判据同时成立。
+- 从 checkpoint 自己的权重索引**确证真实 PLE 几何**：48 层、0-based 第 1 层、
+  16 id/token、128 片 × 2,500,012 行 × 160 B = 320,001,536 行，并验证是完整真实数据。
+- 加 `read_static` 臂做 D2H 判决实验；修正 README §6.1、roadmap §36.2/§36.5/§36.8。
+- **合并账本**（roadmap 新增 §0）、归档历史轮次摘要到 `docs/archive/`、更新本文件与 handoff。
+
+### 2. 踩坑/发现
+- **最硬的结构事实**：`forward_calls = 26` 而 `backend_replay = 553` ——
+  replay 时模型的 Python `forward` 一次都不跑，**唯一会跑的 Python 就是断点函数**。
+- **两个我自己的假设被实测推翻**，都记在 `probes/subcondition4_sglang_session43.md` §6.1：
+  ① 「16 行只跑 2 路并行（`chunksize=8`）」—— 改成 1 后 `read_us_median` 只降 3.5%；
+  ② 「磁盘与 D2H 各占一半」—— 拆分项在 ±0.2 ms 内乱跳，只有总量（1.30 ms）稳定。
+  站得住的只有直测值：**磁盘 445–468 µs / host 残余 ≈0.85 ms**，且磁盘完全暴露。
+- **上游缺口**：BCG 后端不认识 dataclass 输出（`LogitsProcessorOutput`）⇒ 几乎任何文本模型
+  都无法用 `--cuda-graph-backend-decode=breakable`；修法有据（隔壁 `_copy_output`
+  已支持 `__dict__` 对象）。另：BCG 不经过 Inductor ⇒ vLLM 的 W4 常量折叠在此不存在。
+- 操作坑：子进程 PATH 缺 venv bin ⇒ 找不到 `ninja`；`pgrep -f sglang` 会杀掉自己的 ssh shell；
+  `engine.shutdown()` 用 SIGKILL ⇒ 子进程计数器必须后台线程落盘。
+
+### 3. 结果
+```text
+子条件 4：✅ 闭合（backend_replay 553/512, break_calls_in_replay 552/512, 三臂互异 sha1）
+graph 模式存储数字：首次产出单次测量（read − break = 1.30 ms），但明确标注为串行上界
+真实 PLE 几何：从「未验证」到索引级确证（48 层 / 第 1 层）；裁决改为「差两层」
+账本：217/63 的净关闭率指标废止；唯一活账 = README §6.1 + roadmap §36.5
+下一步：§36.5 的 P1.5（stage 2）与 P2 前置（斜率法、rowid 访问分布、native gather/decode 边界）
 ```

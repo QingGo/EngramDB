@@ -58,6 +58,8 @@ jobs:
         run: python scripts/python_wheel_smoke.py
       - name: run service smoke
         run: python scripts/service_smoke.py
+      - name: live-ledger closure rate (ratchet)
+        run: python scripts/ledger_rate.py --max-open 4
       - name: build C ABI
         run: cargo build --release -p engramdb-cabi
       - name: run C ABI smoke

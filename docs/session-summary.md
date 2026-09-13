@@ -1723,7 +1723,7 @@ serving / Arrow / 全表 Store-P ❌
 - Phase S3：通用 Engine Adapter。
 - Phase S4：Arrow / serving / 真表门禁 / v0.2.12 发布。
 
-详见 `docs/roadmap.md` Section 27。完整版见 `docs/round-37-full-summary.md`。
+详见 `docs/roadmap.md` Section 27。完整版见 `docs/archive/round-37-full-summary.md`。
 
 
 ---
@@ -1801,7 +1801,7 @@ serving / Arrow / 全表 Store-P ❌
 - [x] 新增技术债登记 V157–V165。
 - [x] 重排后续计划为 Phase R1–R5。
 - [x] 更新借鉴矩阵。
-- [x] Roadmap Section 28 + `docs/round-40-full-summary.md`。
+- [x] Roadmap Section 28 + `docs/archive/round-40-full-summary.md`。
 
 ### 2. 本轮新增技术债
 

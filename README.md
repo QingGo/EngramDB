@@ -661,7 +661,8 @@ EngramDB/
 
 | 文档 | 内容 |
 |---|---|
-| `docs/roadmap.md` | 终极目标、技术债、借鉴矩阵、阶段计划、**每轮实测的完整记录与撤回声明**。**§36 是当前的裁判与优先级**（`L* = ⌈t_read ÷ 单层时间⌉`） |
+| `docs/roadmap.md` | 终极目标、技术债、借鉴矩阵、阶段计划、**每轮实测的完整记录与撤回声明**。**先读 §0（这本文件是复盘史，不是活账）**；**§36.5 是唯一的优先级活账**，§36 是当前的裁判（`L* = ⌈t_read ÷ 单层时间⌉`） |
+| `docs/archive/` | 历史轮次长文摘要（含失败留档）。按 §29.4 Phase 4 归档；仍然有效的结论已提升进 roadmap 活账或本节 |
 | `docs/measurement-protocol.md` | **测量协议 checklist** —— 读任何数字之前先读它。含编译 / CUDA graph 类实验的 5 条 |
 | `docs/cuda-graph-injection.md` | **把宿主侧磁盘读放进 CUDA graph 化 decode 步**：两引擎的真实开关、API 契约、重叠语义、三个会伪装成「跑通」的陷阱 |
 | `docs/prefetch-lead-time.md` | `τ(L)` 提前量模型 —— §36.2 的 `L*` 规则由它化简而来 |

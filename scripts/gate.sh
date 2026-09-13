@@ -91,4 +91,17 @@ else
   echo "  [gate] python3 not found; skip"
 fi
 
+echo "== [gate] live-ledger closure rate (ratchet) =="
+if command -v python3 >/dev/null 2>&1; then
+  # Ratchet, not a target: --max-open is pinned to today's value so the number can
+  # only improve.  The live ledger is README 6.1 (roadmap 0 explains why the old
+  # 217-checkbox net-closure metric was retired -- it could only go negative).
+  if ! python3 scripts/ledger_rate.py --max-open 4; then
+    echo "  [gate] FAIL: live-ledger fully-open rows increased"
+    exit 1
+  fi
+else
+  echo "  [gate] python3 not found; skip"
+fi
+
 echo "== [gate] PASS =="
