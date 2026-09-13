@@ -181,7 +181,13 @@ def _read_rows(rowids, out: "np.ndarray") -> None:
 
     jobs = ((i * _STATE["rows"] + r, int(rowids[i, r]))
             for i in range(n) for r in range(_STATE["rows"]))
-    for idx, data in _POOL.map(one, jobs, chunksize=8):
+    # chunksize=1, deliberately.  With 16 jobs and chunksize=8, map() hands out
+    # two chunks, so only **two** workers run and the 16 page faults serialise
+    # two at a time.  That is the whole gap between this probe's ~461 us per
+    # token and the 195.9 us measured with real concurrency: 16 x 85.8 us / 2
+    # ~= 686 us observed versus 16 x 85.8 / 16 ~= 86 us ideal, and 12.2 us/row
+    # is what the tuned run actually achieved.
+    for idx, data in _POOL.map(one, jobs, chunksize=1):
         s = idx * ROW_BYTES
         flat[s:s + ROW_BYTES] = np.frombuffer(data, dtype=np.uint8)
     assert width == _STATE["rows"] * ROW_BYTES
