@@ -525,7 +525,6 @@ def replay(self) -> None:
 - **捕获期用 `capture_stub`（SGLang）挡掉真实磁盘读** —— 否则建图时真读一次盘。
 
 ### 8.1 重叠的四个必要条件（缺一个就退化成串行）
-
 §5 的 `max(0, t_io − τ(L))` **不是自动成立的**，它要求：
 
 | # | 条件 | 违反的后果 |
@@ -543,3 +542,84 @@ def replay(self) -> None:
 所以**跨步**的提前量是有界的 —— 重叠窗口是**一段**的工作量，不是整条流水线。
 这也解释了为什么「读第 t 步的数据」不能提前到第 t−1 步：**第 t 步的 token 在第 t−1 步时还不存在。**
 
+
+---
+
+## 9. 上机步骤（按顺序，不要跳）
+
+### 9.0 一个必须先知道的障碍：SGLang 用 spawn 起调度器
+
+`serve_sglang_baseline.py:24-28` 已经记过这条：
+
+> *"Injecting a disk reader into SGLang requires a `sitecustomize`/import-hook
+> because SGLang starts its scheduler with `mp.set_start_method("spawn")`,
+> so parent-process monkeypatches are not inherited"*
+
+⇒ **在父进程构造 `Engine` 之前打的类级补丁不会进子进程。**
+这和 vLLM 的 **W1**（补丁打晚了 ⇒ 静默无效）是**同一个失败模式**，
+而且更隐蔽 —— 代码看起来完全正确。
+
+**所以第一步不是写 A/B，而是先证明补丁能到达子进程。**
+
+### 9.1 跑探针（`scripts/sglang_bcg_probe.py`）
+
+```bash
+python scripts/sglang_bcg_probe.py \
+    --model /root/autodl-tmp/qwen35-ple/models/Qwen3.5-0.8B \
+    --json-out probes/sglang_bcg_probe_session43.json
+```
+
+它**不做任何性能测量**，只回答四个事实（24 项检查，逐项 PASS/FAIL，有失败则退出非零）：
+
+| # | 问题 | 为什么不能猜 |
+|---|---|---|
+| 1 | `eager_on_graph` 在哪个路径 | v0.5.14 搬过家（`breakable_cuda_graph/` → `runner_backend_utils/breakable_cuda_graph/`），探针按 v0.5.14+/v0.5.11+/原始 三种路径依次尝试 |
+| 2 | `--cuda-graph-backend-decode=breakable` 是否是真字段 | `SGLANG_USE_BREAKABLE_CUDA_GRAPH` 是死变量（§4.1），只有这条是真开关 |
+| 3 | **补丁能否到达 spawn 子进程** | 见 §9.0，**这是整个计划成败的关键** |
+| 4 | 我们 checkpoint 的层栈结构 | 类由 `ALL_DECODER_LAYER_TYPES[layer_type]` 选，注入点靠 `self.layer_id` |
+
+探针的做法：写一个临时 `sitecustomize.py` 到 `PYTHONPATH`，它**顺便**用
+meta-path hook 记录 `BreakableCudaGraphBackend` 何时被构造 ——
+**一次引擎启动同时回答「补丁到达了吗」和「decode 真的选了 breakable 吗」**。
+两个标记文件写在临时目录，路径会打印出来。
+
+### 9.2 按探针结果分支
+
+| 结果 | 含义 | 下一步 |
+|---|---|---|
+| 全 PASS | 补丁可达 + decode 是 BCG | 写 A/B（§9.3） |
+| **`SPAWNED CHILD inherited` FAIL** | 父进程补丁到不了调度器 | 换注入方式，见 §9.2.1 |
+| `BreakableCudaGraphBackend constructed in a CHILD` FAIL | 补丁到了但后端不是 breakable | 检查旗标拼写 / 看启动日志有没有回退警告 |
+| `eager_on_graph importable` FAIL | 版本路径又变了 | 打印 `find / -name "breakable_cuda_graph*"` 的结果再定 |
+
+#### 9.2.1 如果子进程继承失败（三个备选，可靠性递增）
+
+1. **确认 `PYTHONPATH` 真的被继承** —— 打印子进程的 `os.environ["PYTHONPATH"]`
+   （探针已记录 `argv0`/`ppid`，扩展一下即可）。
+2. **`.pth` 文件**（推荐）：在 site-packages 放一个
+   `engramdb_bcg.pth`，内容一行 `import engramdb_bcg_patch`。
+   `.pth` 的 `import` 行在**任何**使用该 site-packages 的解释器启动时执行，
+   spawn 子进程同样适用 —— 比 `PYTHONPATH` 更稳。
+3. **直接改 site-packages 里的 `sglang/srt/models/qwen3_5.py`**（最粗暴、最可靠）。
+   仅用于机制验证，验证完要还原。
+
+### 9.3 A/B 的验收判据（与 §6 一致，这里给出 SGLang 侧的具体形式）
+
+四项必须**同时**成立，缺一即 VOID：
+
+| | 判据 | 取法 |
+|---|---|---|
+| (a) | decode 后端是 breakable | 探针的 `child_backend_pids` 非空 |
+| (b) | `reader_calls > 0` **且在测量窗口内增长** | 子进程写状态文件，父进程每次 generation 后读 |
+| (c) | `tokens_identical_to_none == False` | 注入臂的输出必须**不同于** baseline |
+| (d) | **replay 期** `is_in_breakable_cuda_graph()` 为 True | `replay_session()` 由 decode runner 调用（`decode_cuda_graph_runner.py:1460`），所以真实读应看到 True；若全为 False 说明读发生在 capture/warmup |
+
+> (d) 是本轮新加的，也是最容易被忽略的一条：
+> **「读发生了」和「断点在 replay 期发生了」是两件事。**
+> eager 模式下读也会发生 —— 上面四项里 (b)(c) 在纯 eager 下都能过。
+
+### 9.4 第一次跑不要做性能测量
+
+第一轮**只回答机制问题**：(a)–(d) 是否同时成立。
+性能（§5 的 `max(0, t_io − τ(L))`）是第二轮的事。
+把两件事混在一轮里，正是上一轮那八次运行里「看着配好了、其实没生效」的来源。
