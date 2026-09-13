@@ -4628,6 +4628,14 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
   Python convert 占多少，**从未测过** —— 而 Session 43 测得「H2D + add ≈ 118 µs」
   暗示 convert 这一侧不是零。旧复盘的 Phase C 有这一条，也没进过活账。
 
+**P0.5′ — 楔子已被上游代码确证（§37.7 第一手核实）**
+- 上游 `file` 后端是 **HMM 硬门控**（非 HMM 设备直接 raise），
+  且预取在 **< 2048 行**与 **capture 期间**两处提前返回 ⇒ decode 路径上预取从不发出。
+- **⇒ 在非 HMM 硬件上没有上游磁盘路径；在 HMM 硬件上最需要提前量的路径被关掉了预取。**
+- 这使 P0.5 的目标具体化：**不是「接进上游」，而是「补上游拒绝跑的那一类硬件」**，
+  并复用我们已实测的 `τ(L) ≥ ~325 µs` 作为设计约束。
+- **待测（需要 HMM 机器）**：一次 decode gather 的 fault 驱动停顿有多长（§37.7 边界）。
+
 **P2.5 — 把成本模型与 `τ(L)` 交给上游（Session 44 新增）**
 - 这是**唯一上游没有、且对 #36567 直接有用**的东西：上游只报端到端差
   （disk −8% @c1 / −17% @c32），**从不问「这个读要提前多久发出」**。
@@ -4918,3 +4926,59 @@ breakable / `FULL_AND_PIECEWISE` 的 capture 验证。
 
 ⇒ **新增第九条纪律**：关于上游能力的断言，必须落到 **main / 目标 branch 的具体 path**，
 并注明 commit 或 tree 来源。**「我装的版本里没有」不等于「上游没有」。**
+
+### 37.7 P0.5 的第一手核实（Session 44，对着上游真代码）
+
+克隆了 `main`：SGLang `14b647c`、vLLM `fa1b3b1`。**`vllm/v1/ple_offload/worker.py` 不存在
+⇒ #53899 / #54070 未合入 main**（符合预期，它们是 open PR）。
+
+#### 核实一：上游的 file 后端是 **HMM 硬门控**
+
+`python/sglang/srt/models/qwen4_exp_ple_table.py:321 check_file_backend_supported()`：
+设备不报告 `cudaDevAttrPageableMemoryAccessUsesHostPageTables` 时**直接 raise**，
+文案写明「unified-memory parts such as GB10」、「use `--ple-offload-backend pinned`」。
+逃生口 `SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK=1` 的告警原文是
+**「only if you know the device reads pageable host memory through the host page tables」**。
+
+上游自己的动机（该文件 docstring，:10-30）：
+
+> Meant for unified-memory parts (GB10 / DGX Spark and similar), where pinned host memory
+> comes out of the *same* pool as the model weights and `pinned` therefore frees nothing:
+> Qwen3.8-Flash-Next is **126.0 GiB of weights on a 121.63 GiB box** and does not boot with `pinned`.
+
+⇒ **它不是为「表比宿主内存大」写的，是为「权重和表抢同一个物理池」写的。**
+
+#### 核实二：预取在**恰好最需要提前量的地方**被关掉
+
+`PleFilePrefetcher.enqueue`（:109-127）只有两个提前返回，就是全部逻辑：
+
+```python
+if flat_ids.numel() < self._min_rows:                      # PLE_FILE_PREFETCH_MIN_ROWS = 2048
+    return False
+if flat_ids.is_cuda and torch.cuda.is_current_stream_capturing():
+    return False
+```
+
+- **decode 每 token 是 16 行**（§36.9 已从 vLLM 的 `compute_ngram_ids` 结构确证）
+  ⇒ 除非 batch ≥ 128，**预取根本不发**。
+- **capture 期间显式关闭** ⇒ 图模式下这条 hint 永远不发。
+- 调用点在 `qwen4_exp.py:881-882`，即 gather 路径内。
+
+#### 我们的楔子（现在有上游代码作依据）
+
+| | 上游 `file` 后端 | 我们 |
+|---|---|---|
+| 硬件要求 | **必须是 HMM 设备**（GB10/DGX-Spark 级）；4090/H100/A100 **直接拒绝运行** | 无要求（显式 staged read） |
+| decode 预取 | **< 2048 行不发**（batch<128 全灭） | 按 `τ(L)` 提前发 |
+| capture 期间 | **显式关闭** | 断点机制下正是它工作的时候 |
+| 提前量 | 按需 page fault（**访问时才发生，提前量为 0**） | **实测要求 ≥ ~325 µs**（§36.10） |
+
+**⇒ 结论：在非 HMM 硬件上，上游没有任何磁盘路径；在 HMM 硬件上，它在 decode+capture
+这条最需要提前量的路径上把预取关掉了。这两点合起来是一个具体、可辩护的缝隙。**
+
+#### ⚠️ 边界（这条是推理，不是测量）
+
+「按需 page fault 的提前量为 0」是从上游代码结构推出的（fault 发生在访问点），
+**我们没有 HMM 设备可以实测**（4090 无 HMM）。若将来能上 GB10 类机器，
+这是第一个该测的数：**一次 decode gather 的 fault 驱动的停顿到底有多长。**
+在该数出来之前，不要把上表最后一行当作已证结论。
