@@ -38,7 +38,7 @@ import sys
 import time
 from pathlib import Path
 
-ARMS = ("none", "break", "read")
+ARMS = ("none", "break", "read_static", "read")
 
 
 def extract(o):
@@ -94,7 +94,7 @@ def run_arm(args) -> dict:
         sys.stdout = old_stdout
     print(f"[{arm}] engine up in {time.perf_counter() - t0:.1f}s", flush=True)
 
-    if arm == "read" and not args.keep_warm:
+    if arm in ("read", "read_static") and not args.keep_warm:
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from engramdb_sc4_inject import drop_page_cache
@@ -268,6 +268,14 @@ def compare(results: list[dict]) -> dict:
         out["break_minus_none_ms"] = by["break"]["ms_per_token"] - by["none"]["ms_per_token"]
     if "break" in by and "read" in by:
         out["read_minus_break_ms"] = by["read"]["ms_per_token"] - by["break"]["ms_per_token"]
+    if "break" in by and "read_static" in by:
+        # disk + H2D + add, with the device-to-host sync removed entirely
+        out["readstatic_minus_break_ms"] = (by["read_static"]["ms_per_token"]
+                                            - by["break"]["ms_per_token"])
+    if "read_static" in by and "read" in by:
+        # the D2H + rowid-computation term, isolated
+        out["read_minus_readstatic_ms"] = (by["read"]["ms_per_token"]
+                                           - by["read_static"]["ms_per_token"])
     if "none" in by and "read" in by:
         out["read_minus_none_ms"] = by["read"]["ms_per_token"] - by["none"]["ms_per_token"]
         out["read_pct_of_step"] = (out["read_minus_none_ms"]
@@ -276,7 +284,7 @@ def compare(results: list[dict]) -> dict:
     # functional self-proof: an injected arm that matched the baseline would mean
     # the break never reached the model at replay.
     if "none" in by:
-        for arm in ("break", "read"):
+        for arm in ("break", "read_static", "read"):
             if arm in by:
                 out[f"{arm}_differs_from_none"] = (
                     by[arm]["first_tokens_sha1"] != by["none"]["first_tokens_sha1"])
@@ -291,11 +299,13 @@ def finish(summary: dict, args) -> None:
               f"{v['ms_per_token']:6.3f} ms/tok  "
               f"break_in_replay={c.get('break_calls_in_replay', '-')}  "
               f"backend_replay={c.get('backend_replay_calls', '-')}")
-    for k in ("break_minus_none_ms", "read_minus_break_ms", "read_minus_none_ms",
-              "read_pct_of_step"):
+    for k in ("break_minus_none_ms", "readstatic_minus_break_ms",
+              "read_minus_readstatic_ms", "read_minus_break_ms",
+              "read_minus_none_ms", "read_pct_of_step"):
         if k in summary:
             print(f"  {k:28s} {summary[k]:.4f}")
-    for k in ("break_differs_from_none", "read_differs_from_none"):
+    for k in ("break_differs_from_none", "read_static_differs_from_none",
+              "read_differs_from_none"):
         if k in summary:
             print(f"  {k:28s} {summary[k]}")
     if args.json_out:

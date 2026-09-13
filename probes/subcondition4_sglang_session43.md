@@ -3,7 +3,7 @@
 > 口径：真引擎（SGLang 0.5.19）、真表（128/128 分片、47.7 GiB、320,001,536 行）、真 GPU（RTX 4090）。
 > 产物：`scripts/sc4_sglang_break_read.py`、`scripts/engramdb_sc4_inject.py`、
 > `scripts/sglang_bcg_output_patch.py`、`scripts/qwen3_5_sc4_hook.py`、
-> `probes/sc4_sglang_session43.json`。
+> `probes/sc4_sglang_session43.json`、`probes/sc4_sglang_d2h_isolation.json`。
 > vLLM 那边的 8 次失败留档仍在 `probes/subcondition4_cuda_graph_session42.md`。
 
 ## 0. 结论先说
@@ -107,6 +107,8 @@ inkling 用的是 `torch._foreach_copy_` —— 一个**排在同一条流上**�
 
 ## 4. 三个臂与数字
 
+（第 6 节在此基础上加了第四个臂 `read_static`，用来把 D2H 单独隔离出来。）
+
 ```
 none    418.9 tok/s   2.387 ms/tok   无注入
 break   393.5         2.541          +0.154 ms   断点机制（合成 delta，无磁盘 I/O）
@@ -114,7 +116,8 @@ read    264.1         3.786          +1.245 ms   真磁盘读（16 行/ token）
 ```
 
 `read − none = +1.399 ms = 基线的 58.6%`。三臂**各自内部确定性**（`det=True`），
-三臂输出**互异** —— 功能性自证成立。
+三臂输出**互异** —— 功能性自证成立。（独立复跑一次得 `+1.399 / +1.488 ms`，
+见第 6.3 节的噪声说明。）
 与 440.4 tok/s 的既有 graph 基线同口径（同离线 `Engine` 路径、同 prompt 构造、同 median 口径），
 `none` 的 418.9 说明本轮确实是 graph 态（eager 是 56.3）。
 
@@ -140,20 +143,72 @@ read    264.1         3.786          +1.245 ms   真磁盘读（16 行/ token）
 ⇒ **stage 1 完成的是「机制可行」的证明，不是「存储便宜」的证明。**
 把 `+1.399 ms` 当成「Engram 每 token 开销」会严重高估。
 
-## 6. 下一步被精确定量了
+## 6. 下一步被精确定量了（`read_static` 判决实验）
 
-目标不再是「让它跑起来」，而是：**把 1.245 ms 从关键路径上摘掉**。
-手段就是 `docs/cuda-graph-injection.md` §8.1 的四条重叠前提，按本轮的证据排序：
+目标不是「让它跑起来」（已达成），而是**把 1.30 ms 从关键路径上摘掉**。
+为了知道钱花在哪，加了一个 **`read_static`** 臂：行号在 **host 侧预先算好**，
+断点里**完全不做 D2H**。于是 `read − read_static` 就是 D2H + rowid 计算的净代价。
 
-1. **消灭 D2H**（最大项）：不要在断点里 `input_ids[:n].tolist()`。
-   需要在步进**之前**就拿到 token（host 侧或 pinned 的固定地址），
-   让 `t_read` 的启动与 `τ(L)` 的窗口真正重叠。
-2. **持久线程池 + 跨 token 批量化**：把 16 个小读变成一批，把 464.6 µs 拉回 195.9 µs。
-3. **pinned 暂存 + `non_blocking=True`**：去掉页锁定缺失带来的同步 H2D。
-4. **确认没有分配器强同步**。
+| arm | tok/s | ms/tok | Δ vs `break` |
+|---|---|---|---|
+| `none` | 419.1 | 2.386 | — |
+| `break` | 389.1 | 2.570 | +0.184（机制） |
+| `read_static`（**无 D2H**） | 308.2 | 3.245 | **+0.675**（磁盘） |
+| `read` | 258.1 | 3.874 | +1.304（磁盘 + D2H + rowid） |
 
-只有当这四条都到位，`read − break` 才是「藏不住的残余」，
+```
+readstatic − break      = +0.675 ms   ← 磁盘（无 D2H）
+read − readstatic       = +0.629 ms   ← D2H + rowid 计算
+```
+
+### 6.1 我上一轮的排序是错的，这里更正
+
+上一轮（§5）我写「**真正打断重叠的是 D2H 同步**，不是磁盘」。
+`read_static` 判决它**只对了一半**：D2H 确实贵，但磁盘那一半**同样贵**，而且它**完全暴露**。
+
+从 `break_us_median` 还能把 host 侧再拆一层：
+
+```
+break        body = 504.6 µs   含 D2H，无磁盘
+read_static  body = 579.4 µs   无 D2H，含 461 µs 磁盘
+   ⇒ H2D + add      ≈ 118 µs
+   ⇒ D2H            ≈ 387 µs   一个 1 元素张量的 .tolist() 竟要 387 µs
+   ⇒ rowid numpy    ≈ 240 µs   1 个 token 的 numpy 小算子调用开销
+```
+
+**1.30 ms 的构成：磁盘 0.68 / D2H 0.39 / rowid 0.24 —— 三项都得治，
+而最大项是我原先排在第二位的那个。**
+
+两个反直觉点：
+
+- **D2H 387 µs 不是在传数据**（1 个 int64）。它在**排空 GPU 流水线** ——
+  这正是「段间无同步」这个优点的代价：一旦 host 要读设备数据，前面排的 kernel 全得等。
+- **rowid 240 µs 全是 Python/numpy 调用开销**：`ple_rowids` 对 T=1 做几十次
+  微小 numpy 调用，每次几微秒。这不是算法问题，是**放错了位置**。
+
+### 6.2 修正后的四步（按实测大小排序）
+
+| # | 动作 | 预期回收 | 依据 |
+|---|---|---|---|
+| 1 | **消灭磁盘暴露**：持久线程池 + 跨 token 批量化 + pinned 暂存 | 461 → 195.9 µs（已测过的调优值），并让它真正被 `τ(L)` 掩盖 | `readstatic − break = 0.675 ms` 而 `read_us_median = 0.461 ms` |
+| 2 | **消灭 D2H**：把 token 在步进**之前**交给 host（采样本来就要一次 D2H，复用那一次） | ≈ 0.39 ms | `break_us_median` 差 |
+| 3 | **rowid 移出关键路径**：对 step *t* 的行号在 step *t−1* 期间算 | ≈ 0.24 ms | 同上 |
+| 4 | 确认无分配器强同步；`non_blocking=True` | 残余 | — |
+
+**2 与 3 可以合并成一次「fill 步」**：在前一步的 tail 里拿到 token、算出行号、
+发起异步读；断点里只剩「等 + H2D + add」。这就是
+`docs/cuda-graph-injection.md` §8.1 四条前提的完整形态，
+现在每条都有了本轮的实测支撑，而且**优先级由测量而非直觉决定**。
+
+只有这四步到位，`read − break` 才是「藏不住的残余」，
 `L* = ⌈t_read / 单层时间⌉` 里的 `t_read` 才有资格代入选定的那个数。
+
+### 6.3 运行间噪声
+
+`break − none` 在两次运行中是 **0.154 / 0.184 ms**，`read − break` 是
+**1.245 / 1.304 ms** ⇒ 臂间差值的运行间散布约 **10–20%**。
+本轮的结论（磁盘与 D2H 各占约一半）远高于这个地板，但**下一轮要在噪声地板以下做结论，
+必须先做多轮 counterbalance**（子条件 5 的要求）。
 
 ## 7. 已知未做
 

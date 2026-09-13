@@ -31,6 +31,12 @@ Three arms
            negative control for the token-difference test.
 ``read``   the break performs the real 16-row read from the on-disk table, with
            the rowids computed from the live token ids.
+``read_static``
+           the same disk read, but the rowids are **precomputed host-side** and
+           the break does **no D2H at all**.  ``read - read_static`` is therefore
+           the cost of the device-to-host sync plus the rowid computation, which
+           is the term that has to disappear before ``read - break`` can be
+           called a storage cost.
 
 ``read - break`` is therefore the cost of the disk read **inside a graph step**,
 and ``break - none`` is the cost of the mechanism that makes it possible.  Both
@@ -259,12 +265,20 @@ def install() -> bool:
     _STATE["rows"] = int(os.environ.get("ENGRAMDB_SC4_ROWS", "16"))
     _STATE["store"] = os.environ.get("ENGRAMDB_SC4_STORE")
     _STATE["counters"] = os.environ.get("ENGRAMDB_SC4_COUNTERS")
-    if arm == "read":
+    if arm in ("read", "read_static"):
         if not _STATE["store"]:
-            raise RuntimeError("arm=read needs ENGRAMDB_SC4_STORE")
+            raise RuntimeError(f"arm={arm} needs ENGRAMDB_SC4_STORE")
         _open_store(_STATE["store"])
 
     _HOSTBUF = np.zeros((4096, 4096), dtype=np.uint8)  # reused, host-only
+
+    if arm == "read_static":
+        # Fixed token window, rowids resolved once.  Nothing in the break then
+        # touches the device except the H2D of the delta, so any remaining cost
+        # is the disk read plus the add.
+        _STATE["static_toks"] = [1000 + (7 * i) % 200000 for i in range(4096)]
+        _STATE["static_rowids"] = _rowids(np.asarray(_STATE["static_toks"],
+                                                     dtype=np.int64))
 
     # --- proof layer 1: did the graph replay at all? -----------------------
     _orig_backend_replay = BreakableCudaGraphBackend.replay
@@ -306,11 +320,18 @@ def install() -> bool:
         t0 = time.perf_counter()
         try:
             n = hidden_states.shape[0]
-            toks = input_ids[:n].tolist()          # D2H: serial, and declared --
-            if _STATE["arm"] == "read":            # stage 1 is deliberately the
-                rowids = _rowids(toks)             # non-overlapped variant.
-                _delta_from_disk(toks, rowids, _HOSTBUF[:n, :hidden_states.shape[-1]])
+            if _STATE["arm"] == "read_static":
+                # No D2H: rowids were resolved at install time.
+                toks = _STATE["static_toks"][:n]
+                _delta_from_disk(toks, _STATE["static_rowids"][:n],
+                                 _HOSTBUF[:n, :hidden_states.shape[-1]])
+            elif _STATE["arm"] == "read":
+                toks = input_ids[:n].tolist()      # D2H: serial, and declared --
+                rowids = _rowids(toks)             # stage 1 is deliberately the
+                _delta_from_disk(toks, rowids,     # non-overlapped variant.
+                                 _HOSTBUF[:n, :hidden_states.shape[-1]])
             else:
+                toks = input_ids[:n].tolist()
                 _delta_from_tokens(toks, _STATE["rows"],
                                    _HOSTBUF[:n, :hidden_states.shape[-1]])
             delta = torch.from_numpy(
