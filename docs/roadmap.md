@@ -4562,6 +4562,18 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 - 待做：在能放下 PLE 模型（或结构等价）的机器上测 **graph 模式的真实步长**，
   把 `L*` 从「代理模型推算」升级为「目标模型直测」。
 
+**P0.5 — 换目标：把存储接到上游真实的缝上（Session 44 新增，最高优先）**
+- **理由**：§37 确认上游已有 PLE offload（SGLang `main` 已发布 `backend="file"`；
+  vLLM #54371 UVA 已合并 + #54070/#54129 两个磁盘 PR），**而主线的缝无断点** ——
+  我们为替身缝建的 apparatus 不迁移。
+- **动作（读代码 + 改接口，不是 GPU 工作）**：
+  读 `Qwen4ExpNGramEmbedding` / `Qwen4ExpPinnedHostEmbedding` /
+  `srt/models/qwen4_exp_ple_table.py`，确定我们的存储插在哪里。
+- **最便宜的一处**：`vllm/v1/ple_offload/worker.py` 的 `PleOffloadRunner.__init__`
+  权重发现循环，加 `_ple_disk_attach` 式钩子（契约 = `_gpu_output_buffer` + `_sem`
+  + copy stream 上 signal `DONE_VALUE`）。**无需 graph break**，#54070 已证明可行。
+- **判据**：能在**上游 main**（不是我们的探针）上跑出一个冷态数字。
+
 **P1 — 关闭子条件 4（机制验证）—— ✅ 已完成（§36.8）**
 - 四项判据**同时**成立：后端是 breakable（`backend_replay = 553/512`）/
   `break_calls_in_replay = 552/512` / 输出确实改变（三臂互异 sha1）/
@@ -4569,8 +4581,13 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
   `is_in_breakable_cuda_graph()` —— 后者在 capture 也为 True，会空洞通过）。
 - 已顺带产出 graph 模式下的存储数字，但那笔是**串行上界**，不是存储代价（§36.8）。
 
-**P1.5 — stage 2：把 1.30 ms 摘出关键路径**（Session 44 已产出相位分解，见
-`probes/sc4_phase_decomposition_session44.md`）
+**P1.5 — stage 2：把 1.30 ms 摘出关键路径 —— ⏸️ 建议冻结（Session 44 末尾降级）**
+> **降级理由**：它优化的是**替身缝**。§37 确认主线集成**按构造无断点**
+> （vLLM 图内 `cuStreamWaitValue32`；SGLang `file` 后端直接在 file-backed CPU 张量上
+> gather），所以这套断点优化**不迁移到主线**。
+> **例外**：SGLang #36567（io_uring，host 侧发起）**硬依赖 breakable backend 且从未被
+> 验证** —— 若决定走那条线，本项立即恢复为 P1，且我们已有它缺的验证与 `τ(1)`。
+> 下面的相位分解结论仍然有效（它是**成本模型**，与缝无关），只是不再驱动开发。
 
 > **本条下面的归因在 Session 44 被实测全部推翻，原文保留作失败留档。**
 > 它们是**臂间差值**的产物，从 ±0.2 ms 的噪声里读出了看起来很确定的答案。
@@ -4610,6 +4627,13 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
   README 只声称 rowid 四路径一致；`gather + dequant` 是否已在 native 侧、
   Python convert 占多少，**从未测过** —— 而 Session 43 测得「H2D + add ≈ 118 µs」
   暗示 convert 这一侧不是零。旧复盘的 Phase C 有这一条，也没进过活账。
+
+**P2.5 — 把成本模型与 `τ(L)` 交给上游（Session 44 新增）**
+- 这是**唯一上游没有、且对 #36567 直接有用**的东西：上游只报端到端差
+  （disk −8% @c1 / −17% @c32），**从不问「这个读要提前多久发出」**。
+- 我们的答案是：**≥ ~325 µs**，而 PLE 在 layer 1 恰好只给这么多。
+- 形态：一条 issue / 一份可复现脚本，而不是又一个功能。
+  `PleFilePrefetcher` 用了 WILLNEED，但**前置量**没人量过。
 
 **P3 — 之后才谈广度**
 - V4.1 接口、多表、Arrow IPC、engram-peft、C ABI 补齐 —— 产品面。
