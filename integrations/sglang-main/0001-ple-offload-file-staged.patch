@@ -1,0 +1,359 @@
+diff --git a/python/sglang/srt/models/qwen4_exp_ple_table.py b/python/sglang/srt/models/qwen4_exp_ple_table.py
+--- a/python/sglang/srt/models/qwen4_exp_ple_table.py
++++ b/python/sglang/srt/models/qwen4_exp_ple_table.py
+@@ -23,6 +23,18 @@
+     page-cache folios and the table would otherwise creep towards full
+     residency (see ``PleFileRssTrimmer``).
+ 
++``file-staged``
++    The same sparse file and the same allocator, but read by the *host* instead
++    of dereferenced by the gather kernel: the row ids are copied back to the
++    host, the rows are memcpy'd out of the mapping into a pinned staging slab,
++    and one pinned-to-device copy publishes them into the buffer the next graph
++    segment reads. This is the backend for discrete GPUs, which do not report
++    ``cudaDevAttrPageableMemoryAccessUsesHostPageTables`` and so cannot take the
++    ``file`` path at all. It trades the kernel's zero-copy dereference for a
++    device-to-host copy of the ids, a host read and a host-to-device copy, and
++    being a host round trip it has to be a CUDA-graph break; see
++    ``Qwen4ExpStagedFileEmbedding`` in ``qwen4_exp``.
++
+ This module has no Triton or CUDA-kernel imports so that its allocator and
+ prefetcher can be unit-tested on CPU.
+ """
+@@ -48,8 +60,13 @@
+ _SMAPS_HEADER = re.compile(r"^([0-9a-f]+)-([0-9a-f]+) ")
+ _SMAPS_RSS = re.compile(r"^Rss:\s+(\d+) kB")
+ 
+-PLE_OFFLOAD_BACKENDS = ("pinned", "file")
++PLE_OFFLOAD_BACKENDS = ("pinned", "file", "file-staged")
+ 
++# Storage and access are separate decisions: "pinned" and the two file backends
++# differ only in where the table lives, and "file"/"file-staged" share the file
++# and differ only in which side dereferences it.
++PLE_FILE_BACKENDS = ("file", "file-staged")
++
+ # cudaDeviceAttr enum values (cuda_runtime_api.h).
+ _CUDA_DEV_ATTR_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES = 100
+ _MADV_RANDOM = 1
+@@ -339,7 +356,48 @@
+             "--ple-offload-backend file needs a device whose pageable host "
+             "memory accesses go through the host page tables (unified-memory "
+             "parts such as GB10). This device reports it does not; use "
+-            "--ple-offload-backend pinned."
++            "--ple-offload-backend file-staged to have the host read the same "
++            "file instead, or --ple-offload-backend pinned."
++        )
++
++
++def ple_file_access_mode(device_index: int = 0) -> str:
++    """Which side can dereference a file-backed table on this device.
++
++    ``direct`` -- the gather kernel reads the pageable mapping through the host
++    page tables. No host round trip and no graph break, but only where the
++    device reports ``cudaDevAttrPageableMemoryAccessUsesHostPageTables``.
++
++    ``staged`` -- the host reads the rows out of the mapping and copies them
++    over. Works on any device that can read a file and allocate pinned memory,
++    at the cost of the round trip.
++    """
++    return "direct" if device_uses_host_page_tables(device_index) else "staged"
++
++
++def check_ple_offload_backend_supported(backend: str, device_index: int = 0) -> None:
++    """Fail fast at load time rather than on the first gather or replay."""
++    if backend == "file":
++        check_file_backend_supported(device_index)
++        return
++    if backend == "file-staged":
++        if not torch.cuda.is_available():
++            raise RuntimeError(
++                "--ple-offload-backend file-staged stages rows into device "
++                "memory and needs CUDA"
++            )
++        try:
++            torch.empty(1, dtype=torch.uint8, pin_memory=True)
++        except Exception as exc:
++            raise RuntimeError(
++                "--ple-offload-backend file-staged stages rows through pinned "
++                f"host memory, which is unavailable here: {exc}"
++            ) from exc
++        return
++    if backend != "pinned":
++        raise ValueError(
++            f"unknown PLE offload backend {backend!r}; choose from "
++            f"{PLE_OFFLOAD_BACKENDS}"
+         )
+ 
+ 
+diff --git a/python/sglang/srt/models/qwen4_exp.py b/python/sglang/srt/models/qwen4_exp.py
+--- a/python/sglang/srt/models/qwen4_exp.py
++++ b/python/sglang/srt/models/qwen4_exp.py
+@@ -55,6 +55,9 @@
+     get_req_to_token_pool,
+ )
+ from sglang.srt.model_executor.runner import get_is_capture_mode
++from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph.breakable_cuda_graph import (
++    eager_on_graph,
++)
+ from sglang.srt.model_loader.weight_utils import default_weight_loader
+ from sglang.srt.models.qwen3_5 import (
+     Qwen3_5AttentionDecoderLayer,
+@@ -858,24 +861,26 @@
+             # The gather kernel emits bf16 rows regardless of the table dtype.
+             return torch.empty(shape, dtype=torch.bfloat16, device=device)
+ 
+-    def gather(
++    def _resolve_gather_output(
+         self, input_ids: torch.Tensor, out: Optional[torch.Tensor] = None
+     ) -> torch.Tensor:
+         expected_shape = (*input_ids.shape, self.embedding_dim)
+         if out is None:
+-            output = self.allocate_output(expected_shape, input_ids.device)
+-        else:
+-            if tuple(out.shape) != expected_shape:
+-                raise ValueError(
+-                    f"invalid PLE prefetch output shape: {tuple(out.shape)} != "
+-                    f"{expected_shape}"
+-                )
+-            if out.dtype != torch.bfloat16 or out.device != input_ids.device:
+-                raise ValueError(
+-                    "PLE prefetch output must be bfloat16 on the id device"
+-                )
+-            output = out
++            return self.allocate_output(expected_shape, input_ids.device)
++        if tuple(out.shape) != expected_shape:
++            raise ValueError(
++                f"invalid PLE prefetch output shape: {tuple(out.shape)} != "
++                f"{expected_shape}"
++            )
++        if out.dtype != torch.bfloat16 or out.device != input_ids.device:
++            raise ValueError("PLE prefetch output must be bfloat16 on the id device")
++        return out
+ 
++    def gather(
++        self, input_ids: torch.Tensor, out: Optional[torch.Tensor] = None
++    ) -> torch.Tensor:
++        output = self._resolve_gather_output(input_ids, out)
++
+         flat_ids = input_ids.reshape(-1).long()
+         if flat_ids.numel():
+             if self._file_prefetcher is not None:
+@@ -905,8 +910,116 @@
+ 
+     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+         return self.reduce(self.gather(input_ids))
++
++
++def _ple_staged_capture_stub(
++    embedding: "Qwen4ExpStagedFileEmbedding",
++    input_ids: torch.Tensor,
++    out: Optional[torch.Tensor] = None,
++) -> torch.Tensor:
++    """Hand capture the buffer replay will publish into, without reading.
++
++    The body produces no kernels and its input is not known on the host until
++    the preceding segment has run, so there is nothing to capture; capture only
++    has to fix the address the following segment reads.
++    """
++    return embedding._resolve_gather_output(input_ids, out)
++
++
++class Qwen4ExpStagedFileEmbedding(Qwen4ExpPinnedHostEmbedding):
++    """File-backed PLE table read by the *host*, for devices without HMM.
++
++    ``Qwen4ExpPinnedHostEmbedding`` fetches rows with a Triton kernel that
++    dereferences the table through the device's address space, so the table must
++    either be pinned (the whole 47.7 GiB resident) or the device must walk host
++    page tables (GB10-class). A discrete GPU has neither. This subclass keeps
++    the same sparse file, allocator, page-cache hint and resident-set trimmer as
++    ``--ple-offload-backend file`` and moves the dereference to the host: the
++    ids come back, the rows are read out of the mapping into a pinned slab, and
++    one pinned-to-device copy lands them in the buffer the following graph
++    segment reads. Row granularity keeps an fp8 and a bf16 table on one path;
++    the gather kernel makes the same bf16 cast and the caller applies
++    ``weight_scale`` either way.
++
++    The host round trip is why ``gather`` is eager. ``eager_on_graph`` records
++    the call during capture and re-runs it between segment replays, which is
++    also what makes the copies legal: a break fn runs with no capture active, so
++    they are ordinary stream-ordered work. It therefore requires a breakable
++    CUDA graph (``--cuda-graph-backend-decode breakable``, and the prefill
++    equivalent); under a plain capture the decorator is inert and the body's
++    device-to-host copy fails the capture rather than silently replaying the
++    first gather's rows.
++    """
++
++    # A decode batch is a few hundred rows; the floor keeps the slab from being
++    # reallocated every step. Grown, never shrunk, to the largest gather seen.
++    _STAGING_ROWS_FLOOR = 4096
++
++    def __init__(
++        self,
++        embedding: VocabParallelEmbedding,
++        *,
++        backend: str = "file-staged",
++        table_dir: Optional[str] = None,
++    ) -> None:
++        super().__init__(embedding, backend=backend, table_dir=table_dir)
++        self._staging: Optional[torch.Tensor] = None
++        self._staging_rows = 0
++
++    def _staging_slab(self, rows: int) -> torch.Tensor:
++        """Pinned rows-per-copy target: the host side of the publish."""
++        if self._staging_rows < rows:
++            self._staging_rows = max(rows, self._STAGING_ROWS_FLOOR)
++            self._staging = torch.empty(
++                (self._staging_rows, self.embedding_dim),
++                dtype=torch.bfloat16,
++                pin_memory=True,
++            )
++        return self._staging[:rows]
++
++    def _read_rows(self, host_ids: torch.Tensor) -> torch.Tensor:
++        """Rows of ``host_ids`` (host, long) as bf16; other ranks' rows are 0.
++
++        This is where the table is actually touched, so this is where a cold
++        decode step takes its page faults.
++        """
++        start = int(self.shard_indices.org_vocab_start_index)
++        end = int(self.shard_indices.org_vocab_end_index)
++        staged = self._staging_slab(host_ids.numel())
++        staged.zero_()
++        in_shard = (host_ids >= start) & (host_ids < end)
++        if bool(in_shard.any()):
++            row_bytes = self.embedding_dim * self.weight.element_size()
++            raw = self.weight.data.view(torch.uint8).reshape(-1, row_bytes)
++            local = (host_ids[in_shard] - start).to(torch.long)
++            staged[in_shard] = (
++                raw.index_select(0, local).view(self.weight.dtype).to(torch.bfloat16)
++            )
++        return staged
+ 
++    @eager_on_graph(True, capture_stub=_ple_staged_capture_stub)
++    def gather(
++        self, input_ids: torch.Tensor, out: Optional[torch.Tensor] = None
++    ) -> torch.Tensor:
++        output = self._resolve_gather_output(input_ids, out)
+ 
++        flat_ids = input_ids.reshape(-1).long()
++        if flat_ids.numel():
++            host_ids = flat_ids.detach().cpu()
++            if self._file_prefetcher is not None:
++                # Already on the host: the hint does not need a second sync.
++                self._file_prefetcher.enqueue(
++                    host_ids,
++                    vocab_start=self.shard_indices.org_vocab_start_index,
++                    vocab_end=self.shard_indices.org_vocab_end_index,
++                )
++            staged = self._read_rows(host_ids)
++            # Blocking on purpose: the slab is reused by the next gather, and
++            # an outstanding async copy out of it would race that overwrite.
++            output.view(-1, self.embedding_dim).copy_(staged)
++        return output
++
++
+ class Qwen4ExpPLELayer(nn.Module):
+     def __init__(
+         self,
+@@ -931,9 +1044,18 @@
+             prefix=f"{prefix}.ple_embedding" if prefix else "ple_embedding",
+         )
+         if config.ple_offload_embedding:
+-            self.ple_embedding.ngram_embedding = Qwen4ExpPinnedHostEmbedding(
++            # Storage and access are separate decisions. "file-staged" is the
++            # same sparse file as "file" with the dereference moved to the host,
++            # which is what a device without host page tables can do.
++            backend = getattr(config, "ple_offload_backend", "pinned")
++            offloaded_cls = (
++                Qwen4ExpStagedFileEmbedding
++                if backend == "file-staged"
++                else Qwen4ExpPinnedHostEmbedding
++            )
++            self.ple_embedding.ngram_embedding = offloaded_cls(
+                 self.ple_embedding.ngram_embedding,
+-                backend=getattr(config, "ple_offload_backend", "pinned"),
++                backend=backend,
+                 table_dir=getattr(config, "ple_offload_dir", None),
+             )
+         self.short_conv_dilation = self.ple_embedding.ngram_size
+diff --git a/python/sglang/srt/arg_groups/fields/exec_.py b/python/sglang/srt/arg_groups/fields/exec_.py
+--- a/python/sglang/srt/arg_groups/fields/exec_.py
++++ b/python/sglang/srt/arg_groups/fields/exec_.py
+@@ -888,15 +888,19 @@
+             "directly; use it on unified-memory devices (e.g. GB10 / DGX Spark) "
+             "where pinned host memory comes out of the same pool as the model "
+             "weights. Requires a device that reports "
+-            "cudaDevAttrPageableMemoryAccessUsesHostPageTables.",
+-            choices=["pinned", "file"],
++            "cudaDevAttrPageableMemoryAccessUsesHostPageTables. 'file-staged' "
++            "maps the same file but has the host read each gather's rows into "
++            "pinned staging and copy them over, so it also runs on discrete "
++            "GPUs; it costs a host round trip per gather and needs a breakable "
++            "CUDA graph (--cuda-graph-backend-decode/prefill breakable).",
++            choices=["pinned", "file", "file-staged"],
+         ),
+     ] = "pinned"
+     ple_offload_dir: A[
+         Optional[str],
+         Arg(
+             help="Directory for the file-backed PLE table when "
+-            "--ple-offload-backend is 'file'. Defaults to "
++            "--ple-offload-backend is 'file' or 'file-staged'. Defaults to "
+             "$SGLANG_CACHE_DIR/ple/<model path>, one directory per checkpoint. "
+             "The file is sparse and reused across restarts; put it on fast "
+             "local storage (NVMe).",
+diff --git a/python/sglang/srt/arg_groups/memory_hook.py b/python/sglang/srt/arg_groups/memory_hook.py
+--- a/python/sglang/srt/arg_groups/memory_hook.py
++++ b/python/sglang/srt/arg_groups/memory_hook.py
+@@ -37,10 +37,15 @@
+             "would stage the pinned PLE embedding back to the device."
+         )
+ 
+-    if cfg.ple_offload_backend == "file" and cfg.ple_offload_embedding is False:
++    # Kept as a literal rather than importing qwen4_exp_ple_table: this module is
++    # resolved during argument parsing, before the model package is importable.
++    if cfg.ple_offload_backend in ("file", "file-staged") and (
++        cfg.ple_offload_embedding is False
++    ):
+         raise ValueError(
+-            "--ple-offload-backend file requires --ple-offload-embedding: "
+-            "the file-backed table is the offloaded table."
++            f"--ple-offload-backend {cfg.ple_offload_backend} requires "
++            "--ple-offload-embedding: the file-backed table is the offloaded "
++            "table."
+         )
+ 
+ 
+diff --git a/python/sglang/srt/model_executor/model_runner_components/load_model_utils.py b/python/sglang/srt/model_executor/model_runner_components/load_model_utils.py
+--- a/python/sglang/srt/model_executor/model_runner_components/load_model_utils.py
++++ b/python/sglang/srt/model_executor/model_runner_components/load_model_utils.py
+@@ -278,13 +278,15 @@
+             model_config.hf_text_config.ple_offload_backend = (
+                 get_exec().offload.ple_offload_backend
+             )
+-            if get_exec().offload.ple_offload_backend != "file":
++            # Literal rather than an import: both file backends share the table,
++            # the directory default and the load-time check.
++            if get_exec().offload.ple_offload_backend not in ("file", "file-staged"):
+                 model_config.hf_text_config.ple_offload_dir = (
+                     get_exec().offload.ple_offload_dir
+                 )
+             else:
+                 from sglang.srt.models.qwen4_exp_ple_table import (
+-                    check_file_backend_supported,
++                    check_ple_offload_backend_supported,
+                     default_ple_table_dir,
+                 )
+ 
+@@ -293,8 +295,9 @@
+                     or default_ple_table_dir(get_model().model_path)
+                 )
+                 if ple_offload_embedding and device == "cuda":
+-                    check_file_backend_supported(
+-                        torch.cuda.current_device() if torch.cuda.is_available() else 0
++                    check_ple_offload_backend_supported(
++                        get_exec().offload.ple_offload_backend,
++                        torch.cuda.current_device() if torch.cuda.is_available() else 0,
+                     )
+ 
+     enable_cpu_backup = get_exec().features.enable_weights_cpu_backup or (

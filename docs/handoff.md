@@ -58,6 +58,46 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 
 ### 3.0 最新状态（Session 44）—— 先读这一小节，它覆盖下面较旧的记述
 
+> #### ⚠️ Session 45 覆盖本节以下全部内容，先读这一段
+>
+> **「上游没有 PLE」是错的。** SGLang `main@14b647c` **有** `qwen4_exp.py` +
+> `qwen4_exp_ple_table.py`（含 file 后端）—— 此前那句是拿**装机版 0.5.19** 当上游
+> （第九条纪律的又一次实例）。而且**不用装**：`PYTHONPATH=<clone>/python` 就能用
+> 0.5.19 的依赖集导入 main 的 `qwen4_exp`，因为这条路径上没有 kernel。
+>
+> **交付物**：`integrations/sglang-main/0001-ple-offload-file-staged.patch` ——
+> 把 **storage 与 access 拆成两个决定**，给 `--ple-offload-backend` 加
+> **`file-staged`**（同一份稀疏文件，改由 host 读入 pinned staging 再拷到设备），
+> **非 HMM 显卡可用**。判据达成：数字出在**上游 main 的真实缝上**，
+> 且 eager 与独立第二映射逐位相等、graph replay **16 cell × 20 次全部读到当步的行**。
+>
+> **三条第一手事实**
+> 1. **断点是前提不是优化**：拆掉 `eager_on_graph` 后 capture 直接死
+>    （`Cannot copy between CPU and CUDA tensors during CUDA graph capture`）。
+> 2. **上游门禁挡的是真崩溃**：绕过 `check_file_backend_supported` 后 4090 上
+>    `cudaErrorIllegalAddress`。所以 `file-staged` **不静默替换** `file`。
+> 3. **读完全暴露，且原因不是磁盘**（µs，median of 20，τ(1)≈325 µs）：
+>    staged warm **181 / 378 / 498 / 1494**（1/8/32/128 token），
+>    cache-dropped **2298 / 13044 / 18991 / 6516**；同 cell `pinned` 30–79。
+>    相位分解闭合：d2h 20.5 + read 87.1 + h2d 16.9 = 124.5（实测 123.3）；
+>    纯往返 ≈ 37 µs。⇒ **只有「warm + 单 token」装得下（0.56×）**。
+>    冷态把 read 从 87 推到 **3335**（16 行）/ 513 → **17233**（2048 行）。
+>
+> **顺带否证上游预取**：`PLE_FILE_PREFETCH_MIN_ROWS=2048` 正好是 128 token × 16 head。
+> 同 cell hint on **1421.1** vs off **590.5**（warm，净亏 ~830 µs），cold **18222 vs 17162**
+> （零收益）。**不是 WILLNEED 不好，是在消费时刻发 WILLNEED 没有用。**
+>
+> **下一步（唯一未被否证的路径）**：**把 n-gram 行号提前搬到 host**。
+> host-issued 读要先 D2H 同步才知道行号，所以「提前一层有 GPU 工作可重叠」根本不成立 ——
+> 断点函数第一件事就是把那段工作等完。`_hash_contexts` 是纯整数运算、系数全是 checkpoint
+> 常量，host 与 device 逐位相同可证。**在它之前，更快的 reader 收益受限于「读仍然串行」。**
+> 细节：`probes/ple_sglang_main_session45.md`、roadmap §39。
+>
+> **新债**：V195（补丁无上游单测）/ V196（只验到 2048 行，prefill 未测）/
+> V197（冷态对照不完整，1 TB RAM 下 fadvise 只能部分驱逐 ⇒ 冷数字是下界）/
+> V198（探针替身清单）/ V199（`_sglang_ple_file_path` 活不过 `nn.Parameter` 包装）。
+> **关闭**：V187 主线性一半、P0.5′ 判据。
+
 **裁判换了。** 旧口径「每 token Engram 开销 ≤ 500 µs」已标注为**带假设的推导、不是测量**：
 它假设 100 tok/s 的分母，而那个分母**从未被测过**，CUDA graph 实测把它改变了 7.3–7.8×。
 新裁判是 `L* = ⌈ t_read ÷ 单层前向时间 ⌉`（roadmap §36.1/§36.2）——

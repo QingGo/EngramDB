@@ -33,3 +33,4 @@ python/engramdb/_engramdb.so
 # research/: 只入库人写的结论,原始 API payload 可重取(见 research/README.md)
 research/*.json
 research/d*/
+research/upstream/

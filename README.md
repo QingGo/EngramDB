@@ -510,12 +510,12 @@ engramdb serve <root> --port 8765 [--binary]
 |---|---|---|
 | 视图字节放大 | ≤2× | ✅ **1.00×** |
 | 视图路径吞吐 | ≥4M 等效行/s | ✅ 4.50M（200K 热态，8 线程） |
-| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **这个阈值本身是「带假设的推导」，不是测量**：它假设 100 tok/s 的分母。**实测冷读 195.9 µs/token**（16 行 × 160 B）——占 eager 单步 **0.92%**，占 **CUDA graph 单步 6.7–8.6%**（**超标**）——CUDA graph 把分母改变了 **7.3–7.8×**，比任何存储优化都大。**裁判已改**：见 §9 与 roadmap §36 —— `L* = ⌈t_read ÷ 单层时间⌉`，Qwen **差两层**（权重索引实测 **48 层、0-based 第 1 层**）、V4.1 **余量 3.5×** |
+| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **这个阈值本身是「带假设的推导」，不是测量**：它假设 100 tok/s 的分母。**实测冷读 195.9 µs/token**（16 行 × 160 B）——占 eager 单步 **0.92%**，占 **CUDA graph 单步 6.7–8.6%**（**超标**）——CUDA graph 把分母改变了 **7.3–7.8×**，比任何存储优化都大。**裁判已改**：见 §9 与 roadmap §36/§38 —— `L* = ⌈t_read ÷ 单层时间⌉`。几何实测为 **48 层、0-based 第 1 层**；Session 44 实测 **τ(1) ≈ 325 µs**（旧值 94.6 µs 是「整步平均 ÷ 层数」的伪分母，低估 3 倍）⇒ Qwen **装得下**（判决已改写）、V4.1 **余量 3.5×**。**Session 45 补上判据第二条**：`issue_time ≤ consume_time − τ(L)` —— 「读得够快」不充分，还要「发得够早」 |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
 | **rowid 与引擎一致** | 与引擎自己的 PLE 代码**逐位相同** | ✅ **IDENTICAL** —— 37 用例 / 18,048 个 rowid，`probes/ple_rowid_exactness_session42.md` |
-| GPU 端 vLLM A/B 差距 | ≤5% | ❌ **graph 模式下超标**：冷读占 graph 单步 **6.70%**（vLLM）/ **8.63%**（SGLang）。此前「达标」是 eager 分母放大 7.3× 的产物。**注意这两个数仍是「两次测量相除」的合成值**；session 43 已在 SGLang 上产出**单次测量**（子条件 4′），但那笔是串行上界、不是存储代价 |
-| GPU 端 SGLang A/B 差距 | ≤5% | ⚠️ **PLE 语义仍不可做**（SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids`），但**机制已跑通**：`--cuda-graph-backend-decode=breakable` 下磁盘读真的在 replay 期间执行（子条件 4 ✅）。引擎地板 graph 440.4 tok/s（本轮复测 418.9，不同机器） |
+| GPU 端 vLLM A/B 差距 | ≤5% | ❌ **graph 模式下超标**：冷读占 graph 单步 **6.70%**（vLLM）/ **8.63%**（SGLang）。此前「达标」是 eager 分母放大 7.3× 的产物。**注意这两个数仍是「两次测量相除」的合成值**；session 43 已在 SGLang 上产出**单次测量**（子条件 4′），但那笔是串行上界、不是存储代价。**Session 45 已在 SGLang `main` 的真实缝上给出单次测量的相位分解**（见下一行与 `probes/ple_sglang_main_session45.md`） |
+| GPU 端 SGLang A/B 差距 | ≤5% | ⚠️ **判据未达标，但缝与补丁都已到位（Session 45）**。①「SGLang 没有 PLE」**已推翻**：那是装机版 0.5.19 的事实，**`main@14b647c` 有** `qwen4_exp.py` + `qwen4_exp_ple_table.py`（第九条纪律）；②补丁 `integrations/sglang-main/0001-ple-offload-file-staged.patch` 给 `--ple-offload-backend` 加 **`file-staged`**：同一份稀疏文件，改由 host 读入 pinned staging 再拷到设备，**非 HMM 显卡可用**；③**正确性**：eager 与独立第二映射逐位相等，graph replay **16 个 cell × 20 次全部读到当步的行**（20/20）；④**代价**（4090 / 256 MiB 表 / median of 20）：staged warm **181 / 378 / 498 / 1494 µs**（1/8/32/128 token），cache-dropped **2298 / 13044 / 18991 / 6516 µs**；同 cell 的 `pinned`（设备端地板）30–79 µs；⑤**判决**：τ(1)≈325 µs 下只有「warm + 单 token」装得下（181 µs = 0.56×），其余 1.2–20×，**读完全暴露**。见 `probes/ple_sglang_main_session45.md` |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
 > 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
@@ -666,6 +666,8 @@ EngramDB/
 | `docs/measurement-protocol.md` | **测量协议 checklist** —— 读任何数字之前先读它。含编译 / CUDA graph 类实验的 5 条 |
 | `docs/cuda-graph-injection.md` | **把宿主侧磁盘读放进 CUDA graph 化 decode 步**：两引擎的真实开关、API 契约、重叠语义、三个会伪装成「跑通」的陷阱 |
 | `probes/sc4_phase_decomposition_session44.md` | **相位分解**：把「存储代价」拆回真正的归属（reader / D2H / rowid / 窗口 τ(L)），并推翻 Session 43 的差值归因 |
+| `integrations/sglang-main/` | **SGLang `main` 的 PLE 卸载补丁** —— `file-staged` 后端（让非 HMM 显卡也能用磁盘表）+ 缝地图 + 应用/运行方式 |
+| `probes/ple_sglang_main_session45.md` | **在 SGLang `main` 的真实缝上跑通并量代价**：`file-staged` 正确性、无断点即 capture 失败、上游 `file` 门禁挡的是真崩溃（`cudaErrorIllegalAddress`）、τ(1) 判决与相位分解 |
 | `docs/prefetch-lead-time.md` | `τ(L)` 提前量模型 —— §36.2 的 `L*` 规则由它化简而来 |
 | `docs/engram-specs.md` | Engram / PLE 结构规格与证据链 |
 | `docs/v41-engram-analysis.md` | DeepSeek-V4.1-Flash Engram 技术报告解读与规格闭合 |
@@ -700,7 +702,7 @@ bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving �
 
 | 几何 | 需要 | 实际 | 结论 |
 |---|---|---|---|
-| Qwen PLE（**48 层，0-based 第 1 层**） | `L* = 2` | 1 | ✅ **装得下**（Session 44 实测改写，见下） |
+| Qwen PLE（**48 层，0-based 第 1 层**） | `L* = 2` | 1 | ✅ **读得够快**（Session 44 改写，见下）。**但 Session 45 在 SGLang `main` 上量到 `issue_time` 撑不住**：host 读要先 D2H 同步才知道行号，于是「前面那层可以重叠」根本不成立 ⇒ 实测暴露 181 µs–19 ms |
 | V4.1 Engram（48 层，第 14 层） | `L* = 4` | 14 | ✅ **余量 3.5×** |
 | V4.1 **无线程池** | `L* = 26` | 14 | ❌ **装不下** ⇒ **并发度是可行性的前提，不是吞吐优化** |
 
@@ -716,13 +718,23 @@ bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving �
 >
 > **旧判决「差两层」是被 Python reader 的产物驱动的，不是被存储驱动的。**
 > 详见 `probes/sc4_phase_decomposition_session44.md`。
+>
+> **Session 45：`t_read ≤ τ(L)` 只是一半。** 判据的第二条是发起时刻：
+> `issue_time ≤ consume_time − τ(L)`。在 SGLang `main` 的真实缝上实测到三件事：
+> ①上游 `PleFilePrefetcher` 在 decode（<2048 行）与 capture 期间**不预取**，提前量恒为 0；
+> ②当它真的发出时，是在**消费时刻**发出的 —— 2048 行 warm 下净亏 **~830 µs**，冷态零收益；
+> ③我们的 host-issued 读必须先做一次 **D2H 同步**才知道行号，于是
+> 「前面还有一层 GPU 工作可以重叠」**根本不成立**：断点函数第一件事就是把那段工作等完。
+> ⇒ **下一步不是把读做快，而是把行号提前搬到 host**（调度器手里本来就有 token 历史）。
+> 见 `probes/ple_sglang_main_session45.md`、roadmap §39。
 
-当前优先级（细节见 roadmap §36.5）：
+当前优先级（细节见 roadmap §36.5 与 §39）：
 
-1. **锚定分母** —— 500 µs 的反推分母（100 tok/s）**从未被测量**；
-   CUDA graph 实测把它改变了 7.3–7.8×，**比任何存储优化都大**；
-2. **闭合子条件 4**（CUDA graph 路径）—— 关键路径上唯一一项。
-   **不是「存储不够快」（早已 11–31× 富余），而是「还没证明这个读不在关键路径上」**。
-   配方与探针已备：`docs/cuda-graph-injection.md`、`scripts/sglang_bcg_probe.py`；
-3. **把 `L*` 落到本机** —— 找出让净增落到噪声地板以下的层位置；
+1. **把行号提前搬到 host** —— Session 45 定位到唯一真正的瓶颈：不是带宽、不是并发，
+   甚至不是磁盘，而是**提前量为 0**。`_hash_contexts` 是纯整数运算，系数全是 checkpoint 常量，
+   在 host 上算与设备上算逐位相同是可证的；一旦行号在步**开始前**已知，读就能提前一个 step 发出，
+   `τ(L)` 才第一次真正被用上。**这是唯一还没有被否证的加速路径。**
+2. **然后再谈把读做快** —— `O_DIRECT` + `io_uring` 深度提交（SGLang #36567 的 reader），
+   把冷态 208 µs/行的串行缺页压到设备地板。**在①之前做没有意义**：读仍然是串行的。
+3. **删掉消费时刻的 `fadvise`，或者给它提前量** —— 现在它是可测的净损失（2048 行 warm 净亏 ~830 µs）。
 4. 之后才谈广度（V4.1 落地、多表、Arrow IPC、engram-peft、C ABI 补齐）—— **建议冻结**。

@@ -2177,3 +2177,75 @@ graph 模式存储数字：首次产出单次测量（read − break = 1.30 ms�
 账本：217/63 的净关闭率指标废止；唯一活账 = README §6.1 + roadmap §36.5
 下一步：§36.5 的 P1.5（stage 2）与 P2 前置（斜率法、rowid 访问分布、native gather/decode 边界）
 ```
+
+---
+
+## Session 45（第三十轮：SGLang `main` 真实缝上的高性能集成）
+
+### 1. 做了什么
+
+把 §38.4 的 **Track A** 做完：在 **SGLang `main@14b647c`** 的真实 PLE 缝上落地
+「非 HMM 显卡也能用磁盘 PLE 表」，并在目标缝上量出代价。
+
+起点是两条必须先纠正的事实（都是拿装机版当上游的老毛病）：
+
+| 以为 | 实际 |
+|---|---|
+| SGLang 只有 0.5.19 的样子（无 `qwen4_exp`） | **`main` 有** `qwen4_exp.py` + `qwen4_exp_ple_table.py`，含 `--ple-offload-backend file` |
+| 要用 main 就得先装它 | **不用装**：`PYTHONPATH=<clone>/python` 就能用 0.5.19 的依赖集导入 main 的 `qwen4_exp`（这条路径上没有 kernel） |
+
+### 2. 交付物
+
+- `integrations/sglang-main/0001-ple-offload-file-staged.patch`（5 文件，359 行）+
+  `README.md`（缝地图 / 为什么必须是断点 / 怎么跑 / 什么**不**在补丁里）
+  - 把 storage 与 access 拆成两个决定，新增 `--ple-offload-backend file-staged`：
+    同一份稀疏文件、同一个 allocator / prefetcher / trimmer，
+    改由 host 读入 pinned staging，再一次 pinned→device copy 发布到图要读的缓冲区
+  - `gather` 用 `eager_on_graph(True, capture_stub=...)` —— **上游自己的断点机制**
+  - 补丁对 pristine `14b647c` 往返验证：`patch -p1` 后与打补丁树 `diff -r` 相等
+- `scripts/sc_main_staged_probe.py`（探针：setup / eager / graph / direct 四段）+
+  `scripts/sc_main_staged_sweep.sh`、原始 JSON 在 `probes/data/`
+- `probes/ple_sglang_main_session45.md`（结论 + 替身清单）
+
+### 3. 结果
+
+```text
+正确性  eager staged 与独立第二映射逐位相等；graph replay 16 cell × 20 次全部 20/20 读到当步的行
+断点   拆掉 eager_on_graph 后 capture 直接失败（Cannot copy between CPU and CUDA during capture）
+门禁   绕过 check_file_backend_supported 后 4090 上 cudaErrorIllegalAddress —— 挡的是真崩溃
+代价   staged warm 181 / 378 / 498 / 1494 µs（1/8/32/128 token, median of 20）
+       staged cache-dropped 2298 / 13044 / 18991 / 6516 µs；同 cell pinned 30–79 µs
+分解   d2h 20.5 + read 87.1 + h2d 16.9 = 124.5（实测 123.3, 1 token）；纯往返 ≈ 37 µs
+判决   τ(1)≈325 µs 下只有「warm + 单 token」装得下（0.56×），其余 1.2–20× ⇒ 读完全暴露
+预取   PLE_FILE_PREFETCH_MIN_ROWS=2048 正好是 128 token × 16 head：
+       hint on 1421.1 vs off 590.5（warm，净亏 ~830 µs）；cold 18222 vs 17162（零收益）
+```
+
+**根因不是磁盘，是提前量为 0**：host-issued 读必须先 D2H 同步才知道行号，
+于是「提前一层有 GPU 工作可重叠」不成立 —— 断点函数第一件事就是把那段工作等完。
+⇒ 下一步是**把 n-gram 行号提前搬到 host**（`_hash_contexts` 是纯整数运算、系数全是
+checkpoint 常量，host/device 逐位相同可证）。**在它之前，更快的 reader 收益有限。**
+
+### 4. 坑与操作教训
+
+- clone 的 **index 是空的**（`git ls-files` 为 0，HEAD 有 9144）⇒ `git diff` 完全失明，
+  `git status` 把全部文件报成 `D ` + `??`。绕法：`git cat-file -p HEAD:<path>` 取 pristine
+  再本地 `diff -u --label a/... --label b/...`。
+- SGLang main 的 `VocabParallelEmbedding` 从 **runtime context** 读 `tp_size`，
+  独立跑必须 `publish(ServerArgs(...), role="test")`（`ROLE_NAMESPACE_SETS` 里有 `test` 这个角色），
+  只初始化进程组不够。
+- `ContextVar` **不可被子类化** ⇒ 想「拆掉」`eager_on_graph` 不能替换成新 ContextVar
+  （`__enter__` 会 set 同一个全局，读写一起走），要换成 duck-typed 的假对象。
+- CUDA graph capture 期间不允许 `cublasCreate`（`CUBLAS_STATUS_NOT_INITIALIZED`）——
+  引擎在 warmup 里付这笔账，探针也得先做一次 matmul。
+- `allocate_ple_host_table` 打在张量上的 `_sglang_ple_file_path` **活不过 `nn.Parameter` 包装**
+  ⇒ 只能靠 `ple_table_file_name` 重算（这本身也是个值得报给上游的小瑕疵，V199）。
+- 探针自己的 bug：`table_path_of` 若不按 backend 过滤，`pinned` 臂会解析到**同形状的历史文件**，
+  于是拿无关文件做「冷态」。已修；并直接验证 `madvise(MADV_DONTNEED)` 在 `pin_memory()` 上
+  返回 0 但数据不变，所以已跑的 `pinned` cell 未受影响（20/20 新鲜度亦佐证）。
+
+### 5. 下一步
+
+见 roadmap §39.4 与 §36.5：**P2 已改写为「把 n-gram 行号提前搬到 host」**；
+P2.5（给上游的 issue）证据已齐 —— 核心不是「WILLNEED 不好」，
+而是「**在消费时刻发 WILLNEED 没有用**」。

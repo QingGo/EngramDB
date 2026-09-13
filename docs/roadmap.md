@@ -4631,6 +4631,15 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
   README 只声称 rowid 四路径一致；`gather + dequant` 是否已在 native 侧、
   Python convert 占多少，**从未测过** —— 而 Session 43 测得「H2D + add ≈ 118 µs」
   暗示 convert 这一侧不是零。旧复盘的 Phase C 有这一条，也没进过活账。
+- **🔁 P2 已改写（Session 45，§39）**：`L*` 只回答「读得够快」。在 SGLang `main`
+  的真实缝上量到，卡住的是**发起时刻**：host-issued 读要先做一次 D2H 同步才知道行号，
+  所以「提前一层就有 GPU 工作可以重叠」**不成立** —— 断点函数第一件事就是把那段工作等完。
+  ⇒ P2 从「找合适的 L」改成 **「把 n-gram 行号提前搬到 host」**：
+  调度器手里本来就有 token 历史，而 `_hash_contexts` 是纯整数运算、系数全是 checkpoint 常量，
+  host 与 device 逐位相同是**可证的**（和 rowid 一致性同一类证明）。
+  一旦行号在步开始前已知，`τ(L)` 才第一次真正被用上。
+  **这是唯一未被否证的加速路径**；更快的 reader（P0.5′ 的 io_uring 支线）在它之前做的收益
+  受限于「读仍然是串行的」。
 
 **P0.5′ — 楔子已被上游代码确证（§37.7 第一手核实）**
 - 上游 `file` 后端是 **HMM 硬门控**（非 HMM 设备直接 raise），
@@ -4639,6 +4648,20 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 - 这使 P0.5 的目标具体化：**不是「接进上游」，而是「补上游拒绝跑的那一类硬件」**，
   并复用我们已实测的 `τ(L) ≥ ~325 µs` 作为设计约束。
 - **待测（需要 HMM 机器）**：一次 decode gather 的 fault 驱动停顿有多长（§37.7 边界）。
+- **✅ Track A 落地（Session 45，见 §39）**：补丁
+  `integrations/sglang-main/0001-ple-offload-file-staged.patch` 在 `main@14b647c` 上把
+  **storage 与 access 拆成两个决定**，新增 `--ple-offload-backend file-staged`
+  （同一份稀疏文件，改由 host 读入 pinned staging 再拷到设备）。
+  **判据达成**：数字是在**上游 `main` 的缝上**跑出来的（`Qwen4ExpPLELayer` → `gather` →
+  `BreakableCUDAGraph`），且 eager 与独立第二映射逐位相等、graph replay **16 cell × 20 次
+  全部读到当步的行**。**代价**：staged warm **181 / 378 / 498 / 1494 µs**（1/8/32/128 token），
+  cache-dropped **2298 / 13044 / 18991 / 6516 µs**；同 cell `pinned` 30–79 µs。
+  **判决**：τ(1)≈325 µs 下**只有「warm + 单 token」装得下**（181 µs = 0.56×），
+  其余 1.2–20× ⇒ **读完全暴露**。
+- **同轮否证**：上游那道门禁挡的是**真崩溃** —— 绕过 `check_file_backend_supported`
+  之后 4090 上直接 `cudaErrorIllegalAddress`（`probes/data/direct_arm_crash.txt`）。
+  所以 `file-staged` 不能静默替换 `file`：access 方式决定要不要 breakable graph，
+  那是部署属性，不该由探测替你决定。
 
 **P2.5 — 把成本模型与 `τ(L)` 交给上游（Session 44 新增）**
 - 这是**唯一上游没有、且对 #36567 直接有用**的东西：上游只报端到端差
@@ -4646,6 +4669,14 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 - 我们的答案是：**≥ ~325 µs**，而 PLE 在 layer 1 恰好只给这么多。
 - 形态：一条 issue / 一份可复现脚本，而不是又一个功能。
   `PleFilePrefetcher` 用了 WILLNEED，但**前置量**没人量过。
+- **✅ 证据已齐（Session 45，不再需要论证）**：`PLE_FILE_PREFETCH_MIN_ROWS = 2048`，
+  而 128 token × 16 head **正好是 2048**，所以我们量到的就是它设计要服务的那个点：
+  - 2048 行 warm：hint on **1421.1 µs** vs hint off **590.5 µs** ⇒ 净亏 **~830 µs**
+    （2048 次 `posix_fadvise` + 后台线程抢 GIL）；
+  - 2048 行 cache-dropped：**18221.8** vs **17161.7** ⇒ **零收益**。
+  - 结论不是「WILLNEED 不好」，而是「**在消费时刻发 WILLNEED 没有用**」——
+    异步预读在缺页开始前没有任何时间落地。这正是判据第二条
+    （`issue_time ≤ consume_time − τ(L)`）的实测形态。
 
 **P3 — 之后才谈广度**
 - V4.1 接口、多表、Arrow IPC、engram-peft、C ABI 补齐 —— 产品面。
@@ -5113,3 +5144,115 @@ A 是主线的唯一实质进展；C **只在 A 显示出暴露之后才做** �
 > 其余每一层都能从上游借到，只要**分层借、不跨层混同**。
 > 而本轮的两次翻车也收敛成同一条纪律：
 > **我们在替身上做测量，然后把结论用在目标上。**
+
+---
+
+## §39 Session 45：在 SGLang `main` 的真实缝上落地并量代价
+
+`probes/ple_sglang_main_session45.md` · `integrations/sglang-main/` · `scripts/sc_main_staged_probe.py`
+
+### 39.1 这一轮回收了 §38.4 的 Track A，并且判据第一次落在目标上
+
+§38.1 把目标收紧为「**没有任何一层内存装得下、且硬件不支持内核直接解引用时仍可服务**」，
+判据两条：`t_read ≤ τ(L_ple)` **且** `issue_time ≤ consume_time − τ(L_ple)`。
+
+Track A 的准入门槛是「产出必须带 target 标签」。本轮做到的：
+
+- **缝是目标**：`Qwen4ExpNGramEmbedding` / `Qwen4ExpPinnedHostEmbedding` /
+  `BreakableCUDAGraph` / `eager_on_graph` **全部从 `main@14b647c` 导入**。
+  这直接偿清了 **V187**（SC4 apparatus 建在上游不用的缝上）中「主线集成」那一半。
+- **补丁是目标**：`integrations/sglang-main/0001-ple-offload-file-staged.patch`
+  对 pristine `14b647c` 做 `patch -p1` 后逐文件 `diff -r` 相等（已验）。
+- **不需要安装上游**：`PYTHONPATH=<clone>/python` + 0.5.19 的依赖集就能导入 `main` 的
+  `sglang.srt.models.qwen4_exp` —— 因为这条路径上**没有一个是 kernel**。
+  这把「装 main」从一个多小时的构建变成了零成本；**依赖集是替身，缝是目标**。
+
+### 39.2 补丁做了什么：把 storage 与 access 拆开
+
+上游 `main` **已经有** file 后端（稀疏文件 + `torch.from_file` + `PleFilePrefetcher` +
+`PleFileRssTrimmer`），但**只有一种解引用方式**：Triton kernel 通过设备地址空间读映射，
+由 `check_file_backend_supported` 用 `cudaDevAttrPageableMemoryAccessUsesHostPageTables`
+硬门控（GB10 类）。
+
+补丁把决定拆成两个：**表放在哪** 与 **谁去解引用**。新增
+`--ple-offload-backend file-staged` —— 同一份稀疏文件、同一个 allocator、同一个 prefetcher
+与 trimmer，改由 host 读入 pinned staging，再一次 pinned→device copy 发布到图要读的缓冲区；
+`gather` 用 `eager_on_graph(True, capture_stub=...)` —— **上游自己的断点机制**。
+动 5 个文件（storage 模块、model、CLI 字段、`memory_hook`、`load_model_utils`）。
+
+### 39.3 三条第一手结论
+
+**① 断点是前提，不是优化。** `start_prefetch` 在 `qwen4_exp.py:1688` 被调用（第 *i* 层迭代开头
+为第 *i+1* 层发起），所以提前量恰好一层。但行号在设备上产生，host 读必须先 D2H —— 而 D2H
+不可 capture。把装饰器拆掉后 capture 直接死：
+
+```
+RuntimeError: Cannot copy between CPU and CUDA tensors during CUDA graph capture
+unless the CPU tensor is pinned.
+```
+
+**② 上游那道门禁挡的是真崩溃。** 绕过 `check_file_backend_supported` 在 4090 上跑上游
+`file` 后端 → `cudaErrorIllegalAddress`。所以补丁**不**让 `file-staged` 静默替换 `file`：
+access 方式决定要不要 breakable graph，那是部署属性。这条也顺带把 §37.7 的「楔子」从
+「读代码得出的推断」升级成「跑出来的事实」。
+
+**③ 读完全暴露，而原因不是磁盘。** 16 个 cell（1/8/32/128 token × warm/cold × pinned/staged），
+每次 20 个 replay，**全部 20/20 读到当步的行**（正确性无懈可击）：
+
+| tokens | rows | pinned warm | staged warm | staged cache-dropped |
+|---|---|---|---|---|
+| 1 | 16 | 30.1 | **181.4** | **2297.7** |
+| 8 | 128 | 67.4 | **378.4** | **13043.8** |
+| 32 | 512 | 48.1 | **498.1** | **18990.5** |
+| 128 | 2048 | 51.7 | **1494.1** | **6515.5** |
+
+（µs，median of 20；τ(1) ≈ 325 µs）
+
+相位分解（prefetch off，和式闭合）：`d2h 20.5 + read 87.1 + h2d 16.9 = 124.5` vs 实测 123.3（1 token）；
+`28.1 + 513.1 + 46.3 = 587.5` vs 590.5（128 token）。**纯往返（不含任何存储）≈ 37 µs**；
+冷态把中间那一项从 87 推到 **3335**（16 行）、从 513 推到 **17233**（2048 行）。
+
+⇒ τ(1) 下**只有「warm + 单 token」装得下**（0.56×），其余 1.2–20×。
+
+**④ 顺带否证了上游的预取。** `PLE_FILE_PREFETCH_MIN_ROWS = 2048`，而 128 token × 16 head
+正好是 2048 —— 正好是它设计要服务的点。同一 cell：
+
+| | hint on | hint off |
+|---|---|---|
+| warm | 1421.1 | **590.5** |
+| cache-dropped | 18221.8 | **17161.7** |
+
+净亏 ~830 µs（2048 次 `posix_fadvise` + 后台线程抢 GIL），冷态零收益。
+**不是 WILLNEED 不好，是在消费时刻发 WILLNEED 没有用。**
+
+### 39.4 债务账（活账增删）
+
+**关闭**
+- **V187（主线性）** —— 「SC4 apparatus 建在上游不用的缝上」。主线集成那半已关：
+  补丁打在目标树上、数字出在目标缝上。（另一半 —— 为 #36567 提供它缺的验证 —— 仍然有效，
+  但已降级为可选，见 P2.5。）
+- **P0.5′ 的判据** —— 「能在**上游 main**（不是我们的探针）上跑出一个冷态数字」：达成。
+
+**新增**
+- **V195 · 补丁没有上游单测。** 5 个文件只有人工验证（`patch` 往返 + 16 cell 运行）。
+  上游 CI 会要 `test/` 下的东西；`check_ple_offload_backend_supported` 与
+  `Qwen4ExpStagedFileEmbedding._read_rows` 都是**纯函数级可测**的，成本很低。
+- **V196 · `file-staged` 只验到 2048 行。** prefill 大小（chunked prefill 8192 token = 131072 行）
+  未测：那条路上 `PleFilePrefetcher` 会真的发出，而我们的 staged 读是**串行**的。
+  这是 Track C（io_uring）的准入前提，现在还没有。
+- **V197 · 冷态对照不完整。** 这台机器 1 TB RAM / 796 GB page cache，
+  `fadvise`+`madvise` 只能做到部分驱逐（min/median 散布 0.5–88 ms）。
+  **冷态数字是下界**，真实更差。若要硬冷，得换成 `O_DIRECT` 读路径。
+- **V198 · 探针替身清单**（已在 §39 与 probe 文档逐条标注）：tiny config、dummy decoder layer、
+  256 MiB 表（非 51.2 GB）、τ(1) 沿用 Session 44 的 24 层替身。
+- **V199 · 上游小瑕疵**：`allocate_ple_host_table` 打在返回张量上的 `_sglang_ple_file_path`
+  **活不过 `nn.Parameter` 包装**（`Qwen4ExpPinnedHostEmbedding.__init__` 只从**原始** GPU 权重
+  复制属性），所以除了创建它的那两行之外没人能再取回表路径。我们的探针只能靠
+  `ple_table_file_name` 重算。值得在给上游的 issue 里带一句。
+
+### 39.5 一句话
+
+> 这一轮把「楔子」从推断变成了事实，也把瓶颈**从磁盘挪走了**：
+> 读得够快（warm 87 µs/16 行），但**发得太晚** ——
+> 断点函数的第一件事就是把前一段 GPU 工作等完，所以「提前一层」买不到任何东西。
+> **下一步不是更快的 reader，是让行号在步开始前就落在 host 上。**

@@ -1,0 +1,38 @@
+{
+  "argv": [
+    "--sections",
+    "graph",
+    "--arms",
+    "pinned,staged",
+    "--iters",
+    "20",
+    "--tokens",
+    "128",
+    "--cold",
+    "--out",
+    "g128_cold.json"
+  ],
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "graph": {
+    "pinned": {
+      "break_fns": 0,
+      "segments": 1,
+      "cold": true,
+      "step_us_median": 78.65764200687408,
+      "step_us_min": 67.70715117454529,
+      "step_us_max": 106.5284013748169,
+      "replay_reads_fresh_rows": 20,
+      "replays_checked": 20
+    },
+    "staged": {
+      "break_fns": 1,
+      "segments": 2,
+      "cold": true,
+      "step_us_median": 6515.465676784515,
+      "step_us_min": 3290.470689535141,
+      "step_us_max": 68280.6633412838,
+      "replay_reads_fresh_rows": 20,
+      "replays_checked": 20
+    }
+  }
+}
