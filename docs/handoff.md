@@ -90,7 +90,9 @@ probes/   p4_view_notes.md（P4 v2-v9 全部结论）baseline_view.csv baseline_
 > **下一步（唯一未被否证的路径）**：**把 n-gram 行号提前搬到 host**。
 > host-issued 读要先 D2H 同步才知道行号，所以「提前一层有 GPU 工作可重叠」根本不成立 ——
 > 断点函数第一件事就是把那段工作等完。`_hash_contexts` 是纯整数运算、系数全是 checkpoint
-> 常量，host 与 device 逐位相同可证。**在它之前，更快的 reader 收益受限于「读仍然串行」。**
+> 常量 —— **已实测逐位相同**（`probes/data/hosthash.json`：CPU vs CUDA、融合 kernel vs
+> 参考，全等）。剩下的只是把调度器 CPU 侧的 token 窗口接过来。
+> **在它之前，更快的 reader 收益受限于「读仍然串行」。**
 > 细节：`probes/ple_sglang_main_session45.md`、roadmap §39。
 >
 > **新债**：V195（补丁无上游单测）/ V196（只验到 2048 行，prefill 未测）/

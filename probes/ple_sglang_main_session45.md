@@ -189,3 +189,31 @@ cells are unaffected; the probe now returns no path for non-file backends.
 4. The `file` gate stays. `file-staged` should not silently replace it: the
    access mode determines whether a breakable graph is required, and that is a
    property of the deployment, not something to infer.
+
+---
+
+## 8. Follow-up: the next fix is arithmetically possible
+
+§7 item 1 says the fix is to hash the n-gram ids on the *host*. That is only
+worth building if the host answer is **bit-identical** to the device's, so
+`scripts/sc_main_host_hash_probe.py` checks it rather than assuming it —
+512 tokens × 16 heads, with EOS tokens sprinkled through the contexts so
+`_shift_right_ignore_eos`'s window reset is exercised, not just the mixing:
+
+```json
+{ "A_cpu_vs_cuda_equal": true,      // _hash_contexts, same path, CPU vs CUDA
+  "A_repeatable": true,             // no hidden state
+  "B_fused_vs_reference_equal": true,   // fused_qwen4_ngram_hash vs that reference
+  "B_module_fused_equal": true,         // and through the module's own dispatch
+  "A_id_min": 2, "A_id_max": 66690 }
+```
+
+Raw: `probes/data/hosthash.json`. So the arithmetic ports cleanly (int64
+multiply/xor/remainder are exact on both, and the fused kernel agrees with the
+portable reference too).
+
+What this does **not** settle: getting the *contexts* on the host. In the engine
+they come from `ReqToTokenPool.get_ngram_context`, which is device-side state.
+The scheduler holds the same tokens CPU-side, so the remaining work is plumbing
+that window — and re-deriving the EOS reset from `req.origin_input_ids` +
+`req.output_ids` — not arithmetic. That is the next patch.

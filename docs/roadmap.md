@@ -4640,6 +4640,8 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
   一旦行号在步开始前已知，`τ(L)` 才第一次真正被用上。
   **这是唯一未被否证的加速路径**；更快的 reader（P0.5′ 的 io_uring 支线）在它之前做的收益
   受限于「读仍然是串行的」。
+  **可行性已验（§39.3⑤）**：host 与 device 的 hash 逐位一致，融合 kernel 也对得上。
+  剩下的只是把调度器 CPU 侧的 token 窗口接过来。
 
 **P0.5′ — 楔子已被上游代码确证（§37.7 第一手核实）**
 - 上游 `file` 后端是 **HMM 硬门控**（非 HMM 设备直接 raise），
@@ -5224,6 +5226,21 @@ access 方式决定要不要 breakable graph，那是部署属性。这条也顺
 
 净亏 ~830 µs（2048 次 `posix_fadvise` + 后台线程抢 GIL），冷态零收益。
 **不是 WILLNEED 不好，是在消费时刻发 WILLNEED 没有用。**
+
+**⑤ 下一步在算术上成立（同轮补测）。** §39.3③ 把瓶颈归到「行号在设备上」，
+所以下一步是**在 host 上算同样的 id**。这不是假设 ——
+`scripts/sc_main_host_hash_probe.py` 直接对拍（512 token × 16 head，
+且刻意混入 EOS 以压到 `_shift_right_ignore_eos` 的窗口重置）：
+
+```json
+{ "A_cpu_vs_cuda_equal": true, "A_repeatable": true,
+  "B_fused_vs_reference_equal": true, "B_module_fused_equal": true }
+```
+
+⇒ 整数运算与融合 kernel 都与可移植参考**逐位一致**。
+**没有解决的**是「上下文怎么到 host」：引擎里它来自 `ReqToTokenPool.get_ngram_context`
+（设备侧状态），而调度器 CPU 侧持有同一批 token。剩下的是管路，不是算术。
+原始数据 `probes/data/hosthash.json`。
 
 ### 39.4 债务账（活账增删）
 
