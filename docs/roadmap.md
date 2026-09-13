@@ -4062,8 +4062,15 @@ def replay(self) -> None:
 
 #### 新的验收判据（替代 §35.1c 的隐式标准）
 
-> `VLLM_USE_BREAKABLE_CUDAGRAPH=1` **且** `cudagraph_mode=PIECEWISE`
-> **且** `reader_calls > 0` **且** `tokens_identical_to_none == False`
+> **(a)** 确实运行在断点模式下：vLLM 侧 `VLLM_USE_BREAKABLE_CUDAGRAPH=1`
+> **且 dump 后断言** `cudagraph_mode == PIECEWISE`（不信传进去的值，见下）；
+> SGLang 侧 `--cuda-graph-backend-decode=breakable`
+> **(b)** `reader_calls > 0`
+> **(c)** `tokens_identical_to_none == False`
+> **(d)** 断点真的发生了：`capture.num_eager_breaks > 0`
+
+**(d) 是这一轮新加的。** 前三项在 vLLM 那八次失败运行里**至少有一次可能全绿**而仍然是假的 ——
+因为「读发生了」和「断点发生了」是两件事：eager 模式下读也会发生。
 
 #### ⚠️ 一个会伪装成「跑通」的静默降级
 
@@ -4080,16 +4087,96 @@ def replay(self) -> None:
 不能假设传进去就是生效值。这与 §35.1c 的 W2（编译缓存复用旧产物）是同一类陷阱：
 **注入类实验必须自证「我确实在我想测的那个模式下」**，而不只是自证「我的读发生了」。
 
-#### SGLang 侧的对应物
+#### 更强的信号：vLLM 对 PLE 家族**自动开启**这个机制
 
-`@eager_on_graph(enable=True)` 装饰器 + `break_graph()` 辅助函数 +
-`SGLANG_USE_BREAKABLE_CUDA_GRAPH=1`（SGLang PR #19102 原文：
-*"when enable `SGLANG_USE_BREAKABLE_CUDA_GRAPH`, the decode graph is breakable.
-The overhead is minimal if no graph break inserted."* —— **明确覆盖 decode**）。
-文档：<https://docs.sglang.io/docs/advanced_features/breakable_cuda_graph.md>。
+`vllm/config/vllm.py:75-94`：
 
-> ⚠️ 本节全部为**源码阅读结论，尚未在 GPU 上验证**。上机第一件事是按上面的
+```python
+DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES = frozenset({
+    "DeepseekV32MTPModel", "DeepseekV32ForCausalLM",
+    "DeepseekV4ForCausalLM",          # ← PLE / Engram 那一族
+    "DeepSeekV4MTPModel", "Dots3NoteForCausalLM", ...
+})
+```
+
+只要 `VLLM_USE_BREAKABLE_CUDAGRAPH` 未显式设置且架构在表里，
+`_maybe_enable_breakable_cudagraph()`（`:710-728`）就自己设环境变量并打日志
+*"Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1"*。
+
+⇒ **引擎自己认定「带 PLE 的那一族模型就该用 breakable」。** 宿主侧取数不是我们
+硬塞进去的异类，是引擎已经认下的模式。但我们本机没有 V4 的 checkpoint，
+架构名对不上 ⇒ **自动开启不会触发，必须手动设环境变量**。
+
+#### `mode` 被压成 NONE 不是问题 —— 引擎显式开了例外
+
+同函数在开启时**主动**把编译模式压成 NONE：
+`if enabled: self.compilation_config.mode = CompilationMode.NONE`。
+
+而两处本来会把 `PIECEWISE` 打死的守卫**都豁免了 breakable**
+（`vllm/config/vllm.py:1469-1480` 与 `:1714-1722`）：
+
+```python
+... and not envs.VLLM_USE_BREAKABLE_CUDAGRAPH):     # 否则把 cudagraph_mode 打成 NONE
+...
+assert (self.compilation_config.mode == CompilationMode.VLLM_COMPILE
+        or envs.VLLM_USE_BREAKABLE_CUDAGRAPH), (...)  # 否则直接崩
+```
+
+⇒ **`mode=NONE` + `cudagraph_mode=PIECEWISE` + breakable 是被承认的组合。**
+「breakable 与 compile 互斥」指的是 **compile 被替换掉**，不是 **只能跑 eager**。
+
+#### 两条路线的取舍
+
+| | 路线 A：`splitting_ops` | 路线 B：`breakable_cudagraph` |
+|---|---|---|
+| 切图者 | Dynamo FX + Inductor | 运行时流捕获断点（不经过 compile） |
+| 需要 | `mode=VLLM_COMPILE` + `splitting_ops` + `PIECEWISE` | `VLLM_USE_BREAKABLE_CUDAGRAPH=1` + `PIECEWISE` |
+| 我们已有的代码 | ✅ 已写好 | ⚠️ 加一个装饰器 |
+| 受 Inductor 影响 | ✅ 会（W3/W4 两个坑依然在） | ❌ 不经过 |
+| 重叠语义 | ⚠️ **未验证** | ✅ 代码里明摆着（§下） |
+| vLLM 对 PLE 家族的默认 | ❌ | ✅ **是** |
+
+**建议先试 B**（W3/W4 直接消失 + 引擎默认 + 重叠语义明确），A 作为后备。
+
+#### SGLang 侧的对应物（⚠️ 官方文档是错的）
+
+<https://docs.sglang.io/docs/advanced_features/breakable_cuda_graph.md> 说
+`SGLANG_USE_BREAKABLE_CUDA_GRAPH` *"Required for `@eager_on_graph` decorators
+to take effect"* —— **在 v0.5.19 里这是假的。** 全树 `.py` 检索只有两处：
+`environ.py:1290` 定义、`serving_hook.py:416` **只 `.set()` 从不读**。
+**这个变量是只写的。**
+
+真开关是 per-phase 的 CUDA graph 后端（`model_executor/cuda_graph_config.py`）：
+
+```python
+decode:  PhaseConfig(backend=Backend.FULL)                       # L147-149
+prefill: PhaseConfig(backend=default_prefill_backend())          # L150-152
+def default_prefill_backend(): return Backend.BREAKABLE if is_cuda() else Backend.TC_PIECEWISE  # L112-121
+```
+
+⇒ **CUDA 上 prefill 默认已是 breakable，decode 默认是 full。** 我们要：
+
+```bash
+--cuda-graph-backend-decode=breakable
+```
+
+`BreakableCUDAGraphCapture` 全 server 路径只有一处实例化
+（`runner_backend/breakable_cuda_graph_backend.py:131`），
+`_current_capture_var` 只在那里设置。否则 `eager_on_graph` 是**纯直通**
+（`breakable_cuda_graph.py:221-224`）⇒ **只设环境变量 + 只加装饰器 = 重演 vLLM 那次失败
+（注册得好好的，replay 一次都不执行）。这是最容易重复踩的一脚。**
+
+另一个必须知道的边界：**内建断点在 v0.5.19 只覆盖 prefill**。
+attention 的 `eager_on_graph` 站点门控在 `radix_attention.py:178` 的
+`forward_batch.forward_mode.is_extend()` ⇒ `--cuda-graph-backend-decode=breakable` 下
+**dense 模型的 decode 是「一整段、零断点」**，机制活着但断点得我们自己加
+（正好我们只要一个）。顺带：`--debug-cuda-graph` 在 v0.5.19 本身是坏的 ——
+它只设那个死变量、不设 decode 后端，而 `decode_cuda_graph_runner.py:1164-1168`
+又 assert *"Breakable CUDA graph is required for --debug-cuda-graph"*。
+
+> ⚠️ 本节全部为**源码阅读结论，尚未在 GPU 上验证**。上机第一件事是按 §6 的
 > 验收判据跑一次；在拿到 `reader_calls > 0` 之前，§6.1 的子条件 4 保持 ❌。
+> 完整的 API 契约、行号与最小实现见 **`docs/cuda-graph-injection.md`**。
 
 ### 35.2 本轮技术债（V166–V177）
 
