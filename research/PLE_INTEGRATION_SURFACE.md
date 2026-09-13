@@ -322,3 +322,50 @@ It is installed by a one-line swap at `Qwen4ExpPLELayer.__init__:933-938`, and t
 4. **[U]** Whether #54070 itself was captured end-to-end at `cudagraph_mode=FULL_AND_PIECEWISE`. #54070's stated tests are first-boot / reboot / gather-equivalence on hardware; the FULL-capture test plan lives in the #53899 commit it includes.
 5. **[U]** Whether #36567 has a non-eager CUDA-graph validation run at all. Its own Speed Tests section says "eager execution"; the code is written for the breakable backend (`eager_on_graph`, `is_in_breakable_cuda_graph`) but I found no `FULL_AND_PIECEWISE`/breakable test in its file list (`.github/workflows/pr-test-rust-exts.yml` is the only CI change).
 6. **[U]** `sgl-project/sglang#39205`'s Engram work (Mooncake backend) is on the `dsv4.1` base and is **not** merged; I read only its body and file list, not its diff, so its `engram_mooncake.py` internals are unverified beyond the body's claims.
+
+---
+
+## 8. Session 46 update: a third implementation, and what all of them require
+
+Found by web search after our clone's HEAD (2026-09-13). **[C] for what the source
+says, [U] for how it is deployed.**
+
+**`FlashML-org/FreeToken`** ships its own PLE gather,
+`python/freetoken/kernel/triton/ple.py`, header: *"Adapted from SGLang
+(python/sglang/srt/models/qwen4_exp.py)"*. Its docstring is the whole design in
+one sentence:
+
+> The table (320,001,536 rows x 160, FP8-e4m3 + one scalar scale = 47.7 GiB)
+> **stays in pinned host memory and the GPU dereferences it in place over PCIe** --
+> at its host VA on Linux/UVA, at the mapped device address on WDDM.
+
+Two things in it corroborate measurements we made independently:
+
+- `_NUM_WARPS = 1`, with the comment *"Latency-bound over PCIe, so keep the block
+  small and let many of them be in flight."* That is our device-side floor number
+  (30–79 µs for 16–2048 rows, flat in batch size) described from the other side.
+- It widens fp8→fp32 and applies the scale **in the kernel**, never staging
+  through the host. Our Session 46 measurement says the same thing from the cost
+  side: a cross-device `copy_` that also casts costs 456 µs where the cast alone
+  costs 18 µs. Different conclusion, same instinct.
+
+**Where this leaves the landscape.** Every implementation we can find needs the
+table resident somewhere the GPU can reach:
+
+| implementation | residency | mechanism | needs |
+|---|---|---|---|
+| SGLang `main`, `pinned` | 47.7 GiB **pinned host RAM** | kernel dereferences over PCIe/UVA | pinned RAM, and enough of it |
+| FreeToken | same, WDDM-aware | same, plus in-kernel scale/dequant | same |
+| SGLang `main`, `file` | page cache, mapped | kernel walks **host page tables** | `cudaDevAttrPageableMemoryAccessUsesHostPageTables` (GB10 class) |
+| vLLM #54371 (merged) | 47.7 GiB **pinned host RAM** | UVA via `cudaHostGetDevicePointer` | pinned RAM |
+| vLLM #54070 / #54129 (disk, unmerged) | disk | offload worker / mmap | unmerged |
+| DGX Spark reports (e.g. `maci0/qwen3.8-flash-next-spark`, "PLE streamed from disk") | disk, on **GB10** | the `file` path | an HMM part |
+| **ours (§39, §40)** | **disk, any GPU** | host read + pinned staging + graph break | nothing but CUDA and a file |
+
+So the wedge is unchanged and now externally corroborated: **everyone who serves
+this table needs it resident; the disk paths that exist need HMM.** The
+combination "disk-backed **and** non-HMM" is still only ours.
+
+Caveat on this section: I read FreeToken's kernel and its header comment, and the
+DGX Spark item's title/description only — the Spark README itself timed out twice.
+Treat the "GB10" column entry as the title's claim, not as a verified mechanism.
