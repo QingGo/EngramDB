@@ -4176,7 +4176,16 @@ attention 的 `eager_on_graph` 站点门控在 `radix_attention.py:178` 的
 
 > ⚠️ 本节全部为**源码阅读结论，尚未在 GPU 上验证**。上机第一件事是按 §6 的
 > 验收判据跑一次；在拿到 `reader_calls > 0` 之前，§6.1 的子条件 4 保持 ❌。
-> 完整的 API 契约、行号与最小实现见 **`docs/cuda-graph-injection.md`**。
+> 完整的 API 契约、行号、三个 v0.5.19 特有陷阱（**别传 CPU 张量** /
+> `_copy_output` 对未知类型静默不回写 ⇒ 原地写并 `return None` /
+> `decode=tc_piecewise` 没实现）、以及「断点可放在层栈内部」的现成先例
+> （`inkling.py:262-271`），见 **`docs/cuda-graph-injection.md`**。
+
+**第一次上机建议用 SGLang**，理由不是性能而是**它不容易静默失败**：
+SGLang 的开关是结构性的（decode runner 直接选 `BreakableCudaGraphBackend`），
+而 vLLM 的开关要经过模式解析器 —— 那正是上一轮吃掉我们八次运行的东西。
+但注意 **vLLM 才是 `qwen4_exp`/PLE 有真实支持的引擎**（子条件 6），
+所以 SGLang 这一轮只验证**机制**（合成投影即可），真 PLE 仍须回 vLLM。
 
 ### 35.2 本轮技术债（V166–V177）
 

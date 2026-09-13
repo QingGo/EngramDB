@@ -353,6 +353,71 @@ forward_batch.forward_mode.is_extend()      # ← 只有 prefill
 （*"contents are never consumed; warmup and replay run the real inner"*）——
 **避免建图时真读一次盘**。
 
+### 4.5 v0.5.19 特有的三个陷阱（都是静默的）
+
+| # | 陷阱 | 证据 | 防 |
+|---|---|---|---|
+| 1 | **不要给 `@eager_on_graph` 传 CPU 张量** | `_weak_ref_if_tensor`（`:155-173`）对 `torch.is_tensor(x)` **一律弱引用**，没有 CPU 例外 ⇒ 悬空 storage。`main` 上已修（加了 `x.device.type == "cpu"` 分支），**v0.5.19 没有** | 把 host 侧数据**闭包**进去，或传普通 Python / numpy 对象 |
+| 2 | `_copy_output` 对不认识的类型**直通返回 src**（`:213` `return src`）—— 对 `None`/int 就是**静默不回写** | 单元测试 `test_breakable_cuda_graph.py:323-325` 正是在断言这个 fallback | **原地写进调用方缓冲并 `return None`** |
+| 3 | **`--cuda-graph-backend-decode=tc_piecewise` 没实现** | `runner_backend/utils.py:94-104`：*"not yet implemented; falling back to 'full'"* | 别指望用 PCG 绕开 BCG |
+
+第 2 条与引擎自己的写法一致 —— `inkling.py:405` 的注释：
+
+> *"Mutates attn_out / residual_out and returns None (the eager_on_graph
+> copy-back is per-tensor, not per-tuple, so outputs must be pre-allocated buffers)."*
+
+⇒ **首选契约：写进调用方提供的缓冲区，返回 `None`。**
+这与 vLLM 的硬要求（"In-place output buffer required"）**是同一条**，
+所以按这条写，两个引擎共用一份代码。
+
+### 4.6 断点可以放在解码层栈**内部**（有现成先例）
+
+`inkling.py:262-271` 是引擎自己把断点放进 layer 内部的例子：
+
+```python
+# Under BCG the short-conv metadata (cu_seqlens/seq_idx) is baked at bs=1
+# during capture, which is wrong for multi-seq prefill. Running every
+# sconv (and the attn whose k/v_sconv it wraps) eagerly makes them re-read
+# the LIVE per-seq metadata at replay. `_breakable_attn_group` groups the
+# prior layer's (deferred) mlp_sconv + attn_norm + attn + attn_sconv into
+# ONE eager break; only mlp_norm + MoE stay captured.
+self._breakable_attn_group = eager_on_graph(True)(self._attn_group_impl)
+self._breakable_mlp_sconv = eager_on_graph(True)(self._mlp_sconv_impl)
+```
+
+两条可以直接借用的经验：
+
+1. **放置位置由「被装饰的可调用对象在 module forward 里被调用的位置」决定** ——
+   没有任何东西限制断点只能在模型边界或 attention 切分点。
+   我们的「layer 14 处读」是普通 Python 调用点，可以做。
+2. **可以把多个算子聚成一个断点**（它把 4 个算子合成一个 eager 段）。
+   我们的 ①提交 → ②等待 若放在同一层，也可以合成一个断点。
+
+**唯一硬约束：断点位置必须每一步都一样。** segment / break 序列在 capture 时
+按**调用序列**冻结，replay 盲跑那个列表。任何「这一步要不要调用」的数据相关分支
+都会让段与缓冲错位。
+
+### 4.7 引擎选择：SGLang 更稳，原因不是性能
+
+| | SGLang v0.5.19 | vLLM 0.29.0 |
+|---|---|---|
+| 开关 | `--cuda-graph-backend-decode=breakable` | `VLLM_USE_BREAKABLE_CUDAGRAPH=1` |
+| 断点条件 | **结构性**：decode runner 直接选 `BreakableCudaGraphBackend` | **模式相关**：仅 `cudagraph_runtime_mode == PIECEWISE` 才断 |
+| 会不会被静默降级 | ❌ 不会（后端不匹配会 assert/回退到 full，行为可观察） | ⚠️ **会** —— `compilation.py:1195-1217` 可把 `PIECEWISE` 改成 `NONE` |
+| 回写宽容度 | 支持 fresh tensor / tuple / dataclass / dict | **仅原地** |
+| 与 `torch.compile` | 实际不兼容（无显式守卫） | 显式互斥（引擎自己压 `mode=NONE`） |
+
+**建议：第一次上机用 SGLang。** 理由是**它不容易静默失败** ——
+我们已经因为「看着配好了、其实没生效」烧掉八次运行，
+SGLang 的开关是结构性的，而 vLLM 的开关经过模式解析器，
+而那个解析器正是上一轮吃掉我们的东西。
+
+⚠️ 但注意：**vLLM 才是 `qwen4_exp`/PLE 有真实支持的引擎**
+（§6.1 子条件 6：SGLang 0.5.19 一处都没有 `qwen4_exp`）。
+所以「先用 SGLang 验证机制」与「最终要在 vLLM 上跑真 PLE」是两件事，
+SGLang 这一轮只验证**机制**（合成投影即可）。
+
+
 ---
 
 ## 5. 为什么这个机制**自带重叠**（本轮最重要的发现）
@@ -424,8 +489,8 @@ def replay(self) -> None:
 
 | 引擎 | 版本 | 日期 | 有该机制 | 备注 |
 |---|---|---|---|---|
-| SGLang | **v0.5.19** | 2026-09-05 | ✅ | PR #19102，2026-04-11 merged |
-| vLLM | **v0.29.0** | 2026-09-08/09 | ✅ | PR #42304，2026-05-16 merged |
+| SGLang | **v0.5.19** | tag 2026-09-03 / release 2026-09-05 | ✅ | PR #19102，2026-04-11 merged（`f855a0b`）；**首个含它的发布是 v0.5.11（2026-05-05）** |
+| vLLM | **v0.29.0** | 2026-09-08/09 | ✅ | PR #42304，2026-05-16 merged（`8a56da3`）；首个发布 v0.22.0（2026-05-27） |
 | vLLM | main | 2026-09-11 | ⚠️ | PR #56312 把 breakable **限定为只接管 PIECEWISE**，FULL 交回标准 `CUDAGraphWrapper(FULL)` |
 
 **机器上两个引擎都有。** #56312 晚于 v0.29.0，不影响我们，
@@ -453,7 +518,28 @@ def replay(self) -> None:
 - **两个断点，不是一个。** 提交与等待分离，重叠才发生在①→②之间的 GPU 时间里。
   这正是 vLLM `start_prefetch` / `wait_prefetch` 的形状，照抄即可。
 - **H2D 走独立 copy stream + event fork/join**，与 `prefetch.py:512-547` 一致。
-- **输出必须写进调用方提供的静态缓冲**（vLLM 硬要求）；SGLang 更宽容
-  （`_copy_output` 支持 fresh tensor），但**按硬要求写**才能在两个引擎上用同一份代码。
+- **输出必须写进调用方提供的静态缓冲，并 `return None`**（§4.5 第 2 条）。
+  vLLM 硬要求、SGLang 首选契约，按这条写两边共用一份代码。
 - **layer L 由 `τ(L) ≥ 读耗时` 决定**，不是由模型结构决定。
   本机 128 分片全表冷读 195.9 µs ⇒ L 需满足 τ(L) ≥ 200 µs 且留余量。
+- **捕获期用 `capture_stub`（SGLang）挡掉真实磁盘读** —— 否则建图时真读一次盘。
+
+### 8.1 重叠的四个必要条件（缺一个就退化成串行）
+
+§5 的 `max(0, t_io − τ(L))` **不是自动成立的**，它要求：
+
+| # | 条件 | 违反的后果 |
+|---|---|---|
+| 1 | **rowid 全程可在宿主算，断点内不得有任何 D2H 同步** | 任何 `.item()` / `.cpu()` / `.tolist()` 都会**摧毁重叠**，读变成纯串行 |
+| 2 | `τ(L) ≥ t_io` | 超出的部分直接加到关键路径 |
+| 3 | **不得用 pageable 内存做 H2D** | 必须 pinned staging buffer + `non_blocking=True` |
+| 4 | 不得有迫使同步的分配器压力 | 分配器 sync 同样摧毁重叠 |
+
+条件 1 对我们**天然成立**：`rowids_for_seq` 是 token id 的纯函数，
+而 token id 在宿主侧就有（不需要从 GPU 读回）。
+
+⚠️ 但要注意一个**上界**：采样每步都做一次 D2H
+（`layers/sampler.py:367`：`tokens = batch_next_token_ids.to(torch.int32).cpu().tolist()`），
+所以**跨步**的提前量是有界的 —— 重叠窗口是**一段**的工作量，不是整条流水线。
+这也解释了为什么「读第 t 步的数据」不能提前到第 t−1 步：**第 t 步的 token 在第 t−1 步时还不存在。**
+
