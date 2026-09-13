@@ -4394,21 +4394,47 @@ L ≥ N · t_read / C
 > **所需层号 = 读耗时 ÷ 单层 GPU 时间。** 没有别的参数。
 
 **这个式子立刻被实测验证。** SGLang graph 2.27 ms / 24 层 = 94.6 µs/层，
-冷读 195.9 µs ⇒ `L* = 3`。而 Qwen PLE 在 **第 2 层** ⇒ **差一层**，
-与实测的 `τ(2) = 189.2 µs < 195.9 µs`（+6.7 µs 超出）**精确吻合**。
+冷读 195.9 µs ⇒ `L* = 3`。
+
+> ### ⚠️ Session 44 更正：真实几何是 **48 层、0-based 第 1 层**
+>
+> 本节初稿写的是「Qwen PLE 在第 2 层（共 24 层）」——**那是替身模型的层数**
+> （`Qwen3.5-0.8B`，我们唯一能真跑的那个），被错当成了 PLE 模型的几何。
+>
+> 真实几何现在取自 `Qwen3.8-Flash-Next-FP8` 的**权重索引本身**
+> （`model.safetensors.index.json`，152,089 条权重、`total_size` 185.5 GB）：
+>
+> ```
+> layer idx: min 0  max 47  count 48        ⇒ num_hidden_layers = 48
+> PLE LAYER INDICES: [1]                    ⇒ 权重在 layers.1.ple.*，即 0-based 第 1 层
+> ```
+>
+> `text_config.num_hidden_layers = 48`、`hidden_size = 2560` 也由此**从「未验证」升为已验证**
+> （二者此前只是从机器上读来、未入库）。`ple_layer_ids = [2]` 是 **1-based**，
+> 与 `layers.1` 并不矛盾。
+>
+> **裁决方向不变，幅度更差：需要 3 层，只有 1 层 ⇒ 差两层，不是差一层。**
+> 原先那句「与 `τ(2) = 189.2 µs` 精确吻合」也随之作废 —— 该拿 `τ(1)` 比，而它从未被测过。
+>
+> **还有一条方法学保留**：94.6 µs/层是**整步平均**（2.27 ms ÷ 24），
+> 里面**混着与层数无关的固定开销**（采样、attention metadata、prepare）。
+> 若 `总时间 = 固定 + N×单层`，则 `94.6 = 固定/24 + 单层` ⇒ **单层 ≤ 94.6 µs**。
+> 所以 `L* = 3` 是**下界**，真实需求只会更大 —— **下面的裁决全都是乐观界**。
+> 要用斜率法（跑 24/12/6 层取差分）才能拿到真正的边际单层时间；这是待办。
 
 可复跑：`scripts/lead_layer_budget.py`（所有输入都带出处，模型是纯算术）。
 
 | 单层时间来源 | µs/层 | L*（16 行） | L*（48 行） |
 |---|---|---|---|
-| SGLang 0.5.19 graph（实测） | 94.6 | 3 | 7 |
+| SGLang 0.5.19 graph，**Qwen3.5-0.8B 24 层**（实测） | 94.6 | 3 | 7 |
 | vLLM 0.29.0 graph（实测） | 121.8 | 2 | 5 |
 | V4.1 `τ(14)=2295 µs`（实测） | 163.9 | 2 | **4** |
 
 **⇒ 两个真实几何的裁决：**
 
-- **Qwen PLE 在第 2 层（共 24 层）：差一层。** `L* = 3 > 2`。这就是它超标 6.7 µs 的原因，
-  也说明**当前 Qwen 的层位置本身就在可行域边缘**。
+- **Qwen PLE 在 0-based 第 1 层（共 48 层）：差两层。** `L* = 3 > 1`。
+  换成原来那个「第 2 层」的口径也只是差一层 —— **无论按哪种读法，它都装不下**，
+  而真实几何比初稿更紧。**当前 Qwen 的层位置不在可行域边缘，是在可行域外面。**
 - **V4.1 Engram 在第 14 层（共 48 层）：需要 4，有 14，余量 3.5×。**
   **V4.1 把 PLE 放那么深不是保守，是刚需的反面 —— 它有大量余量可以往下挪。**
 
@@ -4478,21 +4504,28 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 **P0 — 锚定分母（前置，否则后面全是空谈）**
 - 已完成（本轮，无 GPU）：把 500 µs 标注为带假设的推导（§29.1.1）；
   把判据化简为 `L* = ⌈t_read/单层时间⌉` 并复现实测（§36.2，`scripts/lead_layer_budget.py`）；
-  得出「V4.1 余量 3.5×、Qwen 差一层、无线程池则 V4.1 装不下」。
+  得出「V4.1 余量 3.5×、Qwen 差两层（48 层、0-based 第 1 层）、无线程池则 V4.1 装不下」。
 - 待做：在能放下 PLE 模型（或结构等价）的机器上测 **graph 模式的真实步长**，
   把 `L*` 从「代理模型推算」升级为「目标模型直测」。
 
-**P1 — 关闭子条件 4（机制验证，1–2 个 session）**
-- 配方已在手（`docs/cuda-graph-injection.md` §0），机器可用，脚本已备
-  （`scripts/sglang_bcg_probe.py`）。
-- 判据四项**同时**成立：后端是 breakable / `reader_calls > 0` /
-  输出确实改变 / **replay 期确认在 BCG 内**。
-- **第一轮只回答机制，不做性能测量** —— 混在一起正是上轮八次失败的来源。
+**P1 — 关闭子条件 4（机制验证）—— ✅ 已完成（§36.8）**
+- 四项判据**同时**成立：后端是 breakable（`backend_replay = 553/512`）/
+  `break_calls_in_replay = 552/512` / 输出确实改变（三臂互异 sha1）/
+  **replay 期确认在 BCG 内**（`BreakableCUDAGraph.replay` 的 flag，而**不是**
+  `is_in_breakable_cuda_graph()` —— 后者在 capture 也为 True，会空洞通过）。
+- 已顺带产出 graph 模式下的存储数字，但那笔是**串行上界**，不是存储代价（§36.8）。
+
+**P1.5 — stage 2：把 1.245 ms 摘出关键路径（新增，本轮定量）**
+- 机制通了之后，第一个真问题不是「多快」，而是 **D2H 同步**。按本轮证据排序的四步：
+  消灭 D2H → 持久线程池 + 跨 token 批量化（464.6 → 195.9 µs）→ pinned 暂存 +
+  `non_blocking=True` → 确认无分配器强同步。
+- 判据：`read − break` 落到噪声地板以下，且 `break_calls_in_replay` 仍 > 0。
 
 **P2 — 把 `L*` 落到本机**
 - 机制通了之后，第一个真问题不是「多快」，而是：
   **在本机模型上，把读放在哪个 L 能让净增落到噪声地板以下？**
 - 这是唯一能把「195.9 µs 超标 2.7×」变成「净增 ≈ 0」的动作，可测、可证伪、单机可复现。
+- **前置**：`L*` 的分母（边际单层时间）必须用斜率法测，不能用整步平均（§36.2 的保留）。
 
 **P3 — 之后才谈广度**
 - V4.1 接口、多表、Arrow IPC、engram-peft、C ABI 补齐 —— 产品面。
@@ -4516,3 +4549,53 @@ Session 40 基线 **76%**，§29.4 的硬约束是「**净关闭率 > 0**」。
 > 裁判已换成一个不等式，而且它当场给出了三个判决：
 > **Qwen 差一层、V4.1 余量 3.5×、并发度是可行性的前提而不是优化。**
 > 下一步只有一个动作：机械地闭合子条件 4，然后把 `L*` 落到本机。
+
+（上句里的「Qwen 差一层」已在 §36.2 更正为 **差两层**：真实几何是 48 层、0-based 第 1 层。）
+
+### 36.8 子条件 4 闭合（session 43，同日完成）
+
+**§36.5 的 P1 已关。** 上一轮唯一未达成的那一项 —— 「`enforce_eager=False` 时 op 在 replay
+中执行」—— 在 SGLang 上达成了。完整证据在 `probes/subcondition4_sglang_session43.md`。
+
+**为什么是 SGLang 而不是 vLLM**：不是配置差异，是机制差异。vLLM 的 `FULL_AND_PIECEWISE`
+让 decode 取 `FULL`，`splitting_ops` 切分点被绕过，replay 不跑任何 Python；SGLang 的
+breakable graph 在**段间**执行真 host Python。**本轮最硬的旁证**：`forward_calls = 26`
+而 `backend_replay = 553` —— replay 时模型的 Python `forward` 一次都没被调用，
+**唯一会跑的 Python 就是断点函数**。
+
+**数字**（`none 418.9 / break 393.5 / read 264.1 tok/s`）：
+`read − break = +1.245 ms`、`read − none = +1.399 ms`。
+
+**但这个数字不是存储代价，而且这一条比数字本身重要。** 它是首次尝试、完全串行的上界：
+本轮 `read_us_median = 464.6 µs` vs 调优过的冷读 **195.9 µs**；`break` 臂**无磁盘**也有
+504.5 µs。正面证据是 `break` 臂 504 µs host 工作只让整步慢 154 µs（≈70% 被前段 GPU kernel
+掩盖）⇒ **重叠机制在工作，打断它的是 D2H 同步**。
+
+#### 三个可上报的上游缺口（都在本轮实测撞到）
+
+1. **BCG 后端不认识 dataclass 输出**：`_alloc_full_buffer` 只认
+   `None/Tensor/PPProxyTensors/tuple/list`，遇到 `LogitsProcessorOutput` 直接
+   `TypeError` ⇒ **几乎任何文本模型都无法用 `--cuda-graph-backend-decode=breakable`**
+   （与断点无关：`qwen3_5.py` 里一个 `@eager_on_graph` 都没有也在 capture 阶段就炸）。
+   修法有据：隔壁 `_copy_output` **已经支持** `__dict__` 对象，只是后端这四个没跟上。
+2. **BCG 的「静止 buffer + 普通加法」在 vLLM 上失败的原因是 Inductor 常量折叠**
+   （session 42 的 W4）。**BCG 不经过 Inductor**（它是 stream-capture 切段）
+   ⇒ 同一个想法在 SGLang 上天然成立。这是选 SGLang 的第二个理由。
+3. **跨进程注入**：`mp.set_start_method("spawn")` 让父进程 monkeypatch 失效
+   （`serve_sglang_baseline.py` 曾把这条记为「SGLang 做不了磁盘臂」的原因）。
+   出路是**挂到子进程本来就会 import 的模块末尾**，对 spawn/fork/exec 全有效。
+   另外两个坑：子进程 PATH 缺 venv bin 会导致 `ninja` 找不到（看起来像 SGLang 崩了）；
+   `engine.shutdown()` 用 SIGKILL ⇒ 子进程侧计数器必须由**后台线程**周期落盘。
+
+#### §36.4 的「未完成」清单相应变化
+
+- ~~子条件 4（CUDA graph 路径）~~ → **已闭合**。
+- **新增 P1：stage 2（重叠）**。目标已被精确定量：**把 1.245 ms 从关键路径上摘掉**。
+  手段按本轮证据排序：消灭 D2H（最大项）→ 持久线程池 + 跨 token 批量化（464.6 → 195.9 µs）
+  → pinned 暂存 + `non_blocking=True` → 确认无分配器强同步。
+  这四条正是 `docs/cuda-graph-injection.md` §8.1 早已写下的前提，现在每条都有了实测支撑。
+- **`L*` 的单层时间是整步平均**（含与层数无关的固定开销）⇒ **所有 `L*` 都是下界**。
+  斜率法（24/12/6 层取差分）仍未做。
+- **真实 PLE 模型跑不了**：`Qwen3.8-Flash-Next-FP8` 权重索引 `total_size = 185.5 GB`
+  （48 层、512 专家 MoE、FP8），单张 4090 装不下 ⇒ 本轮用 `Qwen3.5-0.8B` + 合成投影，
+  **只测代价，无任何质量声明**。

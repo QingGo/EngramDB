@@ -67,7 +67,14 @@ T_READ_US_PER_ROW_1THREAD = 85.8   # 65-shard run; conservative for 16 rows
 
 # --- measured per-layer forward times --------------------------------------
 # probes/engine_floor_session42.md -- Qwen3.5-0.8B, 4090, batch=1, 128+128.
-# The layer count N=24 is the model's own; per-layer = step_time / N.
+# N=24 is *Qwen3.5-0.8B's* layer count -- the stand-in we can actually run, not
+# the PLE model.  Kept because per-layer time is a property of the layer, and
+# this is the only model on which a graph-mode step has been measured at all.
+# CAVEAT: step_time/N is a whole-step average, so it includes overhead that has
+# nothing to do with layers (sampling, attention metadata, prepare).  If
+# total = fixed + N*per_layer then per_layer <= step_time/N, so every L* below
+# is a LOWER bound and the real requirement is larger.  A slope fit over
+# truncated layer counts would settle it; that is still to do.
 STEPS = [
     # (label, step_ms, N, provenance)
     ("SGLang 0.5.19 graph", 2.270, 24, "probes/sglang_baseline_session42.json"),
@@ -177,11 +184,14 @@ def main() -> int:
 
     print("\n--- what this says about the two real geometries ---")
     l_qwen = l_star(T_READ_QWEN_POOL_US, per_layer_us(2.270, 24))
-    print(f"  Qwen PLE sits at layer  2 of 24."
-          f"  Needs L* = {l_qwen}"
-          f" (SGLang graph) -> layer 2 is {l_qwen - 2} short of the requirement,")
-    print(f"     which is exactly the measured +6.7 us overshoot"
-          f" (tau(2)=189.2 us < t_read=195.9 us).")
+    print(f"  Qwen PLE sits at 0-based layer 1 of 48  (verified: the checkpoint's")
+    print(f"     own weight index lists layers.1.ple.*; ple_layer_ids=[2] is 1-based).")
+    print(f"  Needs L* = {l_qwen} (SGLang graph)"
+          f" -> layer 1 is {l_qwen - 1} short of the requirement.")
+    print(f"     Session 44 correction: earlier revisions said \"layer 2 of 24\".")
+    print(f"     The 24 was *Qwen3.5-0.8B's* layer count -- the stand-in model we")
+    print(f"     can actually run -- mistaken for the PLE model's geometry.")
+    print(f"     CAVEAT: every L* here is a LOWER bound (see the note at the top).")
     l_v41_pool = l_star(t_read_v41_pool, v41_per_layer)
     l_v41_1t = l_star(t_read_v41_1t, v41_per_layer)
     print(f"  V4.1 Engram sits at layer 14 of 48."

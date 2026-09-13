@@ -510,12 +510,12 @@ engramdb serve <root> --port 8765 [--binary]
 |---|---|---|
 | 视图字节放大 | ≤2× | ✅ **1.00×** |
 | 视图路径吞吐 | ≥4M 等效行/s | ✅ 4.50M（200K 热态，8 线程） |
-| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **这个阈值本身是「带假设的推导」，不是测量**：它假设 100 tok/s 的分母。**实测冷读 195.9 µs/token**（16 行 × 160 B）——占 eager 单步 **0.92%**，占 **CUDA graph 单步 6.7–8.6%**（**超标**）——CUDA graph 把分母改变了 **7.3–7.8×**，比任何存储优化都大。**裁判已改**：见 §9 与 roadmap §36 —— `L* = ⌈t_read ÷ 单层时间⌉`，Qwen **差一层**、V4.1 **余量 3.5×** |
+| **Engram 每 token 开销** | **≤500 μs/token** | ⚠️ **这个阈值本身是「带假设的推导」，不是测量**：它假设 100 tok/s 的分母。**实测冷读 195.9 µs/token**（16 行 × 160 B）——占 eager 单步 **0.92%**，占 **CUDA graph 单步 6.7–8.6%**（**超标**）——CUDA graph 把分母改变了 **7.3–7.8×**，比任何存储优化都大。**裁判已改**：见 §9 与 roadmap §36 —— `L* = ⌈t_read ÷ 单层时间⌉`，Qwen **差两层**（权重索引实测 **48 层、0-based 第 1 层**）、V4.1 **余量 3.5×** |
 | CPU 小模型 decode（**代理**） | 内存表 vs 磁盘表的相对开销固化并入门禁 | ✅ 代理闭环 |
 | CPU 小模型 decode（**真机**） | ≥50 tok/s（配 MTP 冲 100） | ⏳ 待硬件 |
 | **rowid 与引擎一致** | 与引擎自己的 PLE 代码**逐位相同** | ✅ **IDENTICAL** —— 37 用例 / 18,048 个 rowid，`probes/ple_rowid_exactness_session42.md` |
-| GPU 端 vLLM A/B 差距 | ≤5% | ❌ **graph 模式下超标**：冷读占 graph 单步 **6.70%**（vLLM）/ **8.63%**（SGLang）。此前「达标」是 eager 分母放大 7.3× 的产物。验收仍未闭合，见下方子条件 |
-| GPU 端 SGLang A/B 差距 | ≤5% | ❌ **PLE 不可做**（SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids`）；**引擎地板已测**（graph 440.4 tok/s） |
+| GPU 端 vLLM A/B 差距 | ≤5% | ❌ **graph 模式下超标**：冷读占 graph 单步 **6.70%**（vLLM）/ **8.63%**（SGLang）。此前「达标」是 eager 分母放大 7.3× 的产物。**注意这两个数仍是「两次测量相除」的合成值**；session 43 已在 SGLang 上产出**单次测量**（子条件 4′），但那笔是串行上界、不是存储代价 |
+| GPU 端 SGLang A/B 差距 | ≤5% | ⚠️ **PLE 语义仍不可做**（SGLang 0.5.19 无 `qwen4_exp`、无 `ple_layer_ids`），但**机制已跑通**：`--cuda-graph-backend-decode=breakable` 下磁盘读真的在 replay 期间执行（子条件 4 ✅）。引擎地板 graph 440.4 tok/s（本轮复测 418.9，不同机器） |
 | 训练流有效吞吐 | ≥100K tok/s | ⏳ 未闭环 |
 
 > 「待硬件」两项需要一台能加载 Qwen3.8-Flash-Next（FP8 ≈90 GB）或 DeepSeek-V4.1-Flash（≈510 GB）的机器。
@@ -534,10 +534,13 @@ engramdb serve <root> --port 8765 [--binary]
 - 两引擎 eager 可比（47.0 vs 56.3）⇒ 差异是 **graph 开关**，不是引擎质量。
 - **分母一变，同一笔 195.9 µs 从 0.92% 变成 6.70–8.63%** ⇒ **我们超标了**。
   「eager 下落进噪声」不是达标，是分母被放大 7.3×。
-- 提前量检查（`τ(L) = O + (L/N)·C`，取上界）：layer 2 在 SGLang graph 下只等到
-  **189.2 µs**，而冷读要 **195.9 µs** ⇒ **按最有利假设也装不下**。
+- 提前量检查（`τ(L) = O + (L/N)·C`，取上界）：**Qwen PLE 在 0-based 第 1 层**
+  （权重索引实测 `layers.1.ple.*`，共 48 层），在 SGLang graph 下只等到 **τ(1)**
+  —— 而冷读要 **195.9 µs** ⇒ **按最有利假设也装不下**。
   这就是 V4.1 把 PLE 放在 **layer 14**（τ=2295 µs）的原因 —— 不是随便选的层。
-- **子条件 4 的出路不是 `splitting_ops`，而是 `breakable_cudagraph`**：
+  （本节初稿写「第 2 层（共 24 层）」，那是**替身模型 `Qwen3.5-0.8B` 的层数**被误当成了
+  PLE 模型的几何；真实几何见 roadmap §36.2 的 Session 44 更正。）
+- **子条件 4 已闭合（session 43，SGLang）。** 出路不是 `splitting_ops`，而是 `breakable_cudagraph`：
   我们原先打算照抄 `vllm::qwen4_exp_compute_ple_ngram_ids` 这个 splitting op，
   但它在 `FULL_AND_PIECEWISE` 下**对我们无效** —— decode 段取 `FULL`
   （`FULL_AND_PIECEWISE = (FULL, PIECEWISE)`），而 `dispatch()` 先命中 FULL，
@@ -562,9 +565,10 @@ batch=1 磁盘臂 45.7 tok/s vs 无 reader 45.2、batch=32 各臂均在噪声内
 | 1b | **PLE 路径**用模型自己的权重 | ❌ **本机不存在这样的 checkpoint**：带 `ple_layer_ids` 的 config 只有 `Qwen3.8-Flash-Next-FP8-tokenizer`（22 MB，无权重）；三个 Qwen3.5 的 `text_config` 一个 PLE 字段都没有。所以 16 行/token 的 PLE 臂**只能是**合成投影 |
 | 2 | **完整分片** | ✅ **128/128，47.68 GiB**。`padded_vocab == 磁盘行数 == 320,001,536` ⇒ rowid 取模是**空操作**（已验，见 `probes/ple_rowid_exactness_session42.md` §F） |
 | 3 | **冷态**且自证驱逐生效 | ✅ **每次迭代自证**：全表冷态跑 10 次抽检全部 `verdict=cold`，ratio **58.3–115.9×**，marginal 83.2–103.5 µs/read（`probes/serve_ple_ab_fulltable_session42.md`） |
-| 4 | **CUDA graph** 路径，或显式标注 eager | ❌ **仍未闭合，但失败原因已由源码确证**（session 43）。实测：eager 下注入全部通过（`op_calls=256/op_rows=510`、输出确实改变），`enforce_eager=False` 时 op **一次都不执行**。根因：`FULL_AND_PIECEWISE` 的 decode 段走 `FULL`，切分点被绕过。**出路已找到且是一等公民机制**：vLLM 侧 `VLLM_USE_BREAKABLE_CUDAGRAPH=1` + `cudagraph_mode=PIECEWISE` + `@eager_break_during_capture`；SGLang 侧 `--cuda-graph-backend-decode=breakable` + `@eager_on_graph`（**注意：官方文档写的 `SGLANG_USE_BREAKABLE_CUDA_GRAPH=1` 在 v0.5.19 里是只写变量，用了会静默无效**）。**尚未上机验证。** 见 `probes/subcondition4_cuda_graph_session42.md`、roadmap §35.1d、`docs/cuda-graph-injection.md` |
+| 4 | **CUDA graph** 路径，或显式标注 eager | ✅ **已闭合（session 43，SGLang 侧）**。断点在 **replay 期间执行**已证：`break_calls_in_replay = 552/512`，同一次运行 `backend_replay = 553/512`（图**真的**被 replay，不是静默退回 eager —— 这正是 vLLM 那条路的假通过陷阱），capture/replay 精确分账 `578 = 552 + 26`，且功能性自证成立（`break`/`read` 两臂输出**互异于** baseline，三个互异 sha1）。**为什么换引擎**：vLLM 的 `FULL_AND_PIECEWISE` 让 decode 取 `FULL`，`splitting_ops` 切分点被绕过，replay 不跑任何 Python；SGLang 的 breakable graph 在**段间**执行真 host Python（`eager_on_graph` + `BreakableCUDAGraph.replay`），I/O 就放在那里。**最硬的旁证**：`forward_calls = 26` 而 `backend_replay = 553` —— replay 时模型的 Python `forward` 一次都没被调用，**唯一会跑的 Python 就是断点函数**。见 `probes/subcondition4_sglang_session43.md`、roadmap §35.1d/§36.8、`docs/cuda-graph-injection.md` |
+| 4′ | graph 模式下的**存储代价**数字 | ✅ **首次产出单次测量**：`none 418.9 / break 393.5 / read 264.1 tok/s` ⇒ `read − break = +1.245 ms`、`read − none = +1.399 ms`。⚠️ **但这不是存储代价**：它是**首次尝试、完全串行**的代价，且是很松的上界 —— 本轮 `read_us_median = 464.6 µs` 而调优过的冷读是 **195.9 µs**（差在每 token 一次线程池唤醒、无跨 token 批量化、无 pinned 暂存）；`break` 臂**完全没有磁盘**也有 `break_us_median = 504.5 µs`。正面证据：`break` 臂 504 µs host 工作只让整步慢 **154 µs**（≈70% 被前段 GPU kernel 掩盖）⇒ **重叠机制确实在工作，真正打断它的是 D2H 同步**。stage 2 的目标因此被精确定量：把 1.245 ms 摘出关键路径 |
 | 5 | 多种子/多轮 counterbalance 到噪声地板以下 | ⚠️ counterbalance 已做（首尾各一段 `none`），因此**测出了漂移 +2.6%**；`engram-i` 臂内散布 45.3–47.3 仍**跨越** `none` 的 46.4–47.1 ⇒ 它的 tok/s 栏判 VOID。**但 `mmap` 冷态 −17.7% 高于地板、可引用。** 直接测量栏才是主证据：**195.9 µs/token（16 行 = 2,560 B，冷 NVMe）= 500 µs 预算的 39%** |
-| 6 | **多引擎**（vLLM + SGLang） | ❌ **PLE 侧不是未做，是不可做**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。**SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容。** 但引擎地板已两引擎都测到（§6.1.1），「5% 的分母」不再只有 vLLM 一个来源 |
+| 6 | **多引擎**（vLLM + SGLang） | ⚠️ **PLE 语义侧仍不可做，但机制侧已在 SGLang 上跑通**：vLLM 0.29.0 有 `Qwen4ExpForConditionalGeneration`（`vllm/models/qwen4_exp/`，含 `_validate_ple_layer_ids()`）；**SGLang 0.5.19 一处都没有** —— registry 无条目、无 `ple_layer_ids`、transformers 5.12.1 无 `qwen4_exp`。**SGLang 缺的是 PLE 这个「缝」，不是我们的库不兼容**（所以 session 43 的 SGLang 注入只能挂 decoder layer、用合成投影）。引擎地板与 **graph 模式下的磁盘臂**现在两件事都在 SGLang 上有了 |
 
 > **为什么必须逐条列**：eager 模式下引擎自身开销约 21 ms/token，5% 预算 = 1.06 ms，
 > 而存储代价只有 0.20 ms —— **「达标」是廉价的**。见 roadmap §35.1 与 §6.1.1：
@@ -694,9 +698,12 @@ bash scripts/release_gate.sh  # 发布门禁（含真表 Arrow IPC 与 serving �
 
 | 几何 | 需要 | 实际 | 结论 |
 |---|---|---|---|
-| Qwen PLE（24 层，第 2 层） | `L* = 3` | 2 | ❌ **差一层** —— 正是实测 +6.7 µs 超出的原因 |
+| Qwen PLE（**48 层，0-based 第 1 层**） | `L* = 3` | 1 | ❌ **差两层** —— 真实几何比初稿更紧 |
 | V4.1 Engram（48 层，第 14 层） | `L* = 4` | 14 | ✅ **余量 3.5×** |
 | V4.1 **无线程池** | `L* = 26` | 14 | ❌ **装不下** ⇒ **并发度是可行性的前提，不是吞吐优化** |
+
+> `L* = 3` 是**下界**：94.6 µs/层是整步平均（含与层数无关的固定开销），
+> 真实边际单层时间只会更小 ⇒ 需求只会更大。**上面三行都是乐观界。**
 
 当前优先级（细节见 roadmap §36.5）：
 

@@ -129,15 +129,19 @@ def probe_server_args() -> dict:
     check("Backend.BREAKABLE exists", getattr(Backend, "BREAKABLE", None) == "breakable",
           f"Backend.BREAKABLE={getattr(Backend, 'BREAKABLE', None)!r}")
 
+    # ServerArgs registers its fields through a custom ``A[...]`` annotation, so
+    # pydantic's model_fields is empty.  Reading model_fields here reports
+    # "0 fields" and fails a field that is in fact present at server_args.py:1859
+    # -- a self-inflicted failure, recorded because the first run of this probe
+    # shipped it.
+    ann = getattr(ServerArgs, "__annotations__", None) or {}
     fields = getattr(ServerArgs, "model_fields", None) or getattr(ServerArgs, "__fields__", {})
-    has_field = "cuda_graph_backend_decode" in fields
+    has_field = "cuda_graph_backend_decode" in ann or "cuda_graph_backend_decode" in fields
     check("ServerArgs.cuda_graph_backend_decode exists", has_field,
-          f"{len(fields)} fields" if not has_field else "")
-    choices = None
-    if has_field:
-        f = fields["cuda_graph_backend_decode"]
-        choices = getattr(f, "annotation", None) or getattr(f, "type_", None)
-        check("  ... accepts 'breakable'", "breakable" in str(choices), str(choices)[:200])
+          f"via __annotations__ ({len(ann)} annotated fields)" if has_field
+          else f"absent from {len(ann)} annotations and {len(fields)} fields")
+    choices = str(ann.get("cuda_graph_backend_decode", "")) or str(fields.get("cuda_graph_backend_decode", ""))
+    check("  ... accepts 'breakable'", "breakable" in choices, choices[:200])
 
     # defaults: decode should be FULL, prefill BREAKABLE (on CUDA)
     from sglang.srt.model_executor.cuda_graph_config import CudaGraphConfig
@@ -147,15 +151,51 @@ def probe_server_args() -> dict:
     check("decode default needs an explicit override", decode_default != "breakable",
           f"decode={decode_default!r} prefill={prefill_default!r}")
 
-    # the env var must be treated as dead
+    # The env var is a decoy and checking that it merely *exists* proves
+    # nothing.  What matters is that nothing ever reads it -- a write-only
+    # variable cannot switch anything on.  So classify every occurrence in the
+    # installed tree: one definition plus one .set() and zero reads means
+    # setting it is a no-op.
     env_mod = None
     try:
         from sglang.srt import environ as env_mod
     except Exception:
         pass
-    env_present = env_mod is not None and hasattr(env_mod, "SGLANG_USE_BREAKABLE_CUDA_GRAPH")
-    check("SGLANG_USE_BREAKABLE_CUDA_GRAPH exists but is never read",
-          env_present, "do NOT rely on it; use --cuda-graph-backend-decode=breakable")
+    env_obj = getattr(env_mod, "envs", None)
+    env_present = env_obj is not None and hasattr(
+        env_obj, "SGLANG_USE_BREAKABLE_CUDA_GRAPH")
+
+    reads = sets = defs = 0
+    hits: list[str] = []
+    try:
+        import sglang as _sg
+
+        root = Path(_sg.__file__).parent
+        for py in root.rglob("*.py"):
+            try:
+                txt = py.read_text(errors="ignore")
+            except Exception:
+                continue
+            if "SGLANG_USE_BREAKABLE_CUDA_GRAPH" not in txt:
+                continue
+            hits.append(str(py.relative_to(root)))
+            for line in txt.splitlines():
+                if "SGLANG_USE_BREAKABLE_CUDA_GRAPH" not in line:
+                    continue
+                if "EnvBool" in line:
+                    defs += 1
+                elif ".set(" in line:
+                    sets += 1
+                else:
+                    reads += 1
+    except Exception as exc:
+        hits.append(f"scan failed: {exc}")
+
+    check("SGLANG_USE_BREAKABLE_CUDA_GRAPH is defined", env_present,
+          f"envs.SGLANG_USE_BREAKABLE_CUDA_GRAPH present; files={hits}")
+    check("  ... and is WRITE-ONLY, so it cannot be the switch", reads == 0,
+          f"reads={reads} sets={sets} defs={defs} in {hits} -> "
+          "use --cuda-graph-backend-decode=breakable instead")
 
     return {"decode_default": decode_default, "prefill_default": prefill_default,
             "has_field": has_field}
@@ -286,7 +326,17 @@ def probe_spawn_inheritance(model: str, mem_fraction: float) -> dict:
     if str(tmp) not in sys.path:
         sys.path.insert(0, str(tmp))
 
+    # The scheduler child re-imports and must be able to find the venv's console
+    # scripts.  Without this the child dies with
+    # ``FileNotFoundError: 'ninja'`` while flashinfer JITs a prefill module --
+    # which is what happened the first time this probe was run, and it looks
+    # like an SGLang failure rather than a PATH failure.  Anything launched as
+    # ``<venv>/bin/python -m ...`` without activating the venv hits this.
+    venv_bin = os.path.dirname(os.path.abspath(sys.executable))
+    os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+
     print(f"  PYTHONPATH={os.environ['PYTHONPATH'][:160]}")
+    print(f"  PATH[0]  ={venv_bin}")
     print(f"  marker={marker}")
 
     engine = None
