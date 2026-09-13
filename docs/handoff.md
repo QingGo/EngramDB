@@ -16,6 +16,17 @@
   `--cuda-graph-backend-decode=breakable`。`scripts/sglang_bcg_probe.py` 会把这条当成检查跑一遍。
 - **不要**把 roadmap 各代复盘里的复选框数当成债务指标：那是**复盘史**，
   已由 §0 正式废止（原因见 roadmap §0）。活账只有 README §6.1 与 roadmap §36.5。
+- **不要**把 `shutdown` / `poweroff` / `halt` / `reboot` 当「探针」执行。AutoDL 容器的
+  `/usr/bin/shutdown` 是一个 **205 字节的自定义包装脚本**（不是 systemd 的、也不是符号链接），
+  **它能在这个容器里真的关机**（PID 1 是 `bash`，没有 systemd）。Session 44 末尾我以
+  「dry probe，无副作用」为名执行了 `/usr/bin/shutdown -h now`，把用户刚开机的盒子关掉了。
+  **要判断它会做什么，去读那个脚本，不要执行它。**
+  （`poweroff`/`halt`/`reboot` 是指向 `/bin/systemctl` 的符号链接，那几个才会失败。）
+- **不要**用 `uptime` 判断容器是否重启过：它报的是**宿主内核**的 uptime（实测 **282 天**），
+  容器共享内核。容器里也**没有** journald、`dmesg` 被挡、`last -x` 零条 shutdown 记录
+  ⇒ **「上次关机是什么触发的」无法从容器内部追查**（这个问题只能问发起方）。
+  可用的替代判据：**`/tmp` 是否存活** —— 存活即「同一可写层上的 stop/start」而非容器重建。
+  实测：关机重启后 `/tmp/sweep_*.json`、venv 钩子、scripts 全部存活。
 
 ## 1. 项目是什么
 EngramDB = DeepSeek Engram / Qwen PLE（N-gram 嵌入记忆表）的**磁盘优先存储引擎**（Rust，
